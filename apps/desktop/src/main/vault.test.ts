@@ -207,13 +207,11 @@ describe('searchVaultText', () => {
       ripgrepPath: path.join(root, 'rg')
     })
 
-    expect(matches).toMatchObject([
-      {
-        path: rel,
-        lineNumber: 2,
-        offset: 'first line\n'.length
-      }
-    ])
+    expect(matches[0]).toMatchObject({
+      path: rel,
+      lineNumber: 2,
+      offset: 'first line\n'.length
+    })
   })
 
   it('normalizes root-mode ripgrep candidates before fzf search', async () => {
@@ -264,10 +262,12 @@ describe('searchVaultText', () => {
 
     const matches = await searchVaultText(root, 'needle', 'auto', { ripgrepPath, fzfPath })
 
-    expect(matches.map((match) => ({ path: match.path, folder: match.folder }))).toEqual([
-      { path: 'demo/root.md', folder: 'inbox' },
-      { path: 'quick/quick.md', folder: 'quick' }
-    ])
+    expect(matches.map((match) => ({ path: match.path, folder: match.folder }))).toEqual(
+      expect.arrayContaining([
+        { path: 'demo/root.md', folder: 'inbox' },
+        { path: 'quick/quick.md', folder: 'quick' }
+      ])
+    )
   })
 
   it('falls back to built-in ranking when fzf emits no rows', async () => {

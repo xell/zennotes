@@ -70,6 +70,10 @@ import {
   SIDEBAR_PROGRESSIVE_RENDER_THRESHOLD,
   SIDEBAR_PROGRESSIVE_SENTINEL_MARGIN_PX,
 } from "../lib/sidebar-progressive";
+import {
+  getScrollTopForPreservedSidebarAnchor,
+  isRecentSidebarPointerInteraction,
+} from "../lib/sidebar-scroll";
 import { buildVaultSwitcherEntries } from "../lib/vault-switcher";
 import { appUpdateBadgeLabel, useAppUpdateState } from "../lib/app-update-state";
 
@@ -81,6 +85,31 @@ function escapeForAttr(value: string): string {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function")
     return CSS.escape(value);
   return value.replace(/["\\]/g, "\\$&");
+}
+
+function sidebarAnchorSelectorForElement(el: HTMLElement): string | null {
+  const type = el.dataset.sidebarType;
+  if (!type) return null;
+
+  if (type === "folder") {
+    const key = el.dataset.sidebarKey;
+    if (!key) return null;
+    return `[data-sidebar-type="folder"][data-sidebar-key="${escapeForAttr(key)}"]`;
+  }
+
+  if (type === "note" || type === "asset") {
+    const path = el.dataset.sidebarPath;
+    if (!path) return null;
+    return `[data-sidebar-path="${escapeForAttr(path)}"]`;
+  }
+
+  if (type === "tag") {
+    const tag = el.dataset.sidebarTag;
+    if (!tag) return null;
+    return `[data-sidebar-type="tag"][data-sidebar-tag="${escapeForAttr(tag)}"]`;
+  }
+
+  return `[data-sidebar-type="${escapeForAttr(type)}"]`;
 }
 
 function defaultNewNoteTarget(
@@ -499,6 +528,13 @@ export function Sidebar(): JSX.Element {
   const selectedSidebarKeysRef = useRef(selectedSidebarKeys);
   const selectedSidebarItemsRef = useRef(selectedSidebarItems);
   const selectedSidebarCountRef = useRef(selectedSidebarCount);
+  const sidebarScrollRef = useRef<HTMLDivElement | null>(null);
+  const lastSidebarPointerAtRef = useRef(0);
+  const pendingSidebarScrollAnchorRef = useRef<{
+    selector: string;
+    top: number;
+    scrollTop: number;
+  } | null>(null);
 
   useEffect(() => {
     selectionAnchorKeyRef.current = selectionAnchorKey;
@@ -509,6 +545,45 @@ export function Sidebar(): JSX.Element {
     selectedSidebarItemsRef.current = selectedSidebarItems;
     selectedSidebarCountRef.current = selectedSidebarCount;
   }, [selectedSidebarCount, selectedSidebarItems, selectedSidebarKeys]);
+
+  const captureSidebarScrollAnchor = useCallback((target: EventTarget | null): void => {
+    const scroller = sidebarScrollRef.current;
+    const row =
+      target instanceof HTMLElement
+        ? (target.closest("[data-sidebar-idx]") as HTMLElement | null)
+        : null;
+    if (!scroller || !row || !scroller.contains(row)) return;
+    const selector = sidebarAnchorSelectorForElement(row);
+    if (!selector) return;
+
+    const scrollerRect = scroller.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    pendingSidebarScrollAnchorRef.current = {
+      selector,
+      top: rowRect.top - scrollerRect.top,
+      scrollTop: scroller.scrollTop,
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    const pending = pendingSidebarScrollAnchorRef.current;
+    if (!pending) return;
+    pendingSidebarScrollAnchorRef.current = null;
+
+    const scroller = sidebarScrollRef.current;
+    const target = document.querySelector<HTMLElement>(pending.selector);
+    if (!scroller || !target || !scroller.contains(target)) return;
+
+    const scrollerRect = scroller.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    scroller.scrollTop = getScrollTopForPreservedSidebarAnchor({
+      scrollTop: pending.scrollTop,
+      anchorTop: pending.top,
+      nextAnchorTop: targetRect.top - scrollerRect.top,
+      scrollHeight: scroller.scrollHeight,
+      clientHeight: scroller.clientHeight,
+    });
+  });
 
   useEffect(() => {
     const availableKeys = new Set<string>();
@@ -1968,6 +2043,10 @@ export function Sidebar(): JSX.Element {
         ? (target.closest("[data-sidebar-idx]") as HTMLElement | null)
         : null;
     const idx = Number(el?.dataset.sidebarIdx);
+    if (Number.isFinite(idx)) {
+      lastSidebarPointerAtRef.current = performance.now();
+      captureSidebarScrollAnchor(target);
+    }
     if (Number.isFinite(idx) && idx !== sidebarCursorIndex) {
       useStore.getState().setSidebarCursorIndex(idx);
     }
@@ -1977,6 +2056,18 @@ export function Sidebar(): JSX.Element {
     if (!isSidebarFocused) return;
 
     const findTarget = (): HTMLElement | null => {
+      if (
+        isRecentSidebarPointerInteraction(
+          lastSidebarPointerAtRef.current,
+          performance.now(),
+        )
+      ) {
+        const cursorEl = document.querySelector<HTMLElement>(
+          `[data-sidebar-idx="${sidebarCursorIndex}"]`,
+        );
+        if (cursorEl) return cursorEl;
+      }
+
       if (tagsViewActive && selectedTags.length > 0) {
         // When the Tags view is active, reveal the first currently-
         // selected tag's chip. The user can hop between them with j/k
@@ -2253,6 +2344,7 @@ export function Sidebar(): JSX.Element {
 
       {/* Main scrollable tree area */}
       <div
+        ref={sidebarScrollRef}
         className="mt-3 min-h-0 flex-1 overflow-y-auto px-3"
         style={{ scrollbarGutter: "stable" }}
         onClick={(e) => {
