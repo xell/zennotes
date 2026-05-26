@@ -473,7 +473,15 @@ async function revealNote(_relPath: string): Promise<void> {
   // No OS file manager on the web.
 }
 
+async function revealNoteTarget(_relPath: string): Promise<void> {
+  // No OS file manager on the web.
+}
+
 async function revealFolder(_folder: NoteFolder, _subpath: string): Promise<void> {
+  // No OS file manager on the web.
+}
+
+async function revealFolderTarget(_folder: NoteFolder, _subpath: string): Promise<void> {
   // No OS file manager on the web.
 }
 
@@ -1071,6 +1079,7 @@ export const httpBridge: ZenBridge = {
   duplicateNote,
   exportNotePdf,
   revealNote,
+  revealNoteTarget,
   moveNote,
   importFilesToNote,
   importPastedImage,
@@ -1084,6 +1093,7 @@ export const httpBridge: ZenBridge = {
   deleteFolder,
   duplicateFolder,
   revealFolder,
+  revealFolderTarget,
   revealAssetsDir,
   getPathForFile,
   resolveLocalAssetUrl,

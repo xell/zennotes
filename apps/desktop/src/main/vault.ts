@@ -1331,8 +1331,7 @@ function noteFolderFromRelPath(relPath: string): NoteFolder | null {
 // A directory entry counts as a markdown note when it's a real .md file
 // or a symlink that resolves to one. readdir's Dirent reports a symlink
 // as isSymbolicLink() (never isFile()), so without this stat fallback a
-// note symlinked into the vault is invisible. Symlinked directories are
-// intentionally not followed (to avoid cycles into arbitrary trees).
+// note symlinked into the vault is invisible.
 async function isMarkdownNoteEntry(full: string, entry: Dirent): Promise<boolean> {
   if (!entry.name.toLowerCase().endsWith('.md')) return false
   if (entry.isFile()) return true
@@ -1346,13 +1345,51 @@ async function isMarkdownNoteEntry(full: string, entry: Dirent): Promise<boolean
   return false
 }
 
+async function realpathOrResolve(p: string): Promise<string> {
+  try {
+    return await fs.realpath(p)
+  } catch {
+    return path.resolve(p)
+  }
+}
+
+// Decide whether a readdir entry is a directory the vault walk should
+// descend into, returning its resolved real path (for cycle tracking) or
+// null. Real directories always qualify; a symlink qualifies only when it
+// resolves to a directory. Returns null when descending would revisit an
+// ancestor on the current path — that's a cycle (a link back into the
+// vault, or an external loop) that would otherwise recurse forever.
+async function resolveDirDescent(
+  full: string,
+  entry: Dirent,
+  parentReal: string,
+  ancestors: Set<string>
+): Promise<string | null> {
+  let real: string
+  if (entry.isDirectory()) {
+    real = path.join(parentReal, entry.name)
+  } else if (entry.isSymbolicLink()) {
+    try {
+      if (!(await fs.stat(full)).isDirectory()) return null
+      real = await fs.realpath(full)
+    } catch {
+      return null
+    }
+  } else {
+    return null
+  }
+  return ancestors.has(real) ? null : real
+}
+
 async function collectBuiltinSearchCandidates(root: string): Promise<VaultTextSearchCandidate[]> {
   const files: Array<{ full: string; folder: NoteFolder }> = []
   const walkFolder = async (
     folder: NoteFolder,
     dirAbs: string,
+    dirReal: string,
     topAbs: string,
-    isPrimaryRoot: boolean
+    isPrimaryRoot: boolean,
+    ancestors: Set<string>
   ): Promise<void> => {
     let entries: Dirent[]
     try {
@@ -1363,10 +1400,13 @@ async function collectBuiltinSearchCandidates(root: string): Promise<VaultTextSe
 
     for (const entry of entries) {
       const full = path.join(dirAbs, entry.name)
-      if (entry.isDirectory()) {
+      const childReal = await resolveDirDescent(full, entry, dirReal, ancestors)
+      if (childReal !== null) {
         if (entry.name.startsWith('.')) continue
         if (isPrimaryRoot && dirAbs === topAbs && shouldHidePrimaryRootEntry(entry.name)) continue
-        await walkFolder(folder, full, topAbs, isPrimaryRoot)
+        ancestors.add(childReal)
+        await walkFolder(folder, full, childReal, topAbs, isPrimaryRoot, ancestors)
+        ancestors.delete(childReal)
         continue
       }
       if (!(await isMarkdownNoteEntry(full, entry))) continue
@@ -1377,7 +1417,8 @@ async function collectBuiltinSearchCandidates(root: string): Promise<VaultTextSe
   for (const folder of SEARCHABLE_TEXT_FOLDERS) {
     const topAbs = await folderRoot(root, folder)
     const isPrimaryRoot = folder === 'inbox' && path.resolve(topAbs) === path.resolve(root)
-    await walkFolder(folder, topAbs, topAbs, isPrimaryRoot)
+    const topReal = await realpathOrResolve(topAbs)
+    await walkFolder(folder, topAbs, topReal, topAbs, isPrimaryRoot, new Set([topReal]))
   }
 
   const candidateGroups = await mapLimit(
@@ -1640,13 +1681,26 @@ async function readMeta(
   root: string,
   abs: string,
   folder: NoteFolder,
-  siblingOrder?: number
+  siblingOrder?: number,
+  isSymlink?: boolean
 ): Promise<NoteMeta> {
   const stat = await fs.stat(abs)
   const relPath = toPosix(path.relative(root, abs))
   const cacheKey = noteMetaCacheKey(root, abs)
   const cached = noteMetaCache.get(cacheKey)
   const resolvedSiblingOrder = siblingOrder ?? (await readSiblingOrder(abs))
+  // stat() follows symlinks, so it can't tell us whether `abs` itself is a
+  // link. The walk already knows from the readdir entry and passes it in;
+  // fall back to lstat for callers that don't. Resolved fresh every call so
+  // it can't go stale behind the body cache (like siblingOrder).
+  let linked = isSymlink
+  if (linked === undefined) {
+    try {
+      linked = (await fs.lstat(abs)).isSymbolicLink()
+    } catch {
+      linked = false
+    }
+  }
   if (
     cached &&
     sameMtimeMs(cached.mtimeMs, stat.mtimeMs) &&
@@ -1654,7 +1708,7 @@ async function readMeta(
     cached.meta.path === relPath &&
     cached.meta.folder === folder
   ) {
-    return { ...cached.meta, siblingOrder: resolvedSiblingOrder }
+    return { ...cached.meta, siblingOrder: resolvedSiblingOrder, isSymlink: linked }
   }
 
   let body = ''
@@ -1674,7 +1728,8 @@ async function readMeta(
     tags: extractTags(body),
     wikilinks: extractWikilinks(body),
     hasAttachments: bodyHasLocalAsset(body),
-    excerpt: buildExcerpt(body)
+    excerpt: buildExcerpt(body),
+    isSymlink: linked
   }
   noteMetaCache.set(cacheKey, {
     mtimeMs: stat.mtimeMs,
@@ -1730,7 +1785,9 @@ export async function listFolders(root: string): Promise<FolderEntry[]> {
   for (const folder of FOLDERS) {
     const topAbs = await folderRoot(root, folder)
     const isPrimaryRoot = folder === 'inbox' && path.resolve(topAbs) === path.resolve(root)
-    const walk = async (dirAbs: string, subpath: string): Promise<void> => {
+    const topReal = await realpathOrResolve(topAbs)
+    const ancestors = new Set<string>([topReal])
+    const walk = async (dirAbs: string, dirReal: string, subpath: string): Promise<void> => {
       let entries: Dirent[]
       try {
         entries = await fs.readdir(dirAbs, { withFileTypes: true })
@@ -1738,15 +1795,19 @@ export async function listFolders(root: string): Promise<FolderEntry[]> {
         return
       }
       for (const [index, e] of entries.entries()) {
-        if (!e.isDirectory()) continue
+        const full = path.join(dirAbs, e.name)
+        const childReal = await resolveDirDescent(full, e, dirReal, ancestors)
+        if (childReal === null) continue
         if (e.name.startsWith('.')) continue
         if (isPrimaryRoot && dirAbs === topAbs && shouldHidePrimaryRootEntry(e.name)) continue
         const nextSub = subpath ? `${subpath}/${e.name}` : e.name
-        out.push({ folder, subpath: nextSub, siblingOrder: index })
-        await walk(path.join(dirAbs, e.name), nextSub)
+        out.push({ folder, subpath: nextSub, siblingOrder: index, isSymlink: e.isSymbolicLink() })
+        ancestors.add(childReal)
+        await walk(full, childReal, nextSub)
+        ancestors.delete(childReal)
       }
     }
-    await walk(topAbs, '')
+    await walk(topAbs, topReal, '')
   }
   return out
 }
@@ -1754,12 +1815,19 @@ export async function listFolders(root: string): Promise<FolderEntry[]> {
 export async function listNotes(root: string): Promise<NoteMeta[]> {
   const startedAt = performance.now()
   await hydratePersistedNoteMetaCache(root)
-  const noteFiles: Array<{ full: string; folder: NoteFolder; siblingOrder: number }> = []
+  const noteFiles: Array<{
+    full: string
+    folder: NoteFolder
+    siblingOrder: number
+    isSymlink: boolean
+  }> = []
   const walkFolder = async (
     folder: NoteFolder,
     dirAbs: string,
+    dirReal: string,
     topAbs: string,
-    isPrimaryRoot: boolean
+    isPrimaryRoot: boolean,
+    ancestors: Set<string>
   ): Promise<void> => {
     let entries: Dirent[]
     try {
@@ -1769,14 +1837,17 @@ export async function listNotes(root: string): Promise<NoteMeta[]> {
     }
     for (const [index, entry] of entries.entries()) {
       const full = path.join(dirAbs, entry.name)
-      if (entry.isDirectory()) {
+      const childReal = await resolveDirDescent(full, entry, dirReal, ancestors)
+      if (childReal !== null) {
         if (entry.name.startsWith('.')) continue
         if (isPrimaryRoot && dirAbs === topAbs && shouldHidePrimaryRootEntry(entry.name)) continue
-        await walkFolder(folder, full, topAbs, isPrimaryRoot)
+        ancestors.add(childReal)
+        await walkFolder(folder, full, childReal, topAbs, isPrimaryRoot, ancestors)
+        ancestors.delete(childReal)
         continue
       }
       if (await isMarkdownNoteEntry(full, entry)) {
-        noteFiles.push({ full, folder, siblingOrder: index })
+        noteFiles.push({ full, folder, siblingOrder: index, isSymlink: entry.isSymbolicLink() })
       }
     }
   }
@@ -1784,13 +1855,14 @@ export async function listNotes(root: string): Promise<NoteMeta[]> {
   for (const folder of FOLDERS) {
     const topAbs = await folderRoot(root, folder)
     const isPrimaryRoot = folder === 'inbox' && path.resolve(topAbs) === path.resolve(root)
-    await walkFolder(folder, topAbs, topAbs, isPrimaryRoot)
+    const topReal = await realpathOrResolve(topAbs)
+    await walkFolder(folder, topAbs, topReal, topAbs, isPrimaryRoot, new Set([topReal]))
   }
 
   const metas = (
     await mapLimit(noteFiles, NOTE_META_READ_CONCURRENCY, async (file) => {
       try {
-        return await readMeta(root, file.full, file.folder, file.siblingOrder)
+        return await readMeta(root, file.full, file.folder, file.siblingOrder, file.isSymlink)
       } catch {
         return null
       }
@@ -2654,7 +2726,7 @@ export async function hasAssetsDir(root: string): Promise<boolean> {
 
 export async function listAssets(root: string): Promise<AssetMeta[]> {
   const out: AssetMeta[] = []
-  const walk = async (dirAbs: string, topAbs = dirAbs): Promise<void> => {
+  const walk = async (dirAbs: string, dirReal: string, ancestors: Set<string>): Promise<void> => {
     let entries: Dirent[]
     try {
       entries = await fs.readdir(dirAbs, { withFileTypes: true })
@@ -2664,9 +2736,12 @@ export async function listAssets(root: string): Promise<AssetMeta[]> {
     for (const [index, entry] of entries.entries()) {
       if (entry.name.startsWith('.')) continue
       const full = path.join(dirAbs, entry.name)
-      if (entry.isDirectory()) {
+      const childReal = await resolveDirDescent(full, entry, dirReal, ancestors)
+      if (childReal !== null) {
         if (dirAbs === root && entry.name === INTERNAL_VAULT_DIR) continue
-        await walk(full, topAbs)
+        ancestors.add(childReal)
+        await walk(full, childReal, ancestors)
+        ancestors.delete(childReal)
         continue
       }
       if (!entry.isFile()) continue
@@ -2689,7 +2764,8 @@ export async function listAssets(root: string): Promise<AssetMeta[]> {
     }
   }
 
-  await walk(root, root)
+  const rootReal = await realpathOrResolve(root)
+  await walk(root, rootReal, new Set([rootReal]))
   out.sort((a, b) => b.updatedAt - a.updatedAt || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
   return out
 }

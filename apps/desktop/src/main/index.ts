@@ -2218,6 +2218,21 @@ function registerIpc(): void {
     shell.showItemInFolder(abs)
   })
 
+  handle(IPC.VAULT_REVEAL_NOTE_TARGET, async (_e, relPath: string) => {
+    if (isRemoteWorkspaceActive()) {
+      throw new Error('Reveal in file manager is only available for local vaults.')
+    }
+    const v = requireVault()
+    const abs = absolutePath(v.root, relPath)
+    let target: string
+    try {
+      target = await fsp.realpath(abs)
+    } catch {
+      throw new Error('Could not resolve the symlink target (it may be broken).')
+    }
+    shell.showItemInFolder(target)
+  })
+
   handle(
     IPC.VAULT_MOVE_NOTE,
     async (_e, relPath: string, targetFolder: NoteFolder, targetSubpath: string) => {
@@ -2343,6 +2358,24 @@ function registerIpc(): void {
       const v = requireVault()
       const abs = await folderAbsolutePath(v.root, folder, subpath)
       await shell.openPath(abs)
+    }
+  )
+
+  handle(
+    IPC.VAULT_REVEAL_FOLDER_TARGET,
+    async (_e, folder: NoteFolder, subpath: string) => {
+      if (isRemoteWorkspaceActive()) {
+        throw new Error('Reveal in file manager is only available for local vaults.')
+      }
+      const v = requireVault()
+      const abs = await folderAbsolutePath(v.root, folder, subpath)
+      let target: string
+      try {
+        target = await fsp.realpath(abs)
+      } catch {
+        throw new Error('Could not resolve the symlink target (it may be broken).')
+      }
+      await shell.openPath(target)
     }
   )
 

@@ -43,6 +43,7 @@ export const IPC = {
   VAULT_DUPLICATE_NOTE: 'vault:duplicate-note',
   VAULT_EXPORT_NOTE_PDF: 'vault:export-note-pdf',
   VAULT_REVEAL_NOTE: 'vault:reveal-note',
+  VAULT_REVEAL_NOTE_TARGET: 'vault:reveal-note-target',
   VAULT_MOVE_NOTE: 'vault:move-note',
   VAULT_IMPORT_FILES: 'vault:import-files',
   VAULT_IMPORT_PASTED_IMAGE: 'vault:import-pasted-image',
@@ -56,6 +57,7 @@ export const IPC = {
   VAULT_DELETE_FOLDER: 'vault:delete-folder',
   VAULT_DUPLICATE_FOLDER: 'vault:duplicate-folder',
   VAULT_REVEAL_FOLDER: 'vault:reveal-folder',
+  VAULT_REVEAL_FOLDER_TARGET: 'vault:reveal-folder-target',
   VAULT_REVEAL_ASSETS_DIR: 'vault:reveal-assets-dir',
   VAULT_SCAN_TASKS: 'vault:scan-tasks',
   VAULT_SCAN_TASKS_FOR: 'vault:scan-tasks-for',
@@ -273,6 +275,10 @@ export interface NoteMeta {
   hasAttachments: boolean
   /** First ~200 chars of the body stripped of markdown noise, for list previews. */
   excerpt: string
+  /** True when this note's own directory entry is a symlink (the file itself
+   *  is linked into the vault). Notes that merely live inside a symlinked
+   *  folder are not flagged — the folder carries the marker instead. */
+  isSymlink?: boolean
 }
 
 export interface ListNotesPageRequest {
@@ -489,6 +495,8 @@ export interface FolderEntry {
   subpath: string
   /** Zero-based order within the parent directory as read from disk. */
   siblingOrder: number
+  /** True when this folder's own directory entry is a symlink into the vault. */
+  isSymlink?: boolean
 }
 
 export type VaultChangeKind = 'add' | 'change' | 'unlink'

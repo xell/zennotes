@@ -135,6 +135,8 @@ export interface ZenBridge {
   duplicateNote(relPath: string): Promise<NoteMeta>
   exportNotePdf(relPath: string): Promise<string | null>
   revealNote(relPath: string): Promise<void>
+  /** Reveal the original target of a symlinked note in the OS file manager. */
+  revealNoteTarget(relPath: string): Promise<void>
   moveNote(relPath: string, targetFolder: NoteFolder, targetSubpath: string): Promise<NoteMeta>
   importFilesToNote(notePath: string, sourcePaths: string[]): Promise<ImportedAsset[]>
   importPastedImage(input: PastedImageInput): Promise<ImportedAsset>
@@ -148,6 +150,8 @@ export interface ZenBridge {
   deleteFolder(folder: NoteFolder, subpath: string): Promise<void>
   duplicateFolder(folder: NoteFolder, subpath: string): Promise<string>
   revealFolder(folder: NoteFolder, subpath: string): Promise<void>
+  /** Open the original target directory of a symlinked folder in the OS file manager. */
+  revealFolderTarget(folder: NoteFolder, subpath: string): Promise<void>
   revealAssetsDir(): Promise<void>
   getPathForFile(file: File): string | null
   resolveLocalAssetUrl(vaultRoot: string, notePath: string, href: string): string | null

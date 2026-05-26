@@ -1552,6 +1552,19 @@ export function Sidebar(): JSX.Element {
           await revealFolderAction(folder, subpath);
         },
       });
+      if (
+        allFolders.some(
+          (f) => f.folder === folder && f.subpath === subpath && f.isSymlink,
+        )
+      ) {
+        items.push({
+          label: "Reveal Original Location",
+          icon: <ArrowUpRightIcon />,
+          onSelect: async () => {
+            await window.zen.revealFolderTarget(folder, subpath);
+          },
+        });
+      }
     }
     items.push({
       label: "Copy Path",
@@ -1627,6 +1640,7 @@ export function Sidebar(): JSX.Element {
   }, [
     folderMenu,
     notes,
+    allFolders,
     vault,
     createAndOpen,
     openArchiveView,
@@ -1749,6 +1763,15 @@ export function Sidebar(): JSX.Element {
           await window.zen.revealNote(n.path);
         },
       });
+      if (n.isSymlink) {
+        items.push({
+          label: "Reveal Original Location",
+          icon: <ArrowUpRightIcon />,
+          onSelect: async () => {
+            await window.zen.revealNoteTarget(n.path);
+          },
+        });
+      }
     }
     items.push({ kind: "separator" });
     if (n.folder === "inbox" || n.folder === "quick") {
@@ -2881,6 +2904,7 @@ interface TreeNode {
   notes: NoteMeta[];
   assets: AssetMeta[];
   children: TreeNode[];
+  isSymlink?: boolean;
 }
 
 type TreeRenderEntry =
@@ -2998,6 +3022,9 @@ function buildTree(
   const folderOrder = new Map(
     folders.map((folder) => [folder.subpath, folder.siblingOrder] as const),
   );
+  const symlinkBySubpath = new Map(
+    folders.map((folder) => [folder.subpath, folder.isSymlink ?? false] as const),
+  );
 
   const ensureFolder = (subpath: string): TreeNode => {
     const existing = byPath.get(subpath);
@@ -3016,6 +3043,7 @@ function buildTree(
           notes: [],
           assets: [],
           children: [],
+          isSymlink: symlinkBySubpath.get(acc) ?? false,
         };
         byPath.set(acc, node);
         parent.children.push(node);
@@ -3529,6 +3557,7 @@ function SubTree({
       <TreeRow
         icon={iconOption.id === "folder" ? <FolderGlyphIcon open={!isCollapsed && hasChildren} /> : iconOption.icon}
         label={node.name}
+        isSymlink={node.isSymlink}
         count={countNotesInTree(node)}
         active={isFolderActive(folder, node.subpath)}
         expandable={hasChildren}
@@ -3760,6 +3789,36 @@ const NoteLeaf = memo(function NoteLeaf({
         </svg>
       </SidebarGlyph>
       <span className="flex-1 truncate">{note.title}</span>
+      {note.isSymlink && (
+        <span
+          aria-label="Symlinked note"
+          title="Symlinked into this vault"
+          className={[
+            "shrink-0",
+            active
+              ? sidebarFocused && !vimHighlight
+                ? "text-accent/70"
+                : "text-white/70"
+              : selected
+                ? "text-accent/75"
+                : "text-ink-400",
+          ].join(" ")}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M7 17 17 7" />
+            <path d="M7 7h10v10" />
+          </svg>
+        </span>
+      )}
       {note.hasAttachments && (
         <span
           aria-label="Has embedded files"
@@ -3801,6 +3860,7 @@ function areNoteLeafPropsEqual(prev: NoteLeafProps, next: NoteLeafProps): boolea
     prev.note.path === next.note.path &&
     prev.note.title === next.note.title &&
     prev.note.hasAttachments === next.note.hasAttachments &&
+    prev.note.isSymlink === next.note.isSymlink &&
     prev.depth === next.depth &&
     prev.showSidebarChevrons === next.showSidebarChevrons &&
     prev.active === next.active &&
@@ -3924,6 +3984,7 @@ function TreeRow({
   sidebarData,
   selectionKey,
   trailing,
+  isSymlink = false,
   reserveLeadingSlot = true,
   showExpandChevron = true,
 }: {
@@ -3951,6 +4012,8 @@ function TreeRow({
   selectionKey?: string;
   /** Optional inline action(s) shown on the right edge, revealed on hover. */
   trailing?: JSX.Element;
+  /** Show a symlink indicator when this row's directory entry is a link. */
+  isSymlink?: boolean;
   /** Keep a blank chevron column for non-expandable rows when alignment matters. */
   reserveLeadingSlot?: boolean;
   /** Hide the chevron affordance while keeping row-click toggle behavior. */
@@ -4041,6 +4104,30 @@ function TreeRow({
         {icon}
       </SidebarGlyph>
       <span className="flex-1 truncate">{label}</span>
+      {isSymlink && (
+        <span
+          aria-label="Symlinked folder"
+          title="Symlinked into this vault"
+          className={[
+            "shrink-0",
+            strongActive ? "text-white/70" : selected ? "text-accent/75" : "text-ink-400",
+          ].join(" ")}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M7 17 17 7" />
+            <path d="M7 7h10v10" />
+          </svg>
+        </span>
+      )}
       {sidebarFocused && vimHighlight && (
         <RowKeyHint
           active={active || selected}

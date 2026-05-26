@@ -462,6 +462,61 @@ describe('listNotes symlinks', () => {
     const notes = await listNotes(root)
     expect(notes.some((note) => note.path === 'inbox/Linked.md')).toBe(true)
   })
+
+  it('lists notes inside a directory symlinked into the vault', async () => {
+    const root = await makeTempDir('zennotes-symlink-dir-')
+    await ensureVaultLayout(root)
+    const srcDir = await makeTempDir('zennotes-symlink-dir-src-')
+    await writeFile(path.join(srcDir, 'Inside.md'), '# Inside\n\nlinked dir body\n', 'utf8')
+
+    const link = path.join(root, 'inbox', 'LinkedDir')
+    try {
+      await symlink(srcDir, link)
+    } catch {
+      // Creating symlinks can require privileges (e.g. Windows); skip there.
+      return
+    }
+
+    const notes = await listNotes(root)
+    expect(notes.some((note) => note.path === 'inbox/LinkedDir/Inside.md')).toBe(true)
+  })
+
+  it('lists a directory symlinked into the vault as a folder', async () => {
+    const root = await makeTempDir('zennotes-symlink-folder-')
+    await ensureVaultLayout(root)
+    const srcDir = await makeTempDir('zennotes-symlink-folder-src-')
+    await writeFile(path.join(srcDir, 'Inside.md'), '# Inside\n', 'utf8')
+
+    const link = path.join(root, 'inbox', 'LinkedDir')
+    try {
+      await symlink(srcDir, link)
+    } catch {
+      return
+    }
+
+    const folders = await listFolders(root)
+    expect(folders.some((f) => f.folder === 'inbox' && f.subpath === 'LinkedDir')).toBe(true)
+  })
+
+  it('does not infinitely recurse on a symlink cycle inside a linked directory', async () => {
+    const root = await makeTempDir('zennotes-symlink-cycle-')
+    await ensureVaultLayout(root)
+    const srcDir = await makeTempDir('zennotes-symlink-cycle-src-')
+    await writeFile(path.join(srcDir, 'Inside.md'), '# Inside\n', 'utf8')
+
+    const link = path.join(root, 'inbox', 'LinkedDir')
+    try {
+      await symlink(srcDir, link)
+      // A self-referential link inside the linked tree loops forever
+      // unless the walk tracks resolved ancestors.
+      await symlink(srcDir, path.join(srcDir, 'loop'))
+    } catch {
+      return
+    }
+
+    const notes = await listNotes(root)
+    expect(notes.some((note) => note.path === 'inbox/LinkedDir/Inside.md')).toBe(true)
+  })
 })
 
 describe('listNotes metadata cache', () => {

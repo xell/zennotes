@@ -308,6 +308,8 @@ const api: ZenBridge = {
   exportNotePdf: (relPath: string): Promise<string | null> =>
     ipcRenderer.invoke(IPC.VAULT_EXPORT_NOTE_PDF, relPath),
   revealNote: (relPath: string): Promise<void> => ipcRenderer.invoke(IPC.VAULT_REVEAL_NOTE, relPath),
+  revealNoteTarget: (relPath: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.VAULT_REVEAL_NOTE_TARGET, relPath),
   moveNote: (
     relPath: string,
     targetFolder: NoteFolder,
@@ -338,6 +340,8 @@ const api: ZenBridge = {
     ipcRenderer.invoke(IPC.VAULT_DUPLICATE_FOLDER, folder, subpath),
   revealFolder: (folder: NoteFolder, subpath: string): Promise<void> =>
     ipcRenderer.invoke(IPC.VAULT_REVEAL_FOLDER, folder, subpath),
+  revealFolderTarget: (folder: NoteFolder, subpath: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.VAULT_REVEAL_FOLDER_TARGET, folder, subpath),
   revealAssetsDir: (): Promise<void> => ipcRenderer.invoke(IPC.VAULT_REVEAL_ASSETS_DIR),
   getPathForFile: (file: File): string | null => {
     try {
