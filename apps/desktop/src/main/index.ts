@@ -154,6 +154,7 @@ import {
 import { recordMainPerf } from './perf'
 import {
   parseOpenNoteDeepLink,
+  parseQuickCaptureDeepLink,
   ZENNOTES_DEEP_LINK_SCHEME
 } from './deep-links'
 import {
@@ -326,20 +327,29 @@ async function flushPendingFloatingNoteRequests(): Promise<void> {
   }
 }
 
-function handleExternalOpenUrl(rawUrl: string): boolean {
+type ExternalOpenUrlResult = 'none' | 'note' | 'quick-capture'
+
+function handleExternalOpenUrl(rawUrl: string): ExternalOpenUrlResult {
+  if (parseQuickCaptureDeepLink(rawUrl)) {
+    toggleQuickCaptureWindow()
+    return 'quick-capture'
+  }
   const request = parseOpenNoteDeepLink(rawUrl)
-  if (!request) return false
+  if (!request) return 'none'
   if (request.target === 'window') queueFloatingNoteRequest(request.path)
   else queueOpenNoteRequest(request.path)
-  return true
+  return 'note'
 }
 
-function handleStartupDeepLinks(argv: string[]): void {
+function handleStartupDeepLinks(argv: string[]): ExternalOpenUrlResult {
+  let result: ExternalOpenUrlResult = 'none'
   for (const arg of argv) {
     if (arg.startsWith(`${ZENNOTES_DEEP_LINK_SCHEME}:`)) {
-      handleExternalOpenUrl(arg)
+      const next = handleExternalOpenUrl(arg)
+      if (next !== 'none') result = next
     }
   }
+  return result
 }
 
 function focusWindow(win: BrowserWindow): void {
@@ -2908,11 +2918,18 @@ function registerQuickCaptureHotkey(hotkey: string): { ok: boolean; error?: stri
   const trimmed = hotkey.trim()
   if (!trimmed) return { ok: true }
   try {
-    const ok = globalShortcut.register(trimmed, toggleQuickCaptureWindow)
+    const ok = globalShortcut.register(trimmed, () => {
+      console.info(`[zen:quick-capture] hotkey pressed: ${trimmed}`)
+      toggleQuickCaptureWindow()
+    })
     if (!ok) {
       return { ok: false, error: `Failed to register quick capture hotkey: ${trimmed}` }
     }
+    if (!globalShortcut.isRegistered(trimmed)) {
+      return { ok: false, error: `Quick capture hotkey was not registered by the system: ${trimmed}` }
+    }
     registeredQuickCaptureHotkey = trimmed
+    console.info(`[zen:quick-capture] registered hotkey: ${trimmed}`)
     return { ok: true }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -3171,6 +3188,10 @@ async function runMenuUpdateCheck(): Promise<void> {
 // before `app.whenReady()`.
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('disable-features', 'VaapiVideoDecoder,VaapiVideoEncoder')
+  // Wayland compositors (including Hyprland/Omarchy) expose global shortcuts
+  // through xdg-desktop-portal, but Electron only wires that path when this
+  // Chromium feature is enabled before app.whenReady().
+  app.commandLine.appendSwitch('enable-features', 'GlobalShortcutsPortal')
 }
 
 app.whenReady().then(async () => {
@@ -3289,7 +3310,7 @@ app.whenReady().then(async () => {
 
 app.on('open-url', (event, url) => {
   event.preventDefault()
-  if (!handleExternalOpenUrl(url)) {
+  if (handleExternalOpenUrl(url) === 'none') {
     console.warn(`Ignoring unsupported ${ZENNOTES_DEEP_LINK_SCHEME} URL: ${url}`)
   }
 })
@@ -3307,9 +3328,9 @@ app.on('open-file', (event, filePath) => {
 // already running) forwards its argv here instead of starting a second
 // process.
 app.on('second-instance', (_event, argv) => {
-  handleStartupDeepLinks(argv)
+  const deepLinkResult = handleStartupDeepLinks(argv)
   handleStartupMarkdownArgs(argv, false)
-  if (mainWindow && !mainWindow.isDestroyed()) focusWindow(mainWindow)
+  if (deepLinkResult !== 'quick-capture' && mainWindow && !mainWindow.isDestroyed()) focusWindow(mainWindow)
 })
 
 app.on('window-all-closed', () => {
