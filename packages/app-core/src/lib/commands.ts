@@ -895,10 +895,10 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
   cmds.push(
     {
       id: 'view.tasks',
-      title: 'Open Tasks',
+      title: `Open ${labels().tasks}`,
       category: 'View',
       shortcut: ':tasks',
-      keywords: 'todo checklist due waiting done vault',
+      keywords: 'tasks todo checklist due waiting done vault',
       when: () => !isTasksViewActive(getState()),
       run: () => getState().openTasksView()
     },

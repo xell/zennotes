@@ -1549,6 +1549,12 @@ export function SettingsModal(): JSX.Element {
           title: 'Trash label',
           description: 'Display name for deleted-note recovery.',
           keywords: ['system folders', 'folder label']
+        },
+        {
+          id: 'tasks-label',
+          title: 'Tasks label',
+          description: 'Display name for the vault-wide Tasks view.',
+          keywords: ['system folders', 'tasks', 'todos', 'goals', 'rename']
         }
       ],
       content: (
@@ -2031,7 +2037,7 @@ export function SettingsModal(): JSX.Element {
 
           <Section
             title="System Folders"
-            description="Customize how the built-in folders are named in the UI. This changes labels only; the internal folder ids stay `inbox`, `quick`, `archive`, and `trash`, even when primary notes live at the vault root."
+            description="Customize how the built-in folders and the Tasks view are named in the UI. This changes labels only — the internal folder ids stay `inbox`, `quick`, `archive`, and `trash`, even when primary notes live at the vault root."
           >
             <TextInputRow
               label="Inbox label"
@@ -2065,8 +2071,16 @@ export function SettingsModal(): JSX.Element {
               settingId="trash-label"
               onChange={(next) => setSystemFolderLabel('trash', next)}
             />
+            <TextInputRow
+              label="Tasks label"
+              description="Display name for the vault-wide Tasks view — sidebar, tab, title bar, and command palette."
+              value={systemFolderLabels.tasks ?? ''}
+              placeholder={DEFAULT_SYSTEM_FOLDER_LABELS.tasks}
+              settingId="tasks-label"
+              onChange={(next) => setSystemFolderLabel('tasks', next)}
+            />
             <InlineNote>
-              Current labels: {getSystemFolderLabel('quick', systemFolderLabels)}, {getSystemFolderLabel('inbox', systemFolderLabels)}, {getSystemFolderLabel('archive', systemFolderLabels)}, and {getSystemFolderLabel('trash', systemFolderLabels)}.
+              Current labels: {getSystemFolderLabel('quick', systemFolderLabels)}, {getSystemFolderLabel('inbox', systemFolderLabels)}, {getSystemFolderLabel('archive', systemFolderLabels)}, {getSystemFolderLabel('trash', systemFolderLabels)}, and {getSystemFolderLabel('tasks', systemFolderLabels)}.
             </InlineNote>
           </Section>
         </div>
@@ -3286,7 +3300,7 @@ function TextInputRow({
       className="flex items-center justify-between gap-5 px-5 py-4"
       {...settingsSearchTargetProps(settingId)}
     >
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-ink-900">{label}</div>
         {description && <div className="mt-1 text-xs leading-5 text-ink-500">{description}</div>}
       </div>
@@ -3314,7 +3328,7 @@ function TextInputRow({
           }
         }}
         placeholder={placeholder}
-        className="w-[23rem] max-w-[50vw] rounded-xl border border-paper-300/70 bg-paper-100/80 px-3 py-2 text-sm text-ink-900 outline-none placeholder:text-ink-400 focus:border-accent/45"
+        className="w-[23rem] max-w-[50vw] shrink-0 rounded-xl border border-paper-300/70 bg-paper-100/80 px-3 py-2 text-sm text-ink-900 outline-none placeholder:text-ink-400 focus:border-accent/45"
       />
     </div>
   )

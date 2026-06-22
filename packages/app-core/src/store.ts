@@ -71,6 +71,7 @@ import {
 import type { KeymapId, KeymapOverrides } from './lib/keymaps'
 import { normalizeKeymapOverrides } from './lib/keymaps'
 import {
+  type LabelKey,
   type SystemFolderLabels,
   normalizeSystemFolderLabels
 } from './lib/system-folder-labels'
@@ -1965,7 +1966,7 @@ interface Store {
   setInterfaceFont: (family: string | null) => void
   setTextFont: (family: string | null) => void
   setMonoFont: (family: string | null) => void
-  setSystemFolderLabel: (folder: NoteFolder, label: string | null) => void
+  setSystemFolderLabel: (key: LabelKey, label: string | null) => void
   setSidebarWidth: (px: number) => void
   setNoteListWidth: (px: number) => void
   setNoteSortOrder: (order: NoteSortOrder) => void

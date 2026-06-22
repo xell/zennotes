@@ -3006,6 +3006,7 @@ export function Sidebar(): JSX.Element {
           <TaskSidebarRow
             active={tasksViewActive}
             onClick={() => void openTasksView()}
+            label={folderLabels.tasks}
             sidebarIdx={idxCounter.current.value++}
             vimHighlight={vimCursor === idxCounter.current.value - 1}
             sidebarFocused={isSidebarFocused}
@@ -4851,12 +4852,14 @@ function TreeRow({
 function TaskSidebarRow({
   active,
   onClick,
+  label,
   sidebarIdx,
   vimHighlight,
   sidebarFocused = false,
 }: {
   active: boolean;
   onClick: () => void;
+  label: string;
   sidebarIdx?: number;
   vimHighlight?: boolean;
   sidebarFocused?: boolean;
@@ -4896,7 +4899,7 @@ function TaskSidebarRow({
       <SidebarGlyph active={strongActive} rowActive={active}>
         <CheckSquareIcon width={12} height={12} strokeWidth={2.15} />
       </SidebarGlyph>
-      <span className="flex-1 truncate">Tasks</span>
+      <span className="flex-1 truncate">{label}</span>
     </div>
   );
 }
