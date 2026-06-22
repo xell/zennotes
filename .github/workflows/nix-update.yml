@@ -53,10 +53,16 @@ jobs:
           NPM_HASH=$(nix run --fallback nixpkgs#prefetch-npm-deps -- /tmp/package-lock.json)
           echo "npmDepsHash = $NPM_HASH"
 
-          # Write version + source + npm now; leave vendorHash fake so the Go
-          # build surfaces the real one.
-          jq --arg v "$V" --arg h "$SRC_HASH" --arg n "$NPM_HASH" --arg f "$FAKE" \
-            '.version=$v | .hash=$h | .npmDepsHash=$n | .vendorHash=$f' "$DATA" > "$DATA.tmp"
+          # 2.5) desktopHash — the prebuilt linux-x64 release tarball the desktop
+          #      package fetchurl's (see package-desktop.nix). SRI hash of the asset.
+          DESKTOP_HASH=$(nix store prefetch-file --json \
+            "https://github.com/ZenNotes/zennotes/releases/download/v$V/ZenNotes-$V-linux-x64.tar.gz" | jq -r '.hash')
+          echo "desktopHash = $DESKTOP_HASH"
+
+          # Write version + source + npm + desktop now; leave vendorHash fake so the
+          # Go build surfaces the real one.
+          jq --arg v "$V" --arg h "$SRC_HASH" --arg n "$NPM_HASH" --arg d "$DESKTOP_HASH" --arg f "$FAKE" \
+            '.version=$v | .hash=$h | .npmDepsHash=$n | .desktopHash=$d | .vendorHash=$f' "$DATA" > "$DATA.tmp"
           mv "$DATA.tmp" "$DATA"
 
           # 3) vendorHash — build the server; the Go vendor fixed-output derivation
