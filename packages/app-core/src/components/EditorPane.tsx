@@ -1950,6 +1950,12 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   useEffect(() => {
     if (!isActive) return
     if (focusedPanel !== 'editor') return
+    // A freshly created note focuses its title-rename field first (#214). That
+    // input's onFocus flips focusedPanel to 'editor', which re-runs this effect
+    // — don't bounce focus out of the title field and into the body H1. The
+    // editor takes focus explicitly once the rename is committed (Enter/Escape).
+    const active = document.activeElement
+    if (active instanceof HTMLElement && active.dataset.noteTitleInput != null) return
     viewRef.current?.focus()
   }, [isActive, focusedPanel])
 
@@ -3771,9 +3777,20 @@ function Breadcrumb({
 
   useEffect(() => setValue(note.title), [note.title])
   useEffect(() => setWarning(''), [note.path])
+  // Switching to a different note never inherits a previous note's open rename
+  // field. Listed before the autoFocus latch so a freshly created note (path +
+  // autoFocus change together) ends up editing.
   useEffect(() => {
-    setEditing(autoFocus)
-  }, [autoFocus, note.path])
+    setEditing(false)
+  }, [note.path])
+  // Enter title-edit mode when a freshly created note requests it (#214).
+  // Entering is a one-way latch: when `onAutoFocusHandled` clears the pending
+  // flag (autoFocus → false) we must NOT drop out of editing, or the focused
+  // input would unmount mid-create and focus would fall back to the body. Only
+  // Enter/Escape/blur or a note switch leaves edit mode.
+  useEffect(() => {
+    if (autoFocus) setEditing(true)
+  }, [autoFocus])
   useEffect(() => {
     if (!editingNow) return
     const raf = requestAnimationFrame(() => {
@@ -3782,7 +3799,7 @@ function Breadcrumb({
       if (autoFocus) onAutoFocusHandled()
     })
     return () => cancelAnimationFrame(raf)
-  }, [autoFocus, editingNow, onAutoFocusHandled])
+  }, [autoFocus, editingNow, onAutoFocusHandled, note.path])
 
   const topFolder = note.folder
   const segments = noteFolderSubpath(note, vaultSettings)
@@ -3887,6 +3904,7 @@ function Breadcrumb({
       {editingNow ? (
         <input
           ref={inputRef}
+          data-note-title-input=""
           spellCheck={false}
           value={value}
           placeholder="Untitled"

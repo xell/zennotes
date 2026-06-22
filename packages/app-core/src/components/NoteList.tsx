@@ -204,7 +204,7 @@ export function NoteList(): JSX.Element {
     const onNew = async (): Promise<void> => {
       await useStore
         .getState()
-        .createAndOpen(n.folder === 'trash' ? 'inbox' : n.folder)
+        .createAndOpen(n.folder === 'trash' ? 'inbox' : n.folder, '', { focusTitle: true })
     }
 
     const items: ContextMenuItem[] = []
