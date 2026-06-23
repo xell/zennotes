@@ -48,8 +48,8 @@ modules:
     sources:
       # Bump `url` + `sha256` on each release (see README.md).
       - type: file
-        url: https://github.com/ZenNotes/zennotes/releases/download/v2.5.0/ZenNotes-2.5.0-linux-x86_64.AppImage
-        sha256: 8a45df0b12edcf6ce272625e89edc9a7a5fa855b04d9bf4f1dcdd18efde8fb49
+        url: https://github.com/ZenNotes/zennotes/releases/download/v2.6.0/ZenNotes-2.6.0-linux-x86_64.AppImage
+        sha256: 4daf43fbb3bd21337692251f6aabdd627f61de4775b8e7c4ea83ea49bf6027d6
         dest-filename: ZenNotes.AppImage
       - type: file
         path: zennotes.sh
