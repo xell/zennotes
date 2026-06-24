@@ -21,8 +21,8 @@ import {
   EditorState,
   StateEffect,
   StateField,
-  type Extension,
-  type Transaction
+  Transaction,
+  type Extension
 } from '@codemirror/state'
 import {
   Decoration,
@@ -804,6 +804,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const livePreviewCompartmentRef = useRef<Compartment | null>(null)
   const lineNumbersCompartmentRef = useRef<Compartment | null>(null)
   const wordWrapCompartmentRef = useRef<Compartment | null>(null)
+  // history() lives in a compartment so we can reset undo history on a note
+  // switch — otherwise Cmd+Z crosses notes and overwrites the current one (#247).
+  const historyCompartmentRef = useRef<Compartment | null>(null)
   const ignoreEditorScrollRef = useRef(false)
   const ignorePreviewScrollRef = useRef(false)
   const pendingOutlineJumpLineRef = useRef<number | null>(null)
@@ -1437,6 +1440,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       const livePreviewCompartment = new Compartment()
       const lineNumbersCompartment = new Compartment()
       const wordWrapCompartment = new Compartment()
+      const historyCompartment = new Compartment()
       vimCompartmentRef.current = vimCompartment
       editorKeymapCompartmentRef.current = editorKeymapCompartment
       markdownCompartmentRef.current = markdownCompartment
@@ -1444,6 +1448,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       livePreviewCompartmentRef.current = livePreviewCompartment
       lineNumbersCompartmentRef.current = lineNumbersCompartment
       wordWrapCompartmentRef.current = wordWrapCompartment
+      historyCompartmentRef.current = historyCompartment
       const s0 = useStore.getState()
       const initialPath = findLeaf(s0.paneLayout, paneId)?.activeTab ?? null
       const initialContent = initialPath ? s0.noteContents[initialPath] ?? null : null
@@ -1457,7 +1462,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
         extensions: [
           appMarkdownSnippetExtension(),
           vimCompartment.of(s0.vimMode ? vim() : []),
-          history(),
+          historyCompartment.of(history()),
           drawSelection(),
           highlightActiveLine(),
           taskJumpHighlightField,
@@ -1723,10 +1728,27 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     const dispatchStartedAt = performance.now()
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: nextBody },
-      annotations: [programmatic.of(true), skipOrderedListRenumber.of(true)],
+      annotations: [
+        programmatic.of(true),
+        skipOrderedListRenumber.of(true),
+        // A programmatic swap (tab switch / external file sync) must never be
+        // undoable — otherwise Cmd+Z reverts the editor to the other document
+        // and the resulting change saves it over the current note (#247).
+        Transaction.addToHistory.of(false)
+      ],
       effects: effects.length > 0 ? effects : undefined,
       selection: pathChanged ? { anchor: 0 } : { anchor: clampedAnchor, head: clampedHead }
     })
+    if (pathChanged) {
+      // Switching notes: also drop the previous note's undo history so undo
+      // can't cross the boundary at all. There's no "clear history" command, so
+      // remove the history field then re-add it empty. (#247)
+      const historyCompartment = historyCompartmentRef.current
+      if (historyCompartment) {
+        view.dispatch({ effects: historyCompartment.reconfigure([]) })
+        view.dispatch({ effects: historyCompartment.reconfigure(history()) })
+      }
+    }
     if (pathChanged && pendingJumpLocation?.path !== nextPath) {
       // Clear scroll on a genuine tab switch; the activation effect below
       // restores a remembered position afterward when there is one.
