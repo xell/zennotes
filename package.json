@@ -29,6 +29,7 @@
     "perf:web-runtime": "node tooling/scripts/perf-web-runtime.mjs",
     "test:sidebar-vim": "node tooling/scripts/sidebar-vim-smoke.mjs",
     "pack": "npm run pack --workspace @zennotes/desktop",
+    "install:mac": "npm run pack && node tooling/scripts/install-mac.mjs",
     "dist:mac": "npm run dist:mac --workspace @zennotes/desktop",
     "dist:win": "npm run dist:win --workspace @zennotes/desktop",
     "dist:linux": "npm run dist:linux --workspace @zennotes/desktop"
