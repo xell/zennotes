@@ -46,6 +46,7 @@ import {
   createFolder,
   createNote,
   createExcalidraw,
+  convertObsidianExcalidraw,
   deleteAsset,
   DEFAULT_QUICK_CAPTURE_HOTKEY,
   deleteFolder,
@@ -2321,6 +2322,14 @@ function registerIpc(): void {
       return await createExcalidraw(v.root, folder, subpath, title)
     }
   )
+
+  handle(IPC.VAULT_CONVERT_OBSIDIAN_EXCALIDRAW, async (_e, relPath: string) => {
+    if (isRemoteWorkspaceActive()) {
+      throw new Error('Converting Obsidian drawings is only available for local vaults.')
+    }
+    const v = requireVault()
+    return await convertObsidianExcalidraw(v.root, relPath)
+  })
 
   handle(IPC.VAULT_RENAME_NOTE, async (_e, relPath: string, nextTitle: string) => {
     if (isRemoteWorkspaceActive()) {

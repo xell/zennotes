@@ -53,7 +53,13 @@ import {
   isDatabaseInternalPath,
   isFormDirName
 } from '@shared/databases'
-import { isExcalidrawPath, emptyExcalidrawDocument } from '@shared/excalidraw'
+import {
+  isExcalidrawPath,
+  emptyExcalidrawDocument,
+  extractObsidianExcalidrawScene,
+  isObsidianExcalidrawPath,
+  isObsidianExcalidrawMarkdown
+} from '@shared/excalidraw'
 import { DEMO_TOUR_ASSETS, DEMO_TOUR_NOTES } from './demo-tour-data'
 
 const CONFIG_FILE = 'zennotes.config.json'
@@ -2955,6 +2961,46 @@ export async function createExcalidraw(
   await fs.writeFile(abs, JSON.stringify(emptyExcalidrawDocument(), null, 2), 'utf8')
   invalidateNoteMetaCache(root, toPosix(path.relative(root, abs)))
   return await readMeta(root, abs, folder)
+}
+
+/**
+ * Convert an Obsidian Excalidraw markdown drawing (`*.excalidraw.md`, or a `.md`
+ * carrying `excalidraw-plugin` frontmatter) into a native `.excalidraw` file so
+ * it renders in ZenNotes' drawing editor. Non-destructive: the original markdown
+ * is left in place. Returns the new drawing's metadata. (#266)
+ */
+export async function convertObsidianExcalidraw(root: string, rel: string): Promise<NoteMeta> {
+  const abs = resolveSafe(root, rel)
+  const folder = folderOf(root, abs)
+  if (!folder) throw new Error(`Drawing is not in a known folder: ${rel}`)
+  const markdown = await fs.readFile(abs, 'utf8')
+  if (!isObsidianExcalidrawPath(rel) && !isObsidianExcalidrawMarkdown(markdown)) {
+    throw new Error('This file is not an Obsidian Excalidraw drawing.')
+  }
+  const scene = extractObsidianExcalidrawScene(markdown)
+  if (!scene) {
+    throw new Error('Could not read an Excalidraw scene from this file.')
+  }
+
+  const fileName = path.basename(abs)
+  const base =
+    (fileName.toLowerCase().endsWith('.excalidraw.md')
+      ? fileName.slice(0, -'.excalidraw.md'.length)
+      : path.basename(fileName, path.extname(fileName))) || 'Untitled drawing'
+  const dir = path.dirname(abs)
+  let finalTitle = base
+  for (let n = 2; ; n++) {
+    try {
+      await fs.access(path.join(dir, `${finalTitle}.excalidraw`))
+      finalTitle = `${base} ${n}`
+    } catch {
+      break
+    }
+  }
+  const destAbs = path.join(dir, `${finalTitle}.excalidraw`)
+  await fs.writeFile(destAbs, JSON.stringify(scene, null, 2), 'utf8')
+  invalidateNoteMetaCache(root, toPosix(path.relative(root, destAbs)))
+  return await readMeta(root, destAbs, folder)
 }
 
 /**

@@ -39,6 +39,7 @@ export const IPC = {
   VAULT_APPEND_NOTE: 'vault:append-note',
   VAULT_CREATE_NOTE: 'vault:create-note',
   VAULT_CREATE_EXCALIDRAW: 'vault:create-excalidraw',
+  VAULT_CONVERT_OBSIDIAN_EXCALIDRAW: 'vault:convert-obsidian-excalidraw',
   VAULT_RENAME_NOTE: 'vault:rename-note',
   VAULT_DELETE_NOTE: 'vault:delete-note',
   VAULT_MOVE_TO_TRASH: 'vault:move-to-trash',

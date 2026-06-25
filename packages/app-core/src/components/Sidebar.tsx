@@ -1,4 +1,15 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { getVirtualRange } from "../lib/virtual-list";
 import {
   isArchiveViewActive,
   isAssetsViewActive,
@@ -2697,6 +2708,7 @@ export function Sidebar(): JSX.Element {
   ]);
 
   return (
+    <SidebarScrollerContext.Provider value={sidebarScrollRef}>
     <aside
       className={`glass-sidebar relative flex shrink-0 flex-col pt-3${isSidebarFocused ? " panel-focused" : ""}`}
       style={{ width: sidebarWidth }}
@@ -3424,6 +3436,7 @@ export function Sidebar(): JSX.Element {
         }}
       />
     </aside>
+    </SidebarScrollerContext.Provider>
   );
 }
 
@@ -3455,6 +3468,226 @@ function treeRenderEntryPath(entry: TreeRenderEntry): string | null {
   if (entry.type === "note") return entry.note.path;
   if (entry.type === "asset") return entry.asset.path;
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Virtualized leaf-list rendering
+//
+// A folder holding thousands of notes used to mount one full, hook-heavy
+// NoteLeaf per note, so an expanded 5k-note folder produced ~35k DOM nodes and
+// kept 5k store subscriptions live. We now mount full rows only for the
+// scrolled-into-view window; every other row renders as an inert, hookless
+// placeholder of the SAME height that still carries the exact data-* attributes
+// the keyboard-nav / range-select / cursor machinery reads from the DOM. Because
+// every row stays in the DOM (just cheap when off-screen) none of that logic
+// changes — only the rendering cost does. Leaf rows are a fixed 36px (`h-9`).
+const SIDEBAR_LEAF_ROW_HEIGHT = 36;
+const SIDEBAR_WINDOW_OVERSCAN = 10;
+// Provides the scroll container so a windowed list can read scrollTop/height
+// and react to scroll without re-rendering the whole sidebar.
+const SidebarScrollerContext =
+  createContext<React.RefObject<HTMLDivElement | null> | null>(null);
+
+const SidebarLeafPlaceholder = memo(function SidebarLeafPlaceholder({
+  sidebarIdx,
+  type,
+  path,
+  selectionKey,
+  onSelectNote,
+  onOpenAsset,
+}: {
+  sidebarIdx: number;
+  type: "note" | "asset";
+  path: string;
+  selectionKey?: string;
+  onSelectNote: (path: string) => void;
+  onOpenAsset: (path: string) => void;
+}): JSX.Element {
+  // Mirrors the data-* contract of a real NoteLeaf/AssetLeaf row so DOM queries
+  // ([data-sidebar-idx], [data-sidebar-select-key], [data-sidebar-path],
+  // [data-sidebar-type]) resolve identically whether a row is windowed in or out.
+  // It also forwards a click to open the row, so it behaves like the real row in
+  // the rare moment one is clicked before the window catches up (and so anything
+  // that activates a row by query still works). No hooks/subscriptions: this stays
+  // a cheap leaf even at thousands of rows.
+  return (
+    <div
+      className="h-9 w-full shrink-0"
+      data-sidebar-idx={sidebarIdx}
+      data-sidebar-type={type}
+      data-sidebar-path={path}
+      {...(selectionKey ? { "data-sidebar-select-key": selectionKey } : {})}
+      onClick={() => (type === "asset" ? onOpenAsset(path) : onSelectNote(path))}
+    />
+  );
+});
+
+interface WindowedLeafEntriesProps {
+  entries: TreeRenderEntry[];
+  baseIdx: number;
+  depth: number;
+  vaultRoot: string | null;
+  selectedPath: string | null;
+  selectedKeys: Set<string>;
+  onSelectItem: TreeRenderProps["onSelectItem"];
+  onSelectNote: TreeRenderProps["onSelectNote"];
+  onOpenAsset: TreeRenderProps["onOpenAsset"];
+  onNoteContextMenu: TreeRenderProps["onNoteContextMenu"];
+  onAssetContextMenu: TreeRenderProps["onAssetContextMenu"];
+  dragPayloadForItem: TreeRenderProps["dragPayloadForItem"];
+  sidebarFocused: boolean;
+  vimCursor: number;
+  showSidebarChevrons: boolean;
+}
+
+/**
+ * Renders a flat list of leaf entries (all notes/assets, no folders) with
+ * windowing: only rows in the visible range mount as full NoteLeaf/AssetLeaf;
+ * the rest render as same-height placeholders. `baseIdx` is the global
+ * data-sidebar-idx of `entries[0]`; rows are assigned `baseIdx + i` so cursor
+ * indices stay exact. The list owns its own scroll subscription so scrolling
+ * re-renders this list only, never the whole sidebar.
+ */
+function WindowedLeafEntries({
+  entries,
+  baseIdx,
+  depth,
+  vaultRoot,
+  selectedPath,
+  selectedKeys,
+  onSelectItem,
+  onSelectNote,
+  onOpenAsset,
+  onNoteContextMenu,
+  onAssetContextMenu,
+  dragPayloadForItem,
+  sidebarFocused,
+  vimCursor,
+  showSidebarChevrons,
+}: WindowedLeafEntriesProps): JSX.Element {
+  const scrollerRef = useContext(SidebarScrollerContext);
+  const total = entries.length;
+  const [range, setRange] = useState<{ start: number; end: number }>(() => ({
+    start: 0,
+    end: Math.min(total, 80),
+  }));
+
+  const recompute = useCallback(() => {
+    const scroller = scrollerRef?.current;
+    if (!scroller) return;
+    // The first row (placeholder or full) is always in the DOM, so it anchors
+    // the list's offset within the scroll content.
+    const firstRow = scroller.querySelector<HTMLElement>(
+      `[data-sidebar-idx="${baseIdx}"]`,
+    );
+    if (!firstRow) return;
+    const scrollerRect = scroller.getBoundingClientRect();
+    const firstRect = firstRow.getBoundingClientRect();
+    const listTop = firstRect.top - scrollerRect.top + scroller.scrollTop;
+    const next = getVirtualRange({
+      itemCount: total,
+      itemSize: SIDEBAR_LEAF_ROW_HEIGHT,
+      scrollTop: scroller.scrollTop - listTop,
+      viewportHeight: scroller.clientHeight,
+      overscan: SIDEBAR_WINDOW_OVERSCAN,
+    });
+    setRange((prev) =>
+      prev.start === next.start && prev.end === next.end ? prev : { start: next.start, end: next.end },
+    );
+  }, [scrollerRef, baseIdx, total]);
+
+  useLayoutEffect(() => {
+    recompute();
+    const scroller = scrollerRef?.current;
+    if (!scroller) return;
+    let rafId = 0;
+    const onScroll = (): void => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        recompute();
+      });
+    };
+    scroller.addEventListener("scroll", onScroll, { passive: true });
+    const observer =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => recompute()) : null;
+    observer?.observe(scroller);
+    return () => {
+      scroller.removeEventListener("scroll", onScroll);
+      observer?.disconnect();
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [recompute]);
+
+  // Keep the selected/cursor row mounted as a real row even when off-screen, so
+  // selection/cursor visuals are correct the instant it scrolls into view.
+  const selectedIdx = useMemo(() => {
+    if (selectedPath == null) return -1;
+    const i = entries.findIndex((entry) => treeRenderEntryPath(entry) === selectedPath);
+    return i;
+  }, [entries, selectedPath]);
+
+  return (
+    <>
+      {entries.map((entry, i) => {
+        const idx = baseIdx + i;
+        // Windowing only applies to flat leaf lists (shouldProgressivelyRenderEntries
+        // guarantees no folders); this guard keeps the types honest.
+        if (entry.type === "folder") return null;
+        const inWindow = i >= range.start && i < range.end;
+        const forced =
+          i === selectedIdx || (sidebarFocused && vimCursor === idx);
+        if (!inWindow && !forced) {
+          const path = treeRenderEntryPath(entry) ?? "";
+          return (
+            <SidebarLeafPlaceholder
+              key={entry.type === "asset" ? entry.asset.path : entry.note.path}
+              sidebarIdx={idx}
+              type={entry.type === "asset" ? "asset" : "note"}
+              path={path}
+              selectionKey={entry.type === "note" ? noteSelectionKey(entry.note.path) : undefined}
+              onSelectNote={onSelectNote}
+              onOpenAsset={onOpenAsset}
+            />
+          );
+        }
+        if (entry.type === "asset") {
+          return (
+            <AssetLeaf
+              key={entry.asset.path}
+              asset={entry.asset}
+              vaultRoot={vaultRoot}
+              depth={depth}
+              showSidebarChevrons={showSidebarChevrons}
+              onOpen={() => onOpenAsset(entry.asset.path)}
+              onContextMenu={(e) => onAssetContextMenu(e, entry.asset)}
+              sidebarFocused={sidebarFocused}
+              sidebarIdx={idx}
+              vimHighlight={vimCursor === idx}
+            />
+          );
+        }
+        const n = entry.note;
+        return (
+          <NoteLeaf
+            key={n.path}
+            note={n}
+            depth={depth}
+            showSidebarChevrons={showSidebarChevrons}
+            active={n.path === selectedPath}
+            selected={selectedKeys.has(noteSelectionKey(n.path))}
+            sidebarFocused={sidebarFocused}
+            onSelectItem={onSelectItem}
+            onSelectNote={onSelectNote}
+            onContextMenuNote={onNoteContextMenu}
+            dragPayloadForItem={dragPayloadForItem}
+            sidebarIdx={idx}
+            vimHighlight={vimCursor === idx}
+          />
+        );
+      })}
+    </>
+  );
 }
 
 function sidebarVisiblePrefetchPaths(entries: TreeRenderEntry[]): string[] {
@@ -3812,6 +4045,32 @@ function FolderTreeContents({
     [effectiveEntryLimit, entries, progressive],
   );
   useSidebarVisibleNotePrefetch(visibleEntries, showNotes);
+
+  // Flat list of many leaves (notes/assets) → window it. Mixed/small lists fall
+  // through to the plain map below.
+  if (progressiveEligible) {
+    const baseIdx = idxCounter.value;
+    idxCounter.value += entries.length;
+    return (
+      <WindowedLeafEntries
+        entries={entries}
+        baseIdx={baseIdx}
+        depth={depth}
+        vaultRoot={vaultRoot}
+        selectedPath={selectedPath}
+        selectedKeys={selectedKeys}
+        onSelectItem={onSelectItem}
+        onSelectNote={onSelectNote}
+        onOpenAsset={onOpenAsset}
+        onNoteContextMenu={onNoteContextMenu}
+        onAssetContextMenu={onAssetContextMenu}
+        dragPayloadForItem={dragPayloadForItem}
+        sidebarFocused={sidebarFocused}
+        vimCursor={vimCursor}
+        showSidebarChevrons={showSidebarChevrons}
+      />
+    );
+  }
 
   return (
     <>
@@ -4192,8 +4451,33 @@ function SubTree({
         reserveLeadingSlot={showSidebarChevrons}
         showExpandChevron={showSidebarChevrons}
       />
-      {!isCollapsed && (
-        <>
+      {!isCollapsed &&
+        (progressiveEligible ? (
+          (() => {
+            const baseIdx = idxCounter.value;
+            idxCounter.value += entries.length;
+            return (
+              <WindowedLeafEntries
+                entries={entries}
+                baseIdx={baseIdx}
+                depth={depth + 1}
+                vaultRoot={vaultRoot}
+                selectedPath={selectedPath}
+                selectedKeys={selectedKeys}
+                onSelectItem={onSelectItem}
+                onSelectNote={onSelectNote}
+                onOpenAsset={onOpenAsset}
+                onNoteContextMenu={onNoteContextMenu}
+                onAssetContextMenu={onAssetContextMenu}
+                dragPayloadForItem={dragPayloadForItem}
+                sidebarFocused={sidebarFocused}
+                vimCursor={vimCursor}
+                showSidebarChevrons={showSidebarChevrons}
+              />
+            );
+          })()
+        ) : (
+          <>
           {visibleEntries.map((entry) => {
             if (entry.type === "folder") {
               return (
@@ -4274,8 +4558,8 @@ function SubTree({
               aria-hidden="true"
             />
           )}
-        </>
-      )}
+          </>
+        ))}
     </div>
   );
 }

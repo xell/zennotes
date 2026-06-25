@@ -203,7 +203,11 @@ const VALID_VAULT_TEXT_SEARCH_BACKENDS: VaultTextSearchBackendPreference[] = [
 const MAX_NOTE_JUMP_HISTORY = 100
 const DEFAULT_SIDEBAR_WIDTH = 336
 const LEGACY_DEFAULT_SIDEBAR_WIDTHS = new Set([232, 260, 288])
-const LIST_NOTES_BRIDGE_PAGE_SIZE = 250
+// Matches the desktop main process's own default/preferred stream chunk size
+// (capped at 1000 there). 500 halves the number of boot-time IPC round-trips
+// and inter-page yields for large vaults versus the old 250, while keeping each
+// page small enough to stay responsive. Identical note set, fewer trips.
+const LIST_NOTES_BRIDGE_PAGE_SIZE = 500
 
 function nextRendererTask(): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, 0))
@@ -230,6 +234,34 @@ async function listNotesFromBridge(): Promise<NoteMeta[]> {
     offset = page.nextOffset
     await nextRendererTask()
   }
+}
+
+// Coalesce full note-list refreshes triggered by vault-change (watcher) events.
+// A bulk external change — git pull, cloud sync, bulk move/import — fires one
+// watcher event per file; routing each straight to refreshNotes() would re-walk
+// the entire vault N times. This collapses a burst into a single in-flight
+// refresh plus at most one trailing refresh, so the *final* state is identical
+// (refreshNotes is idempotent) but the vault is listed once or twice, not N
+// times. Isolated changes still refresh immediately with no added latency.
+let coalescedNotesRefreshInFlight: Promise<void> | null = null
+let coalescedNotesRefreshPending = false
+
+function refreshNotesCoalesced(): Promise<void> {
+  if (coalescedNotesRefreshInFlight) {
+    coalescedNotesRefreshPending = true
+    return coalescedNotesRefreshInFlight
+  }
+  coalescedNotesRefreshInFlight = (async () => {
+    try {
+      do {
+        coalescedNotesRefreshPending = false
+        await useStore.getState().refreshNotes()
+      } while (coalescedNotesRefreshPending)
+    } finally {
+      coalescedNotesRefreshInFlight = null
+    }
+  })()
+  return coalescedNotesRefreshInFlight
 }
 
 async function refreshVaultIndexes(): Promise<void> {
@@ -4199,7 +4231,7 @@ export const useStore = create<Store>((set, get) => {
       // A folder was created/removed/renamed externally (e.g. in another
       // client sharing this vault). An empty folder produces no note event,
       // so refresh the tree explicitly — refreshNotes() re-lists folders.
-      await get().refreshNotes()
+      await refreshNotesCoalesced()
       return
     }
     // Excalidraw drawings are notes (they live in the notes tree), so treat
@@ -4211,7 +4243,7 @@ export const useStore = create<Store>((set, get) => {
       return
     }
     await Promise.all([
-      get().refreshNotes(),
+      refreshNotesCoalesced(),
       ev.scope === 'vault-settings'
         ? window.zen
             .getVaultSettings()

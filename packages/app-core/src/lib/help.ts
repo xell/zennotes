@@ -190,6 +190,11 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
       'Select text in the editor and press `Mod+Alt+M` — or open the text menu with `m` — to start a comment, and toggle the Comments panel itself with `Mod+Shift+C`. ZenNotes stores note comments beside the note in vault metadata, then highlights the anchored text and line when the comment is active. In the panel, move with `j` / `k` and use `e` to edit, `r` to resolve, and `d` to delete.'
   },
   {
+    title: 'The home view is where you land',
+    body:
+      'When no note is open (outside Zen mode), ZenNotes shows a light home view instead of a blank pane: a greeting, quick-create actions (new note, database, drawing — plus daily and weekly notes when those are enabled in Settings), your most recently edited notes, and today’s open tasks with an overdue count. Click a note or task to open it, tick a checkbox to complete a task in place, and use ↑/↓ — or j/k in Vim mode — then Enter to move and open from the keyboard.'
+  },
+  {
     title: 'Sessions restore on relaunch',
     body:
       'Workspace restore is saved per vault, while the window frame restore is global. Reopening ZenNotes brings back your pane layout, open buffers, built-in views, and the last window bounds instead of dropping you into a fresh shell.'

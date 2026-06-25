@@ -50,6 +50,9 @@ const PREFIX_HIDE_WITH_SPACE = new Set(['HeaderMark', 'QuoteMark'])
 
 const hide = Decoration.replace({})
 const imageSourceHide = Decoration.replace({})
+// Stamped on an image line only while its raw source is hidden, so the host
+// line stops reserving a blank text row above/below the block figure (#261).
+const imageEmbedLine = Decoration.line({ class: 'cm-image-embed-line' })
 const STANDALONE_IMAGE_RE = /^\s*!\[([^\]]*)\]\((?:<([^>]+)>|([^)]+))\)\s*$/
 const STANDALONE_OBSIDIAN_EMBED_RE = /^\s*!\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]\s*$/
 // Anchor-style standalone PDF link: `[Label](file.pdf)` or `[Label](<file with spaces.pdf>)`.
@@ -658,6 +661,12 @@ function computeDecorations(view: EditorView): DecorationSet {
             from: line.from,
             to: line.to,
             deco: imageSourceHide
+          })
+          // Collapse the now text-less line's strut (see imageEmbedLine).
+          pending.push({
+            from: line.from,
+            to: line.from,
+            deco: imageEmbedLine
           })
         }
         continue

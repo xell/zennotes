@@ -307,7 +307,11 @@ export function VimNav(): JSX.Element | null {
       // Hint mode — handled entirely by HintOverlay's own listener
       if (hintRef.current) return
 
-      const target = e.target as HTMLElement | null
+      // `e.target` is only an HTMLElement for real DOM-dispatched events.
+      // Synthetic events fired at `window`/`document` (e.g. programmatic
+      // shortcuts) have a non-Element target, so narrow with `instanceof`
+      // before touching Element-only methods like `.closest()`.
+      const target = e.target instanceof HTMLElement ? e.target : null
       const tag = target?.tagName
       // Never steal keys from normal text-entry fields such as the
       // inline note title, prompt inputs, or textarea-based controls.
@@ -315,6 +319,8 @@ export function VimNav(): JSX.Element | null {
       // The selection format toolbar handles its own keyboard navigation
       // (arrows / Enter / Esc) once focused — yield to it entirely.
       if (target?.closest('[data-selection-toolbar]')) return
+      // The home view owns its own roving-focus navigation (↑/↓/j/k/Enter).
+      if (target?.closest('[data-home-nav]')) return
       // The database/table view runs its own vim-style motion grid; yield to it
       // so sidebar/note-list navigation doesn't steal j/k/h/l etc. — EXCEPT the
       // pane prefix (Ctrl+W) and its pending direction key, so the grid can hand
@@ -1275,7 +1281,7 @@ export function VimNav(): JSX.Element | null {
   function handleCommentsKey(e: KeyboardEvent, state: ReturnType<typeof useStore.getState>): void {
     const key = e.key
     const overrides = state.keymapOverrides
-    const target = e.target as HTMLElement | null
+    const target = e.target instanceof HTMLElement ? e.target : null
     const nativeButtonActivation =
       !!target?.closest('[data-comment-card-control]') &&
       (key === 'Enter' || key === ' ')

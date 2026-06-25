@@ -5,6 +5,7 @@ import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { describe, expect, it, vi } from 'vitest'
 import { livePreviewPlugin } from './cm-live-preview'
+import { useStore } from '../store'
 
 vi.mock('../store', () => {
   const state = {
@@ -148,6 +149,52 @@ describe('livePreviewPlugin', () => {
     expect(view.state.doc.toString()).toBe('intro\n\n- [ ] Already done')
 
     view.destroy()
+  })
+
+  it('collapses the host-line strut on a hidden-source image, restores it when editing (#261)', () => {
+    // The image widget is an inline (side:1) decoration, so its host line would
+    // otherwise reserve a full text line-box above/below the block figure. The
+    // plugin stamps `cm-image-embed-line` only while the source is hidden.
+    const store = useStore.getState() as unknown as {
+      vault: unknown
+      activeNote: unknown
+      assetFiles: Array<{ path: string }>
+    }
+    const original = { vault: store.vault, activeNote: store.activeNote, assetFiles: store.assetFiles }
+    ;(window as unknown as { zen: unknown }).zen = {
+      resolveVaultAssetUrl: () => 'asset://pic.png',
+      resolveLocalAssetUrl: () => 'asset://pic.png'
+    }
+    store.vault = { root: '/vault' }
+    store.activeNote = { path: 'inbox/Image Note.md' }
+    store.assetFiles = [{ path: 'inbox/pic.png' }]
+    try {
+      const doc = 'Above\n\n![sample](pic.png)\n\nBelow'
+      const view = mountEditor(doc, 0) // cursor on "Above" → image line inactive
+
+      const figure = view.dom.querySelector('.cm-local-image-embed')
+      expect(figure).toBeTruthy()
+      const hostLine = figure!.closest('.cm-line')
+      expect(hostLine?.classList.contains('cm-image-embed-line')).toBe(true)
+      // Raw markdown stays hidden while the line is inactive.
+      expect(view.dom.textContent).not.toContain('![sample](pic.png)')
+
+      // Move the caret onto the image line: source revealed, strut class gone.
+      view.dispatch({ selection: { anchor: doc.indexOf('![sample]') + 2 } })
+      expect(view.dom.textContent).toContain('![sample](pic.png)')
+      const revealed = [...view.dom.querySelectorAll('.cm-line')].find((l) =>
+        (l.textContent || '').includes('![sample](pic.png)')
+      )
+      expect(revealed).toBeTruthy()
+      expect(revealed!.classList.contains('cm-image-embed-line')).toBe(false)
+
+      view.destroy()
+    } finally {
+      store.vault = original.vault
+      store.activeNote = original.activeNote
+      store.assetFiles = original.assetFiles
+      delete (window as unknown as { zen?: unknown }).zen
+    }
   })
 
   it('renders checkboxes for ordered, nested, and quoted tasks', () => {

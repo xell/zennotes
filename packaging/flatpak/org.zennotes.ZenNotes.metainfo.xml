@@ -35,6 +35,11 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.8.0" date="2026-06-25">
+      <description>
+        <p>A windowed sidebar that stays fast on huge vaults, a calmer redesigned Settings page, a new home view with your recent notes and today's tasks, Obsidian Excalidraw import, and image-rendering fixes in PDF export and Live Preview.</p>
+      </description>
+    </release>
     <release version="2.7.0" date="2026-06-24">
       <description>
         <p>Link straight to your CSV databases with wikilinks, Notion-style slash commands in Quick Capture, and editor fixes (per-note undo, wikilinks in code, document outline).</p>

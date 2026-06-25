@@ -2711,7 +2711,22 @@ textarea,
   display: block;
   width: 100%;
   max-width: min(100%, 980px);
-  margin: 0.75rem 0 1rem;
+  margin: 0.5rem 0 0.6rem;
+}
+
+/* The image widget is an inline (side:1) decoration, so its host line still
+ * reserves a full text line-box above and below the block figure — roughly one
+ * line-height of phantom vertical space on each side (issue #261). When the raw
+ * source is hidden (cursor off the line) the live-preview plugin stamps the line
+ * with `cm-image-embed-line`; collapse that line's strut to 0. The class is
+ * absent whenever the source markdown is revealed, so the editable text keeps
+ * its normal line-height. The caption restores its own line-height just below. */
+.cm-editor .cm-image-embed-line {
+  line-height: 0;
+}
+
+.cm-editor .local-image-embed-caption {
+  line-height: 1.4;
 }
 
 /* --- PDF embed widget (CodeMirror live preview) ---------------------- */

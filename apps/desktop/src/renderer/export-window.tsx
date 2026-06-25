@@ -228,6 +228,30 @@ function ExportNoteWindow({ notePath }: { notePath: string }): JSX.Element {
           max-height: 9.3in;
           object-fit: contain;
         }
+        /* A standalone local image is rendered as a .local-image-embed figure
+           whose <img> carries width:100% (great on screen, fills the frame).
+           In export that stretches even a tiny image to the full content width,
+           and the max-height above then blows it up to a full page (#256, a
+           regression surfaced by #231). Here, size embeds to the image's
+           intrinsic dimensions instead — only ever scaling DOWN to fit the
+           content width or the page height — and shrink the frame/caption to
+           hug it. The .prose-zen prefix beats the shared (.prose-zen img-embed)
+           rule on specificity regardless of stylesheet order. */
+        .export-note-shell .prose-zen .local-image-embed {
+          width: fit-content;
+          max-width: 100%;
+          margin-inline: auto;
+        }
+        .export-note-shell .prose-zen .local-image-embed-frame {
+          width: fit-content;
+          max-width: 100%;
+        }
+        .export-note-shell .prose-zen .local-image-embed-image {
+          width: auto;
+          height: auto;
+          max-width: 100%;
+          max-height: 9.3in;
+        }
         @media print {
           html,
           body,

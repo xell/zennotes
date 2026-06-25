@@ -102,7 +102,13 @@ import { promptApp } from '../lib/prompt-requests'
 import { TasksView } from './TasksView'
 import { DatabaseView } from './DatabaseView'
 import { LazyExcalidrawView } from './LazyExcalidrawView'
-import { isExcalidrawPath } from '@shared/excalidraw'
+import { ObsidianExcalidrawPrompt } from './ObsidianExcalidrawPrompt'
+import { HomeView } from './HomeView'
+import {
+  isExcalidrawPath,
+  isObsidianExcalidrawMarkdown,
+  isObsidianExcalidrawPath
+} from '@shared/excalidraw'
 import { TagView } from './TagView'
 import { HelpView } from './HelpView'
 import { ArchiveView } from './ArchiveView'
@@ -3304,6 +3310,11 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
             <DatabaseView tabPath={activeTab} isActive={isActive} />
           ) : activeTab && isExcalidrawPath(activeTab) ? (
             <LazyExcalidrawView path={activeTab} />
+          ) : activeTab &&
+            content &&
+            (isObsidianExcalidrawPath(activeTab) ||
+              isObsidianExcalidrawMarkdown(content.body)) ? (
+            <ObsidianExcalidrawPrompt path={activeTab} />
           ) : content ? (
             <div
               className={[
@@ -3390,10 +3401,18 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
             <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-ink-400">
               Loading…
             </div>
-          ) : (
+          ) : zenMode ? (
             <EmptyPaneState
               sidebarOpen={sidebarOpen}
               zenMode={zenMode}
+              onShowSidebar={() => {
+                toggleSidebar()
+                setFocusedPanel('sidebar')
+              }}
+            />
+          ) : (
+            <HomeView
+              sidebarOpen={sidebarOpen}
               onShowSidebar={() => {
                 toggleSidebar()
                 setFocusedPanel('sidebar')

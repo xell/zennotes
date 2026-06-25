@@ -154,6 +154,8 @@ export interface ZenBridge {
   createNote(folder: NoteFolder, title?: string, subpath?: string): Promise<NoteMeta>
   /** Create a new `.excalidraw` drawing seeded with an empty scene. */
   createExcalidraw(folder: NoteFolder, subpath?: string, title?: string): Promise<NoteMeta>
+  /** Convert an Obsidian Excalidraw markdown drawing into a native `.excalidraw`. (#266) */
+  convertObsidianExcalidraw?(relPath: string): Promise<NoteMeta>
   renameNote(relPath: string, nextTitle: string): Promise<NoteMeta>
   deleteNote(relPath: string): Promise<void>
   moveToTrash(relPath: string): Promise<NoteMeta>
