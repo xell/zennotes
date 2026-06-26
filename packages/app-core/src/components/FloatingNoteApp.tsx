@@ -38,7 +38,8 @@ import { tags as t } from '@lezer/highlight'
 import { searchKeymap } from '@codemirror/search'
 import type { NoteContent, VaultChangeEvent } from '@shared/ipc'
 import type { LineNumberMode } from '../store'
-import { livePreviewPlugin } from '../lib/cm-live-preview'
+import { wysiwygExtensions } from '../lib/cm-wysiwyg-compose'
+import { useStore } from '../store'
 import { headingFolding } from '../lib/cm-heading-fold'
 import { LazyPreview as Preview } from './LazyPreview'
 import { CloseIcon, PinIcon } from './icons'
@@ -195,10 +196,23 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
   const prefs = useMemo(() => loadFloatingPrefs(), [])
   const [content, setContent] = useState<NoteContent | null>(null)
   const [dirty, setDirty] = useState(false)
-  const [mode, setMode] = useState<'edit' | 'preview'>('edit')
+  // Three explicit modes — Edit (raw source), Live (WYSIWYG live preview),
+  // Preview (rendered HTML). Default to Live when the user keeps live
+  // preview on globally, otherwise raw Edit.
+  const [mode, setMode] = useState<'edit' | 'live' | 'preview'>(
+    prefs.livePreview ? 'live' : 'edit'
+  )
   const viewRef = useRef<EditorView | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dirtyBodyRef = useRef<string | null>(null)
+  // Live-preview lives in its own compartment so toggling Edit <-> Live
+  // reconfigures in place (keeping undo history + cursor) instead of
+  // tearing the editor down.
+  const livePreviewCompartment = useMemo(() => new Compartment(), [])
+  // Mirror the current mode into a ref so the deps-light editor-mount
+  // callback reads the right initial compartment value across remounts.
+  const modeRef = useRef(mode)
+  modeRef.current = mode
   /** The body we most recently wrote. Used to suppress watcher echoes
    *  of our own saves — comparing to disk is more robust than a
    *  single-shot ignore flag, since a save can echo more than once
@@ -304,7 +318,11 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
           headingFolding(),
           syntaxHighlighting(paperHighlight),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-          prefs.livePreview ? livePreviewPlugin : [],
+          livePreviewCompartment.of(
+            modeRef.current === 'live'
+              ? wysiwygExtensions(useStore.getState().renderTablesInLivePreview)
+              : []
+          ),
           lineNumberExtension(prefs.lineNumberMode),
           keymap.of([
             indentWithTab,
@@ -335,8 +353,22 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
     // Intentionally omit `content?.body` so the CM view isn't rebuilt
     // every keystroke; the sync effect below pushes external changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [persist, prefs.livePreview, prefs.vimMode]
+    [persist, livePreviewCompartment, prefs.vimMode]
   )
+
+  // Toggle live preview in place when switching Edit <-> Live so the
+  // editor isn't rebuilt (preserves undo history, cursor, scroll).
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view || mode === 'preview') return
+    view.dispatch({
+      effects: livePreviewCompartment.reconfigure(
+        mode === 'live'
+          ? wysiwygExtensions(useStore.getState().renderTablesInLivePreview)
+          : []
+      )
+    })
+  }, [mode, livePreviewCompartment])
 
   // Push external content updates into the live CM view (with
   // selection clamping to keep cursor near where it was).
@@ -447,18 +479,25 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           <div className="flex items-center gap-1 rounded-md bg-paper-200/70 p-0.5 text-xs">
-            {(['edit', 'preview'] as const).map((m) => (
+            {(
+              [
+                { m: 'edit', label: 'Edit', title: 'Raw Markdown source' },
+                { m: 'live', label: 'Live', title: 'Live preview — render inline while editing' },
+                { m: 'preview', label: 'Preview', title: 'Fully rendered preview' }
+              ] as const
+            ).map(({ m, label, title }) => (
               <button
                 key={m}
                 onClick={() => setMode(m)}
+                title={title}
                 className={[
-                  'rounded px-1.5 py-0.5 capitalize transition-colors',
+                  'rounded px-1.5 py-0.5 transition-colors',
                   mode === m
                     ? 'bg-paper-50 text-ink-900 shadow-sm'
                     : 'text-ink-500 hover:text-ink-800'
                 ].join(' ')}
               >
-                {m}
+                {label}
               </button>
             ))}
           </div>
@@ -474,14 +513,17 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col">
-        {mode === 'edit' ? (
+        {mode !== 'preview' ? (
           <div ref={setContainerRef} className="min-h-0 min-w-0 flex-1" />
         ) : content ? (
           <div
             data-preview-scroll
             className="min-h-0 min-w-0 flex-1 overflow-y-auto"
           >
-            <Preview markdown={content.body} notePath={content.path} />
+            <Preview
+              markdown={dirtyBodyRef.current ?? content.body}
+              notePath={content.path}
+            />
           </div>
         ) : (
           <div className="flex flex-1 items-center justify-center text-sm text-ink-400">
