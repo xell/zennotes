@@ -21,6 +21,7 @@ import { parseFrontmatter, slugifyTemplateName } from '@shared/template-files'
 import { renderTemplate } from '../lib/template-render'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
+import { vimImeControl } from '../lib/cm-vim-ime'
 import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
 import { templateVariableSource, TEMPLATE_VARIABLES } from '../lib/cm-template-variables'
 import { templateSlashCommandSource, slashCommandRender } from '../lib/cm-slash-commands'
@@ -112,6 +113,7 @@ export function TemplateEditorModal({
       doc: initialRaw ?? SKELETON,
       extensions: [
         appMarkdownSnippetExtension(),
+        vimImeControl(),
         new Compartment().of(vimModeRef.current ? vim() : []),
         history(),
         drawSelection(),

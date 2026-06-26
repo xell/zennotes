@@ -330,6 +330,10 @@ export function SettingsModal(): JSX.Element {
   const setRipgrepBinaryPath = useStore((s) => s.setRipgrepBinaryPath)
   const fzfBinaryPath = useStore((s) => s.fzfBinaryPath)
   const setFzfBinaryPath = useStore((s) => s.setFzfBinaryPath)
+  const imeSwitcherBinaryPath = useStore((s) => s.imeSwitcherBinaryPath)
+  const setImeSwitcherBinaryPath = useStore((s) => s.setImeSwitcherBinaryPath)
+  const imeEnglishLayoutId = useStore((s) => s.imeEnglishLayoutId)
+  const setImeEnglishLayoutId = useStore((s) => s.setImeEnglishLayoutId)
   const livePreview = useStore((s) => s.livePreview)
   const setLivePreview = useStore((s) => s.setLivePreview)
   const renderTablesInLivePreview = useStore((s) => s.renderTablesInLivePreview)
@@ -1115,7 +1119,9 @@ export function SettingsModal(): JSX.Element {
             'vim-insert-escape',
             'leader-key-hints',
             'leader-hint-behavior',
-            'leader-hint-duration'
+            'leader-hint-duration',
+            'ime-switcher-binary-path',
+            'ime-english-layout-id'
           ],
           content: (
         <div className="space-y-6">
@@ -1182,6 +1188,22 @@ export function SettingsModal(): JSX.Element {
                     )}
                   </>
                 )}
+                <TextInputRow
+                  label="IME switcher tool (macOS)"
+                  description="Absolute path to an input-source switcher such as macism (brew install laishulu/homebrew/macism). When set, ZenNotes switches to English on leaving insert mode and restores your last input source on re-entering it. Leave blank to disable."
+                  value={imeSwitcherBinaryPath ?? ''}
+                  placeholder="/usr/local/bin/macism"
+                  settingId="ime-switcher-binary-path"
+                  onChange={(next) => setImeSwitcherBinaryPath(next ? next : null)}
+                />
+                <TextInputRow
+                  label="English input source id"
+                  description="The input-source id to switch to for Normal mode. Find yours by running the tool with no arguments while English is active. Defaults to com.apple.keylayout.ABC."
+                  value={imeEnglishLayoutId ?? ''}
+                  placeholder="com.apple.keylayout.ABC"
+                  settingId="ime-english-layout-id"
+                  onChange={(next) => setImeEnglishLayoutId(next ? next : null)}
+                />
               </>
             ) : (
               <InlineNote>

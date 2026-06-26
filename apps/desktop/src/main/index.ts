@@ -18,6 +18,7 @@ import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { promises as fsp } from 'node:fs'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { IPC } from '@shared/ipc'
 import type {
@@ -222,6 +223,8 @@ const MIN_WINDOW_HEIGHT = 600
 // sidebar/tabs, so they can shrink far below the main window's minimum.
 const STANDALONE_MIN_WINDOW_WIDTH = 360
 const STANDALONE_MIN_WINDOW_HEIGHT = 320
+
+const execFileAsync = promisify(execFile)
 const WINDOW_STATE_PERSIST_DELAY_MS = 150
 const DEFAULT_ZOOM_FACTOR = 1
 const MIN_ZOOM_FACTOR = 0.5
@@ -2058,6 +2061,32 @@ function registerIpc(): void {
     if (isRemoteWorkspaceActive()) return
     const v = requireVault()
     await setManualOrder(v.root, map)
+  })
+
+  // Vim IME control (macOS). The renderer passes the user-configured switcher
+  // binary path (e.g. macism); we just exec it. Reading prints the current
+  // input-source id; writing switches to the given id. Best-effort: any
+  // failure (binary missing, wrong path, non-mac) degrades to no-op.
+  handle(IPC.IME_GET_CURRENT, async (_e, binaryPath: string) => {
+    if (!isMac() || !binaryPath?.trim()) return ''
+    try {
+      const { stdout } = await execFileAsync(binaryPath.trim(), [], { timeout: 2000 })
+      return stdout.trim()
+    } catch (err) {
+      console.error('[zen:ime] get-current failed', err)
+      return ''
+    }
+  })
+
+  handle(IPC.IME_SET_LAYOUT, async (_e, binaryPath: string, layoutId: string) => {
+    if (!isMac() || !binaryPath?.trim() || !layoutId?.trim()) return false
+    try {
+      await execFileAsync(binaryPath.trim(), [layoutId.trim()], { timeout: 2000 })
+      return true
+    } catch (err) {
+      console.error('[zen:ime] set-layout failed', err)
+      return false
+    }
   })
 
   handle(IPC.VAULT_ROOT_CONTENT_HIDDEN, async () => {

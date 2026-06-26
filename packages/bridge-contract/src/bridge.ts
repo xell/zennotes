@@ -117,6 +117,12 @@ export interface ZenBridge {
   getManualOrder(): Promise<ManualOrderMap>
   /** Persist the manual-order map to the active vault's sidecar. */
   setManualOrder(map: ManualOrderMap): Promise<void>
+  /** Read the current macOS input source id via the configured switcher
+   *  binary (e.g. macism). Returns '' if the binary is unset or fails. */
+  getInputSource(binaryPath: string): Promise<string>
+  /** Switch the macOS input source to `layoutId` via the switcher binary.
+   *  Returns true on success. No-op on non-desktop platforms. */
+  setInputSource(binaryPath: string, layoutId: string): Promise<boolean>
   /** True when the vault is in `inbox` mode but its root holds notes that only
    *  `root` mode would surface (drives the "Switch to Vault root" banner). */
   rootContentHiddenByInboxMode(): Promise<boolean>

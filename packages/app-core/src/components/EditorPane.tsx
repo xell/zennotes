@@ -52,6 +52,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { isImeComposing } from '../lib/ime'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
+import { vimImeControl } from '../lib/cm-vim-ime'
 import { completionNavKeymap } from '../lib/cm-completion-nav'
 import { vimAwareDefaultKeymap } from '../lib/cm-vim-default-keymap'
 import { setYankToClipboardEnabled } from '../lib/cm-vim-clipboard'
@@ -1438,6 +1439,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
         doc: initialBody,
         extensions: [
           appMarkdownSnippetExtension(),
+          vimImeControl(),
           // Give the editable surface an accessible name so accessibility
           // clients (screen readers, proofreaders such as Grammarly) identify
           // it as a text field.

@@ -20,6 +20,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
 import { applyVimInsertEscape } from '../lib/vim-insert-escape'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
+import { vimImeControl } from '../lib/cm-vim-ime'
 import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
 import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
 import { searchKeymap } from '@codemirror/search'
@@ -134,6 +135,7 @@ export function ExternalFileApp(): JSX.Element {
         doc: bodyRef.current ?? '',
         extensions: [
           appMarkdownSnippetExtension(),
+          vimImeControl(),
           new Compartment().of(prefs.vimMode ? vim() : []),
           history(),
           drawSelection(),
