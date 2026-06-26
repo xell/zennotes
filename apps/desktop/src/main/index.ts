@@ -21,6 +21,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { IPC } from '@shared/ipc'
 import type {
+  ManualOrderMap,
   NoteMeta,
   NoteCommentInput,
   NoteFolder,
@@ -59,6 +60,7 @@ import {
   forgetLocalVault,
   folderAbsolutePath,
   generateDemoTour,
+  getManualOrder,
   getVaultSettings,
   hasAssetsDir,
   importExternalNote,
@@ -83,6 +85,7 @@ import {
   restoreFromTrash,
   searchVaultTextCapabilities,
   searchVaultText,
+  setManualOrder,
   setVaultSettings,
   rootContentHiddenByInboxMode,
   type PersistedRemoteWorkspaceConfig,
@@ -2037,6 +2040,20 @@ function registerIpc(): void {
     }
     const v = requireVault()
     return await setVaultSettings(v.root, next)
+  })
+
+  handle(IPC.MANUAL_ORDER_GET, async () => {
+    // Remote workspaces don't sync the manual-order sidecar (yet); fall back to
+    // file order there rather than failing.
+    if (isRemoteWorkspaceActive()) return {}
+    const v = requireVault()
+    return await getManualOrder(v.root)
+  })
+
+  handle(IPC.MANUAL_ORDER_SET, async (_e, map: ManualOrderMap) => {
+    if (isRemoteWorkspaceActive()) return
+    const v = requireVault()
+    await setManualOrder(v.root, map)
   })
 
   handle(IPC.VAULT_ROOT_CONTENT_HIDDEN, async () => {

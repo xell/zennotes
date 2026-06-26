@@ -25,6 +25,7 @@ import type {
   MoveExternalFileResult,
   ListNotesPageRequest,
   ListNotesPageResponse,
+  ManualOrderMap,
   NoteComment,
   NoteCommentInput,
   NoteContent,
@@ -263,6 +264,9 @@ const api: ZenBridge = {
   getVaultSettings: (): Promise<VaultSettings> => ipcRenderer.invoke(IPC.VAULT_GET_SETTINGS),
   setVaultSettings: (next: VaultSettings): Promise<VaultSettings> =>
     ipcRenderer.invoke(IPC.VAULT_SET_SETTINGS, next),
+  getManualOrder: (): Promise<ManualOrderMap> => ipcRenderer.invoke(IPC.MANUAL_ORDER_GET),
+  setManualOrder: (map: ManualOrderMap): Promise<void> =>
+    ipcRenderer.invoke(IPC.MANUAL_ORDER_SET, map),
   rootContentHiddenByInboxMode: (): Promise<boolean> =>
     ipcRenderer.invoke(IPC.VAULT_ROOT_CONTENT_HIDDEN),
 

@@ -22,6 +22,7 @@ import {
   DeletedAsset,
   type FolderIconId,
   type FolderColorId,
+  type ManualOrderMap,
   type PrimaryNotesLocation,
   type VaultSettings,
   FolderEntry,
@@ -74,6 +75,7 @@ const ATTACHMENTS_DIRS = [ASSETS_DIR, ...LEGACY_ATTACHMENTS_DIRS]
 const INTERNAL_VAULT_DIR = '.zennotes'
 const DELETED_ASSETS_DIR = 'deleted-assets'
 const VAULT_SETTINGS_FILE = 'vault.json'
+const MANUAL_ORDER_FILE = 'manual-order-v1.json'
 const NOTE_META_CACHE_FILE = 'note-meta-cache-v1.json'
 const NOTE_META_CACHE_VERSION = 2
 const NOTE_COMMENTS_DIR = 'comments'
@@ -1111,6 +1113,37 @@ export async function setVaultSettings(
     await fs.mkdir(path.join(root, 'inbox'), { recursive: true })
   }
   return cloneVaultSettings(normalized)
+}
+
+function manualOrderPath(root: string): string {
+  return path.join(root, INTERNAL_VAULT_DIR, MANUAL_ORDER_FILE)
+}
+
+/** Keep only `Record<string, string[]>` entries; tolerate any other shape. */
+function normalizeManualOrder(value: unknown): ManualOrderMap {
+  if (!value || typeof value !== 'object') return {}
+  const out: ManualOrderMap = {}
+  for (const [dir, list] of Object.entries(value as Record<string, unknown>)) {
+    if (Array.isArray(list)) {
+      out[dir] = list.filter((p): p is string => typeof p === 'string')
+    }
+  }
+  return out
+}
+
+export async function getManualOrder(root: string): Promise<ManualOrderMap> {
+  try {
+    return normalizeManualOrder(JSON.parse(await fs.readFile(manualOrderPath(root), 'utf8')))
+  } catch {
+    // Absent or unreadable sidecar → no manual order (falls back to file order).
+    return {}
+  }
+}
+
+export async function setManualOrder(root: string, map: ManualOrderMap): Promise<void> {
+  const normalized = normalizeManualOrder(map)
+  await fs.mkdir(path.dirname(manualOrderPath(root)), { recursive: true })
+  await fs.writeFile(manualOrderPath(root), JSON.stringify(normalized, null, 2), 'utf8')
 }
 
 async function primaryNotesRoot(root: string): Promise<string> {

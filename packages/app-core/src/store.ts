@@ -1148,17 +1148,21 @@ function writeRootBannerDismissed(root: string): void {
   }
 }
 
-// Per-vault manual note order (#224): `parentDir -> ordered note paths`. Stored
-// in localStorage keyed by vault root, like the rollover marker. Not a vault
-// sidecar yet, so it's per-machine — a portable `.zennotes` file is a follow-up.
+// Per-vault manual order (#224): `parentDir -> ordered note/folder paths`. Now
+// persisted in the portable `.zennotes/manual-order-v1.json` sidecar (via the
+// main process) so it travels with the vault. The old localStorage location is
+// read once for a one-time migration.
 type ManualNoteOrder = Record<string, string[]>
-function manualOrderKey(root: string): string {
+const isEmptyOrder = (o: ManualNoteOrder): boolean => Object.keys(o).length === 0
+function legacyManualOrderKey(root: string): string {
   return `zen.notes.manualOrder.${root || 'default'}`
 }
-function readManualOrder(root: string): ManualNoteOrder {
+function readLegacyManualOrder(root: string): ManualNoteOrder {
   try {
     const raw =
-      typeof localStorage !== 'undefined' ? localStorage.getItem(manualOrderKey(root)) : null
+      typeof localStorage !== 'undefined'
+        ? localStorage.getItem(legacyManualOrderKey(root))
+        : null
     if (!raw) return {}
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object') return {}
@@ -1171,15 +1175,50 @@ function readManualOrder(root: string): ManualNoteOrder {
     return {}
   }
 }
-function writeManualOrder(root: string, order: ManualNoteOrder): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(manualOrderKey(root), JSON.stringify(order))
-    }
-  } catch {
-    // localStorage may be unavailable; the manual order is best-effort.
-  }
+
+// Persist the live map to the vault sidecar, debounced so a flurry of reorders
+// collapses into one write. The args are kept for call-site compatibility; we
+// always write the latest in-memory map, and the main process owns the path.
+let manualOrderWriteTimer: ReturnType<typeof setTimeout> | null = null
+function writeManualOrder(_root: string, _order: ManualNoteOrder): void {
+  if (manualOrderWriteTimer) clearTimeout(manualOrderWriteTimer)
+  manualOrderWriteTimer = setTimeout(() => {
+    manualOrderWriteTimer = null
+    void window.zen.setManualOrder(useStore.getState().manualNoteOrder).catch(() => {})
+  }, 300)
 }
+
+/** Load the active vault's order from the sidecar, migrating a legacy
+ *  localStorage order into the sidecar on first run. */
+async function loadManualOrderForVault(root: string): Promise<void> {
+  let order: ManualNoteOrder = await window.zen.getManualOrder().catch(() => ({}))
+  if (isEmptyOrder(order)) {
+    const legacy = readLegacyManualOrder(root)
+    if (!isEmptyOrder(legacy)) {
+      order = legacy
+      void window.zen.setManualOrder(legacy).catch(() => {})
+    }
+  }
+  useStore.setState({ manualNoteOrder: order })
+}
+
+// Reload the sidecar after an external change (sync, manual edit, or deletion),
+// debounced so a sync's delete-then-recreate doesn't flash a reset. Our own
+// writes echo back here too, but the content matches, so they no-op.
+let manualOrderReloadTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleManualOrderReload(): void {
+  if (manualOrderReloadTimer) clearTimeout(manualOrderReloadTimer)
+  manualOrderReloadTimer = setTimeout(() => {
+    manualOrderReloadTimer = null
+    void window.zen.getManualOrder().then((loaded) => {
+      const current = useStore.getState().manualNoteOrder
+      if (JSON.stringify(loaded) !== JSON.stringify(current)) {
+        useStore.setState({ manualNoteOrder: loaded })
+      }
+    }).catch(() => {})
+  }, 150)
+}
+
 // Which vault root the in-memory manual order was loaded for; reloaded on switch.
 let manualOrderLoadedForRoot: string | null = null
 
@@ -4075,11 +4114,11 @@ export const useStore = create<Store>((set, get) => {
 
   refreshNotes: async () => {
     try {
-      // Load this vault's manual note order once per vault (drives #224).
+      // Load this vault's manual order once per vault from the sidecar (#224).
       const orderRoot = get().vault?.root ?? ''
       if (manualOrderLoadedForRoot !== orderRoot) {
         manualOrderLoadedForRoot = orderRoot
-        set({ manualNoteOrder: readManualOrder(orderRoot) })
+        await loadManualOrderForVault(orderRoot)
       }
       const startedAt = performance.now()
       const [notes, folders, hasAssetsDirOnDisk] = await Promise.all([
@@ -4224,6 +4263,12 @@ export const useStore = create<Store>((set, get) => {
   },
 
   applyChange: async (ev) => {
+    if (ev.scope === 'manual-order') {
+      // The portable order sidecar changed (sync, external edit, or deletion);
+      // reload it so structure and order stay in step across machines.
+      scheduleManualOrderReload()
+      return
+    }
     if (ev.scope === 'comments') {
       await get().loadNoteComments(ev.path)
       return

@@ -21,6 +21,7 @@ import type {
   RemoteWorkspaceInfo,
   RemoteWorkspaceProfile,
   RemoteWorkspaceProfileInput,
+  ManualOrderMap,
   ServerCapabilities,
   ServerSessionStatus,
   VaultSettings,
@@ -111,6 +112,11 @@ export interface ZenBridge {
   browseServerDirectories(path?: string): Promise<DirectoryBrowseResult>
   getVaultSettings(): Promise<VaultSettings>
   setVaultSettings(next: VaultSettings): Promise<VaultSettings>
+  /** Read the portable manual-order sidecar for the active vault (`{}` when
+   *  absent or in a remote workspace). */
+  getManualOrder(): Promise<ManualOrderMap>
+  /** Persist the manual-order map to the active vault's sidecar. */
+  setManualOrder(map: ManualOrderMap): Promise<void>
   /** True when the vault is in `inbox` mode but its root holds notes that only
    *  `root` mode would surface (drives the "Switch to Vault root" banner). */
   rootContentHiddenByInboxMode(): Promise<boolean>

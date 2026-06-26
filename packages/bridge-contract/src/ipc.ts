@@ -18,6 +18,8 @@ export const IPC = {
   VAULT_GET_CURRENT: 'vault:get-current',
   VAULT_GET_SETTINGS: 'vault:get-settings',
   VAULT_SET_SETTINGS: 'vault:set-settings',
+  MANUAL_ORDER_GET: 'manual-order:get',
+  MANUAL_ORDER_SET: 'manual-order:set',
   VAULT_ROOT_CONTENT_HIDDEN: 'vault:root-content-hidden',
   VAULT_LIST_NOTES: 'vault:list-notes',
   VAULT_LIST_NOTES_STREAM: 'vault:list-notes-stream',
@@ -608,7 +610,21 @@ export interface FolderEntry {
 }
 
 export type VaultChangeKind = 'add' | 'change' | 'unlink'
-export type VaultChangeScope = 'content' | 'vault-settings' | 'comments' | 'database' | 'folder'
+export type VaultChangeScope =
+  | 'content'
+  | 'vault-settings'
+  | 'comments'
+  | 'database'
+  | 'folder'
+  | 'manual-order'
+
+/**
+ * Manual (drag-to-reorder) order, persisted in the portable
+ * `.zennotes/manual-order-v1.json` sidecar so it travels with the vault.
+ * Keyed by parent directory; the array is the user-chosen order of the notes
+ * and folders directly inside it. Items not listed fall back to file order.
+ */
+export type ManualOrderMap = Record<string, string[]>
 
 export interface VaultChangeEvent {
   kind: VaultChangeKind
