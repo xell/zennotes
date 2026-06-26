@@ -82,6 +82,20 @@ function ModalRoot({
     return () => window.removeEventListener('keydown', handler, true)
   }, [closeOnEsc, onClose])
 
+  // Restore focus to whatever was focused when the modal opened (usually the
+  // editor) once it closes. Without this, focus is dropped on close and the
+  // sidebar claims it, so j/k start navigating the file list instead of moving
+  // the editor caret. Captured on mount — this child effect runs before the
+  // palette/dialog focuses its own input, so it sees the real opener.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null
+    return () => {
+      if (opener && opener.isConnected && typeof opener.focus === 'function') {
+        opener.focus()
+      }
+    }
+  }, [])
+
   const backdropAlign = align === 'center' ? 'items-center' : 'items-start pt-[14vh]'
 
   return createPortal(
