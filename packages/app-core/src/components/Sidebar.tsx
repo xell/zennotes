@@ -73,6 +73,7 @@ import {
   normalizeVaultSettings,
   noteFolderSubpath,
   parseFavoriteFolderKey,
+  vaultRelativeFolderPath,
 } from "../lib/vault-layout";
 import {
   getCurrentDragPayload,
@@ -81,7 +82,12 @@ import {
   setDragPayload,
   type DragPayload,
 } from "../lib/dnd";
-import { manualOrderCompare, parentDirOf } from "../lib/manual-order";
+import {
+  manualItemCompare,
+  manualOrderCompare,
+  parentDirOf,
+  type ManualOrderItem,
+} from "../lib/manual-order";
 import { resolveSystemFolderLabels } from "../lib/system-folder-labels";
 import { assetTabPath } from "../lib/asset-tabs";
 import {
@@ -249,15 +255,6 @@ function SidebarSectionHeading({
       {label}
     </div>
   );
-}
-
-function vaultRelativeFolderPath(
-  folder: NoteFolder,
-  subpath: string,
-  vaultSettings: ReturnType<typeof useStore.getState>["vaultSettings"],
-): string {
-  if (folder === "inbox" && isPrimaryNotesAtRoot(vaultSettings)) return subpath;
-  return subpath ? `${folder}/${subpath}` : folder;
 }
 
 type SidebarSelectionItem =
@@ -3879,16 +3876,85 @@ function compareFolderNodes(a: TreeNode, b: TreeNode): number {
   return naturalCompare(a.name, b.name);
 }
 
+/** Vault-relative path of a dragged note or folder, for same-parent reorder.
+ *  Multi-selections and assets aren't single-path reorderable, so return null. */
+function draggedItemPath(
+  drag: DragPayload | null,
+  vaultSettings: ReturnType<typeof useStore.getState>["vaultSettings"],
+): string | null {
+  if (!drag) return null;
+  if (drag.kind === "note") return drag.path;
+  if (drag.kind === "folder")
+    return vaultRelativeFolderPath(drag.folder, drag.subpath, vaultSettings);
+  return null;
+}
+
+/** Build the manual-order descriptor for a node's children, or undefined when
+ *  not in Manual sort. Notes and folders share the order map keyed by the node's
+ *  own vault-relative path (the parent dir of its children). */
+function manualRenderDescriptor(
+  node: TreeNode,
+  manualSort: boolean,
+  manualNoteOrder: Record<string, string[]>,
+  folder: NoteFolder,
+  vaultSettings: ReturnType<typeof useStore.getState>["vaultSettings"],
+): { order: readonly string[] | undefined; folderPath: (n: TreeNode) => string } | undefined {
+  if (!manualSort) return undefined;
+  const dir = vaultRelativeFolderPath(folder, node.subpath, vaultSettings);
+  return {
+    order: manualNoteOrder[dir],
+    folderPath: (child) =>
+      vaultRelativeFolderPath(folder, child.subpath, vaultSettings),
+  };
+}
+
 function getTreeRenderEntries(
   node: TreeNode,
   showNotes: boolean,
   sortComparator: ((a: NoteMeta, b: NoteMeta) => number) | null,
   groupByKind: boolean,
+  manual?: {
+    order: readonly string[] | undefined;
+    folderPath: (node: TreeNode) => string;
+  },
 ): TreeRenderEntry[] {
   const sortedChildren = node.children.slice().sort(compareFolderNodes);
 
   if (!showNotes) {
     return sortedChildren.map((child) => ({ type: "folder", node: child }));
+  }
+
+  // Manual sort: folders and notes share one user-ordered list per parent
+  // (Phase 1 of #224 follow-up). Assets trail in file order.
+  if (manual) {
+    const items: Array<{ entry: TreeRenderEntry; item: ManualOrderItem }> = [
+      ...node.children.map((child) => ({
+        entry: { type: "folder" as const, node: child },
+        item: {
+          path: manual.folderPath(child),
+          kind: "folder" as const,
+          name: child.name,
+          siblingOrder: child.siblingOrder,
+        },
+      })),
+      ...node.notes.map((note) => ({
+        entry: { type: "note" as const, note },
+        item: {
+          path: note.path,
+          kind: "note" as const,
+          name: note.title,
+          siblingOrder: note.siblingOrder,
+        },
+      })),
+    ];
+    items.sort((a, b) => manualItemCompare(manual.order, a.item, b.item));
+    return [
+      ...items.map((x) => x.entry),
+      ...node.assets
+        .slice()
+        .sort((a, b) => a.siblingOrder - b.siblingOrder)
+        .map((asset) => ({ type: "asset" as const, asset }) as const),
+    ];
   }
 
   if (sortComparator || groupByKind) {
@@ -4018,9 +4084,27 @@ function FolderTreeContents({
   tree: TreeNode;
   depth: number;
 } & TreeRenderProps): JSX.Element {
+  const manualSort = useStore((s) => s.noteSortOrder === "manual");
+  const manualNoteOrder = useStore((s) => s.manualNoteOrder);
   const entries = useMemo(
-    () => getTreeRenderEntries(tree, showNotes, sortComparator, groupByKind),
-    [tree, showNotes, sortComparator, groupByKind],
+    () =>
+      getTreeRenderEntries(
+        tree,
+        showNotes,
+        sortComparator,
+        groupByKind,
+        manualRenderDescriptor(tree, manualSort, manualNoteOrder, folder, vaultSettings),
+      ),
+    [
+      tree,
+      showNotes,
+      sortComparator,
+      groupByKind,
+      manualSort,
+      manualNoteOrder,
+      folder,
+      vaultSettings,
+    ],
   );
   const progressiveEligible = shouldProgressivelyRenderEntries(entries);
   const progressive = progressiveEligible && !sidebarFocused;
@@ -4197,9 +4281,27 @@ function FolderTreeRoot({
   const rootKey = `${folder}:`;
   const isCollapsed = collapsed.has(rootKey);
   const total = countNotesInTree(tree);
+  const manualSort = useStore((s) => s.noteSortOrder === "manual");
+  const manualNoteOrder = useStore((s) => s.manualNoteOrder);
   const entries = useMemo(
-    () => getTreeRenderEntries(tree, showNotes, sortComparator, groupByKind),
-    [tree, showNotes, sortComparator, groupByKind],
+    () =>
+      getTreeRenderEntries(
+        tree,
+        showNotes,
+        sortComparator,
+        groupByKind,
+        manualRenderDescriptor(tree, manualSort, manualNoteOrder, folder, vaultSettings),
+      ),
+    [
+      tree,
+      showNotes,
+      sortComparator,
+      groupByKind,
+      manualSort,
+      manualNoteOrder,
+      folder,
+      vaultSettings,
+    ],
   );
   const rootActive = isFolderActive(folder, "");
   const rootProgressive = shouldProgressivelyRenderEntries(entries);
@@ -4339,9 +4441,27 @@ function SubTree({
   // title without the suffix; clicking the row opens the grid, while the
   // chevron still expands to reveal its record-page notes. (#185)
   const isDatabase = isFormDirName(node.name);
+  const manualSort = useStore((s) => s.noteSortOrder === "manual");
+  const manualNoteOrder = useStore((s) => s.manualNoteOrder);
   const entries = useMemo(
-    () => getTreeRenderEntries(node, showNotes, sortComparator, groupByKind),
-    [node, showNotes, sortComparator, groupByKind],
+    () =>
+      getTreeRenderEntries(
+        node,
+        showNotes,
+        sortComparator,
+        groupByKind,
+        manualRenderDescriptor(node, manualSort, manualNoteOrder, folder, vaultSettings),
+      ),
+    [
+      node,
+      showNotes,
+      sortComparator,
+      groupByKind,
+      manualSort,
+      manualNoteOrder,
+      folder,
+      vaultSettings,
+    ],
   );
   const progressiveEligible = shouldProgressivelyRenderEntries(entries);
   const progressive = progressiveEligible && !sidebarFocused;
@@ -4368,6 +4488,9 @@ function SubTree({
   useSidebarVisibleNotePrefetch(visibleEntries, showNotes && !isCollapsed);
   const hasChildren = entries.length > 0;
   const [dragHover, setDragHover] = useState(false);
+  const reorderItemManually = useStore((s) => s.reorderItemManually);
+  const [dropPos, setDropPos] = useState<"before" | "after" | null>(null);
+  const folderPath = vaultRelativeFolderPath(folder, node.subpath, vaultSettings);
   const myIdx = idxCounter.value++;
   const selectionKey = folderSelectionKey(folder, node.subpath);
 
@@ -4428,19 +4551,56 @@ function SubTree({
           )
         }
         dropTarget={dragHover}
+        dropPos={dropPos}
         selected={selectedKeys.has(selectionKey)}
         onDragOver={(e) => {
           if (!hasZenItem(e)) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = "move";
+          // In Manual sort, dragging a same-parent sibling reorders this folder
+          // among its siblings (before/after indicator). Anything else (a child
+          // being moved in, a cross-folder drag) keeps the move-into highlight.
+          const draggedPath = manualSort
+            ? draggedItemPath(getCurrentDragPayload(), vaultSettings)
+            : null;
+          if (
+            draggedPath &&
+            draggedPath !== folderPath &&
+            parentDirOf(draggedPath) === parentDirOf(folderPath)
+          ) {
+            e.stopPropagation();
+            if (dragHover) setDragHover(false);
+            const rect = e.currentTarget.getBoundingClientRect();
+            const pos =
+              e.clientY - rect.top < rect.height / 2 ? "before" : "after";
+            if (pos !== dropPos) setDropPos(pos);
+            return;
+          }
+          if (dropPos) setDropPos(null);
           setDragHover(true);
         }}
-        onDragLeave={() => setDragHover(false)}
+        onDragLeave={() => {
+          setDragHover(false);
+          setDropPos((p) => (p ? null : p));
+        }}
         onDrop={(e) => {
           setDragHover(false);
           const payload = readDragPayload(e);
           if (!payload) return;
           e.preventDefault();
+          if (dropPos) {
+            e.stopPropagation();
+            const draggedPath = draggedItemPath(payload, vaultSettings);
+            const pos = dropPos;
+            setDropPos(null);
+            if (
+              draggedPath &&
+              parentDirOf(draggedPath) === parentDirOf(folderPath)
+            ) {
+              reorderItemManually(draggedPath, folderPath, pos);
+            }
+            return;
+          }
           void onDropOnFolder(payload, folder, node.subpath);
         }}
         sidebarIdx={myIdx}
@@ -4625,19 +4785,21 @@ const NoteLeaf = memo(function NoteLeaf({
   );
   // Manual (drag-to-reorder) ordering — only in Manual sort, within a folder.
   const manualSort = useStore((s) => s.noteSortOrder === "manual");
-  const reorderNoteManually = useStore((s) => s.reorderNoteManually);
+  const reorderItemManually = useStore((s) => s.reorderItemManually);
   const [dropPos, setDropPos] = useState<"before" | "after" | null>(null);
   const handleReorderDragOver = useCallback(
     (event: React.DragEvent<HTMLButtonElement>) => {
       if (!manualSort || !hasZenItem(event)) return;
-      const drag = getCurrentDragPayload();
-      // Same-folder note drops reorder here; everything else bubbles to the
-      // folder's move handler (so cross-folder moves still work).
+      const draggedPath = draggedItemPath(
+        getCurrentDragPayload(),
+        useStore.getState().vaultSettings,
+      );
+      // A same-parent note/folder drop reorders here; anything else bubbles to
+      // the folder's move handler (so cross-folder moves still work).
       if (
-        !drag ||
-        drag.kind !== "note" ||
-        drag.path === note.path ||
-        parentDirOf(drag.path) !== parentDirOf(note.path)
+        !draggedPath ||
+        draggedPath === note.path ||
+        parentDirOf(draggedPath) !== parentDirOf(note.path)
       ) {
         if (dropPos) setDropPos(null);
         return;
@@ -4659,14 +4821,17 @@ const NoteLeaf = memo(function NoteLeaf({
       if (!dropPos) return;
       event.preventDefault();
       event.stopPropagation();
-      const drag = readDragPayload(event) ?? getCurrentDragPayload();
+      const draggedPath = draggedItemPath(
+        readDragPayload(event) ?? getCurrentDragPayload(),
+        useStore.getState().vaultSettings,
+      );
       const pos = dropPos;
       setDropPos(null);
-      if (drag?.kind === "note" && parentDirOf(drag.path) === parentDirOf(note.path)) {
-        reorderNoteManually(drag.path, note.path, pos);
+      if (draggedPath && parentDirOf(draggedPath) === parentDirOf(note.path)) {
+        reorderItemManually(draggedPath, note.path, pos);
       }
     },
-    [dropPos, note.path, reorderNoteManually],
+    [dropPos, note.path, reorderItemManually],
   );
   // Custom icon / color set via the note's right-click menu (keyed by path).
   // Read directly from the store so the row updates when they change — the
@@ -4941,6 +5106,7 @@ function TreeRow({
   isSymlink = false,
   showExpandChevron = true,
   glyphColorClass,
+  dropPos = null,
 }: {
   icon: JSX.Element;
   label: string;
@@ -4975,6 +5141,8 @@ function TreeRow({
   showExpandChevron?: boolean;
   /** Custom resting tint for the leading glyph (folder color). */
   glyphColorClass?: string;
+  /** Manual-reorder drop indicator position, or null when not a reorder target. */
+  dropPos?: "before" | "after" | null;
 }): JSX.Element {
   const strongActive = active && (!sidebarFocused || !!vimHighlight);
 
@@ -4996,7 +5164,7 @@ function TreeRow({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       className={[
-        "group flex h-9 w-full items-center gap-1.5 rounded-lg px-1 text-left text-sm outline-none transition-colors focus:outline-none",
+        "group relative flex h-9 w-full items-center gap-1.5 rounded-lg px-1 text-left text-sm outline-none transition-colors focus:outline-none",
         active
           ? glyphColorClass
             ? // Colored folder: a saturated accent fill would put same-hue text on
@@ -5030,6 +5198,12 @@ function TreeRow({
         : {})}
       style={{ paddingLeft: 4 + depth * 14 }}
     >
+      {dropPos === "before" && (
+        <span className="pointer-events-none absolute inset-x-1 -top-px h-0.5 rounded-full bg-accent" />
+      )}
+      {dropPos === "after" && (
+        <span className="pointer-events-none absolute inset-x-1 -bottom-px h-0.5 rounded-full bg-accent" />
+      )}
       {expandable && showExpandChevron ? (
         // Notion-style disclosure: the folder icon turns into a chevron while the
         // row is hovered — click it to expand/collapse. No separate chevron gutter.

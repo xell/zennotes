@@ -785,6 +785,21 @@ export function isPrimaryNotesAtRoot(
   return normalizeVaultSettings(settings).primaryNotesLocation === 'root'
 }
 
+/**
+ * Vault-relative path of a folder identified by its section + subpath, mirroring
+ * how notes are addressed so folder and note paths share one key space (used by
+ * manual drag-to-reorder). For inbox-at-root the subpath is already
+ * vault-relative; otherwise it carries the section name as a prefix.
+ */
+export function vaultRelativeFolderPath(
+  folder: NoteFolder,
+  subpath: string,
+  settings: VaultSettings | null | undefined
+): string {
+  if (folder === 'inbox' && isPrimaryNotesAtRoot(settings)) return subpath
+  return subpath ? `${folder}/${subpath}` : folder
+}
+
 export function notePathWithinFolder(
   path: string,
   folder: NoteFolder,

@@ -35,7 +35,12 @@ import {
 } from '@shared/databases'
 import { parseFrontmatter } from '@shared/template-files'
 import { recordTitle, composePageBody } from './lib/database-cells'
-import { applyManualMove, manualOrderCompare, parentDirOf } from './lib/manual-order'
+import {
+  applyManualMove,
+  manualItemCompare,
+  parentDirOf,
+  type ManualOrderItem
+} from './lib/manual-order'
 import { TAGS_TAB_PATH, isTagsTabPath } from '@shared/tags'
 import { HELP_TAB_PATH, isHelpTabPath } from '@shared/help'
 import { ARCHIVE_TAB_PATH, isArchiveTabPath } from '@shared/archive'
@@ -107,7 +112,8 @@ import {
   toggleFavorite as toggleFavoriteKey,
   weeklyNoteLocationForDate,
   rewriteFolderColorsForRename,
-  rewriteFolderIconsForRename
+  rewriteFolderIconsForRename,
+  vaultRelativeFolderPath
 } from './lib/vault-layout'
 import { renderTemplate, renderTitle } from './lib/template-render'
 import type { NoteTemplate } from '@bridge-contract/templates'
@@ -2113,8 +2119,10 @@ interface Store {
   setSidebarWidth: (px: number) => void
   setNoteListWidth: (px: number) => void
   setNoteSortOrder: (order: NoteSortOrder) => void
-  /** Move a note before/after a sibling in its folder's manual order (#224). */
-  reorderNoteManually: (
+  /** Move a note or folder before/after a sibling in its parent's manual order
+   *  (#224). `draggedPath`/`targetPath` are vault-relative paths (note path or
+   *  `vaultRelativeFolderPath`); both must share a parent directory. */
+  reorderItemManually: (
     draggedPath: string,
     targetPath: string,
     position: 'before' | 'after'
@@ -4978,19 +4986,36 @@ export const useStore = create<Store>((set, get) => {
     set({ noteSortOrder: order })
     savePrefs(collectPrefs(get()))
   },
-  reorderNoteManually: (draggedPath, targetPath, position) => {
+  reorderItemManually: (draggedPath, targetPath, position) => {
     const dir = parentDirOf(draggedPath)
     if (draggedPath === targetPath || parentDirOf(targetPath) !== dir) return
     const s = get()
     const existing = s.manualNoteOrder[dir]
-    // Current sibling order (manual if set, else file order), then move.
-    const ordered = s.notes
-      .filter((n) => parentDirOf(n.path) === dir)
-      .slice()
-      .sort((a, b) =>
-        manualOrderCompare(existing, a.path, a.siblingOrder, b.path, b.siblingOrder)
-      )
-      .map((n) => n.path)
+    // Build the parent's current sibling order over BOTH notes and folders, so
+    // the persisted order interleaves them. The comparator (manual index, else
+    // folders-before-notes) mirrors the renderer, so the move starts from what
+    // the user actually sees.
+    const siblings: ManualOrderItem[] = []
+    for (const n of s.notes) {
+      if (parentDirOf(n.path) === dir) {
+        siblings.push({ path: n.path, kind: 'note', name: '', siblingOrder: n.siblingOrder })
+      }
+    }
+    for (const f of s.folders) {
+      if (!f.subpath) continue
+      const path = vaultRelativeFolderPath(f.folder, f.subpath, s.vaultSettings)
+      if (path && parentDirOf(path) === dir) {
+        siblings.push({
+          path,
+          kind: 'folder',
+          name: f.subpath.split('/').pop() ?? f.subpath,
+          siblingOrder: f.siblingOrder
+        })
+      }
+    }
+    const ordered = siblings
+      .sort((a, b) => manualItemCompare(existing, a, b))
+      .map((item) => item.path)
     const next = applyManualMove(ordered, draggedPath, targetPath, position)
     const nextMap = { ...s.manualNoteOrder, [dir]: next }
     set({ manualNoteOrder: nextMap })
