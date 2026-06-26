@@ -370,9 +370,9 @@ export function QuickCaptureApp(): JSX.Element {
   )
 
   /** Save the buffer (if there's anything to save) and hide the window.
-   *  Used by both ⌘↩ and Esc — Esc no longer drops a draft on the floor.
-   *  An empty buffer hides silently (no nag); a save error keeps the
-   *  window up so the user can recover. */
+   *  Used by both ⌘↩ and ⌘W — neither drops a draft on the floor. An
+   *  empty buffer hides silently (no nag); a save error keeps the window
+   *  up so the user can recover. */
   const submitAndClose = useCallback(async () => {
     const view = editorRef.current
     if (!view) {
@@ -533,19 +533,27 @@ export function QuickCaptureApp(): JSX.Element {
         setOverlay((current) => (current === 'search' ? 'none' : 'search'))
         return
       }
+      // Cmd/Ctrl+W saves and hides the capture window. This used to be
+      // Esc, but in Vim mode Esc is a constant insert→normal keystroke,
+      // so a stray Esc kept dismissing the window. Esc now only closes an
+      // open overlay.
+      if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'w') {
+        e.preventDefault()
+        void submitAndCloseRef.current()
+        return
+      }
       if (e.key === 'Escape') {
         if (overlayRef.current !== 'none') {
-          // Overlay open — first Esc just dismisses it. The overlay's
-          // own input handler also stops propagation, so this branch
-          // is a fallback for Esc fired while the overlay's input
-          // somehow isn't focused.
+          // Overlay open — Esc dismisses it. The overlay's own input
+          // handler also stops propagation, so this branch is a fallback
+          // for Esc fired while the overlay's input somehow isn't focused.
           e.preventDefault()
           setOverlay('none')
           requestAnimationFrame(() => editorRef.current?.focus())
-          return
         }
-        e.preventDefault()
-        void submitAndCloseRef.current()
+        // No overlay: Esc is intentionally a no-op (closing moved to
+        // Cmd/Ctrl+W). Let it bubble — Vim handles insert→normal in the
+        // editor itself.
       }
     }
     window.addEventListener('keydown', handler)
@@ -756,8 +764,8 @@ function NotePickerOverlay({ notes, onPick, onCancel }: NotePickerOverlayProps):
       const picked = results[active]
       if (picked) onPick(picked)
     } else if (e.key === 'Escape') {
-      // Stop the native event so the window-level Esc listener doesn't
-      // also run and try to save+hide the underlying buffer.
+      // Dismiss just this overlay; stop the event so the window-level Esc
+      // listener doesn't also run its overlay-dismiss fallback.
       e.preventDefault()
       e.stopPropagation()
       e.nativeEvent.stopImmediatePropagation()
