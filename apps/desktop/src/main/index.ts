@@ -2930,13 +2930,11 @@ async function ensureQuickCaptureWindow(): Promise<BrowserWindow> {
     if (quickCaptureWindow === win) quickCaptureWindow = null
     windowVaults.clearWindow(win.id)
   })
-  win.on('blur', () => {
-    // Focus-out hides the panel so the user's flow snaps back to whatever
-    // they were doing — same UX as Spotlight / Raycast. When pinned, the
-    // panel stays put so it floats on top while you work in other windows.
-    if (quickCapturePinned) return
-    if (!win.isDestroyed() && win.isVisible()) win.hide()
-  })
+  // The panel intentionally does NOT auto-hide on blur. It stays put as a
+  // floating window so you can click the main window or another app for
+  // reference and come back to it. Dismiss it explicitly with Cmd/Ctrl+W
+  // or by pressing the global hotkey again. (Pinned additionally floats
+  // over all spaces / fullscreen — see applyQuickCapturePinned.)
 
   installNavigationGuards(win)
   installZoomControls(win)
