@@ -29,6 +29,43 @@ export function sameFolder(a: string, b: string): boolean {
 }
 
 /**
+ * Re-key and rewrite the manual-order map after an item moves or is renamed from
+ * `oldPath` to `newPath`.
+ *
+ * - Rename (same parent dir): the item's entry is rewritten in place; for a
+ *   folder, every descendant key and listed path under the old prefix is
+ *   rewritten to the new prefix, preserving interior order.
+ * - Move (different parent dir): additionally the item is dropped from its old
+ *   parent's list (it now lives elsewhere); the caller re-inserts `newPath` at
+ *   the destination. Folder subtrees are re-keyed/rewritten as above.
+ */
+export function remapManualOrderForMove(
+  map: Readonly<Record<string, string[]>>,
+  oldPath: string,
+  newPath: string,
+  isFolder: boolean
+): Record<string, string[]> {
+  const oldParent = parentDirOf(oldPath)
+  const isMove = oldParent !== parentDirOf(newPath)
+  const remap = (p: string): string => {
+    if (p === oldPath) return newPath
+    if (isFolder && p.startsWith(`${oldPath}/`)) return newPath + p.slice(oldPath.length)
+    return p
+  }
+  const out: Record<string, string[]> = {}
+  for (const [dir, list] of Object.entries(map)) {
+    const nextDir = isFolder ? remap(dir) : dir
+    const nextList: string[] = []
+    for (const p of list) {
+      if (isMove && dir === oldParent && p === oldPath) continue // moved away
+      nextList.push(remap(p))
+    }
+    out[nextDir] = out[nextDir] ? [...out[nextDir], ...nextList] : nextList
+  }
+  return out
+}
+
+/**
  * Move `dragged` to just before/after `target` within `ordered`. Returns a new
  * array; a no-op (same array values) if `target` isn't present.
  */
