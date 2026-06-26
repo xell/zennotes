@@ -2909,9 +2909,11 @@ async function ensureQuickCaptureWindow(): Promise<BrowserWindow> {
     }
   })
 
-  if (mac) {
-    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  }
+  // NB: the "visible on all workspaces / over fullscreen" collection
+  // behavior is applied only when pinned (see applyQuickCapturePinned).
+  // Setting it unconditionally made macOS stop treating ZenNotes as a
+  // regular app while the panel was frontmost — the app vanished from the
+  // Dock and Cmd+Tab and the menu bar went inert.
 
   // Restore the persisted pin state for this freshly created window.
   void loadConfig().then((cfg) => {
@@ -2967,6 +2969,15 @@ function applyQuickCapturePinned(): void {
   const win = quickCaptureWindow
   if (!win || win.isDestroyed()) return
   win.setAlwaysOnTop(true, quickCapturePinned ? 'screen-saver' : 'floating')
+  // Joining all spaces / floating over fullscreen is a macOS-only,
+  // pin-only behavior. When unpinned we leave the panel as an ordinary
+  // floating window so macOS keeps presenting ZenNotes as a regular app
+  // (Dock icon, Cmd+Tab, working menu bar).
+  if (isMac()) {
+    win.setVisibleOnAllWorkspaces(quickCapturePinned, {
+      visibleOnFullScreen: quickCapturePinned
+    })
+  }
 }
 
 async function showQuickCaptureWindow(): Promise<void> {
