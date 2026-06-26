@@ -218,6 +218,10 @@ const DEFAULT_WINDOW_WIDTH = 1280
 const DEFAULT_WINDOW_HEIGHT = 820
 const MIN_WINDOW_WIDTH = 900
 const MIN_WINDOW_HEIGHT = 600
+// Standalone single-file windows (external file, floating note) have no
+// sidebar/tabs, so they can shrink far below the main window's minimum.
+const STANDALONE_MIN_WINDOW_WIDTH = 360
+const STANDALONE_MIN_WINDOW_HEIGHT = 320
 const WINDOW_STATE_PERSIST_DELAY_MS = 150
 const DEFAULT_ZOOM_FACTOR = 1
 const MIN_ZOOM_FACTOR = 0.5
@@ -531,8 +535,8 @@ function openExternalFileWindow(absPath: string): void {
   const win = new BrowserWindow({
     width: DEFAULT_WINDOW_WIDTH,
     height: DEFAULT_WINDOW_HEIGHT,
-    minWidth: MIN_WINDOW_WIDTH,
-    minHeight: MIN_WINDOW_HEIGHT,
+    minWidth: STANDALONE_MIN_WINDOW_WIDTH,
+    minHeight: STANDALONE_MIN_WINDOW_HEIGHT,
     show: false,
     autoHideMenuBar: true,
     titleBarStyle: mac ? 'hiddenInset' : 'hidden',
@@ -2798,8 +2802,8 @@ function openFloatingNoteWindow(relPath: string): void {
   const win = new BrowserWindow({
     width: 720,
     height: 720,
-    minWidth: 360,
-    minHeight: 320,
+    minWidth: STANDALONE_MIN_WINDOW_WIDTH,
+    minHeight: STANDALONE_MIN_WINDOW_HEIGHT,
     show: false,
     autoHideMenuBar: true,
     titleBarStyle: mac ? 'hiddenInset' : 'hidden',
