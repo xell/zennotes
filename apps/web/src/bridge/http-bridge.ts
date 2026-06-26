@@ -41,6 +41,7 @@ import type {
   NoteContent,
   NoteFolder,
   NoteMeta,
+  ManualOrderMap,
   PastedImageInput,
   RaycastExtensionStatus,
   RemoteWorkspaceInfo,
@@ -298,6 +299,27 @@ function setVaultSettings(next: VaultSettings): Promise<VaultSettings> {
     method: 'POST',
     body: next as unknown as Record<string, unknown>
   })
+}
+
+// The self-hosted server has no manual-order endpoint yet, so the web app keeps
+// manual order per-browser in localStorage (its prior behavior). Desktop uses
+// the portable `.zennotes` sidecar instead.
+const WEB_MANUAL_ORDER_KEY = 'zen.web.manualOrder'
+function getManualOrder(): Promise<ManualOrderMap> {
+  try {
+    const raw = localStorage.getItem(WEB_MANUAL_ORDER_KEY)
+    return Promise.resolve(raw ? (JSON.parse(raw) as ManualOrderMap) : {})
+  } catch {
+    return Promise.resolve({})
+  }
+}
+function setManualOrder(map: ManualOrderMap): Promise<void> {
+  try {
+    localStorage.setItem(WEB_MANUAL_ORDER_KEY, JSON.stringify(map))
+  } catch {
+    /* localStorage unavailable — best effort */
+  }
+  return Promise.resolve()
 }
 
 function rootContentHiddenByInboxMode(): Promise<boolean> {
@@ -1430,6 +1452,8 @@ export const httpBridge: ZenBridge = {
   browseServerDirectories,
   getVaultSettings,
   setVaultSettings,
+  getManualOrder,
+  setManualOrder,
   rootContentHiddenByInboxMode,
 
   listNotes,

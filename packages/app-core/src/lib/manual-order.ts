@@ -1,9 +1,21 @@
 /**
  * Pure helpers for manual (drag-to-reorder) note ordering (#224). The custom
- * order is stored per folder, keyed by the note's parent directory, as an
- * ordered list of note paths. Notes not present in the list fall back to their
- * file order (`siblingOrder`), so newly added notes append predictably.
+ * order is stored per folder, keyed by the parent directory, as an ordered list
+ * of item paths (notes *and* folders share the same key space). Items not present
+ * in the list fall back to their file order (`siblingOrder`), so newly added
+ * items append predictably.
  */
+import { naturalCompare } from './natural-sort'
+
+/** A note or folder participating in a folder's manual order. `path` is its
+ *  vault-relative identity (note path, or `vaultRelativeFolderPath`). */
+export interface ManualOrderItem {
+  path: string
+  kind: 'folder' | 'note'
+  /** Folder display name, used to keep unlisted folders in natural order. */
+  name: string
+  siblingOrder: number
+}
 
 /** The directory portion of a vault-relative note path (`''` for the root). */
 export function parentDirOf(path: string): string {
@@ -14,6 +26,43 @@ export function parentDirOf(path: string): string {
 /** True when two note paths live in the same folder (are reorder siblings). */
 export function sameFolder(a: string, b: string): boolean {
   return parentDirOf(a) === parentDirOf(b)
+}
+
+/**
+ * Re-key and rewrite the manual-order map after an item moves or is renamed from
+ * `oldPath` to `newPath`.
+ *
+ * - Rename (same parent dir): the item's entry is rewritten in place; for a
+ *   folder, every descendant key and listed path under the old prefix is
+ *   rewritten to the new prefix, preserving interior order.
+ * - Move (different parent dir): additionally the item is dropped from its old
+ *   parent's list (it now lives elsewhere); the caller re-inserts `newPath` at
+ *   the destination. Folder subtrees are re-keyed/rewritten as above.
+ */
+export function remapManualOrderForMove(
+  map: Readonly<Record<string, string[]>>,
+  oldPath: string,
+  newPath: string,
+  isFolder: boolean
+): Record<string, string[]> {
+  const oldParent = parentDirOf(oldPath)
+  const isMove = oldParent !== parentDirOf(newPath)
+  const remap = (p: string): string => {
+    if (p === oldPath) return newPath
+    if (isFolder && p.startsWith(`${oldPath}/`)) return newPath + p.slice(oldPath.length)
+    return p
+  }
+  const out: Record<string, string[]> = {}
+  for (const [dir, list] of Object.entries(map)) {
+    const nextDir = isFolder ? remap(dir) : dir
+    const nextList: string[] = []
+    for (const p of list) {
+      if (isMove && dir === oldParent && p === oldPath) continue // moved away
+      nextList.push(remap(p))
+    }
+    out[nextDir] = out[nextDir] ? [...out[nextDir], ...nextList] : nextList
+  }
+  return out
 }
 
 /**
@@ -30,6 +79,29 @@ export function applyManualMove(
   const idx = without.indexOf(target)
   if (idx === -1) return [...ordered]
   without.splice(position === 'before' ? idx : idx + 1, 0, dragged)
+  return without
+}
+
+/**
+ * Place `dragged` immediately before `beforePath` within `ordered`, or append it
+ * when `beforePath` is null or not present. Returns a new array. Dropping an item
+ * before itself keeps its position (without this it would be removed and then
+ * re-appended to the end). Used by the free drop resolver for cross-folder,
+ * into-folder, and same-parent positioning.
+ */
+export function applyManualPlace(
+  ordered: readonly string[],
+  dragged: string,
+  beforePath: string | null
+): string[] {
+  if (beforePath === dragged) return [...ordered]
+  const without = ordered.filter((p) => p !== dragged)
+  const idx = beforePath ? without.indexOf(beforePath) : -1
+  if (idx === -1) {
+    without.push(dragged)
+  } else {
+    without.splice(idx, 0, dragged)
+  }
   return without
 }
 
@@ -51,4 +123,25 @@ export function manualOrderCompare(
   if (ia !== -1) return -1
   if (ib !== -1) return 1
   return aSibling - bSibling
+}
+
+/**
+ * Compare two sibling items (notes or folders) for a folder's manual order.
+ * Listed items sort first by their index in `order`. Unlisted items keep the
+ * pre-manual look: folders before notes, folders in natural name order, notes in
+ * file order. A total order, so `Array.sort` is stable.
+ */
+export function manualItemCompare(
+  order: readonly string[] | undefined,
+  a: ManualOrderItem,
+  b: ManualOrderItem
+): number {
+  const ia = order ? order.indexOf(a.path) : -1
+  const ib = order ? order.indexOf(b.path) : -1
+  if (ia !== -1 && ib !== -1) return ia - ib
+  if (ia !== -1) return -1
+  if (ib !== -1) return 1
+  if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1
+  if (a.kind === 'folder') return naturalCompare(a.name, b.name)
+  return a.siblingOrder - b.siblingOrder
 }

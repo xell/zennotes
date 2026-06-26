@@ -7,6 +7,7 @@ import { folderForRelativePath } from './vault'
 const ATTACHMENTS_DIRS = new Set(['assets', 'attachements', '_assets'])
 const INTERNAL_VAULT_DIR = '.zennotes'
 const VAULT_SETTINGS_RELATIVE_PATH = `${INTERNAL_VAULT_DIR}/vault.json`
+const MANUAL_ORDER_RELATIVE_PATH = `${INTERNAL_VAULT_DIR}/manual-order-v1.json`
 const NOTE_COMMENTS_PREFIX = `${INTERNAL_VAULT_DIR}/comments/`
 const NOTE_COMMENTS_SUFFIX = '.comments.json'
 
@@ -30,6 +31,10 @@ function isVaultSettingsPath(root: string, abs: string): boolean {
   return relativeVaultPath(root, abs) === VAULT_SETTINGS_RELATIVE_PATH
 }
 
+function isManualOrderPath(root: string, abs: string): boolean {
+  return relativeVaultPath(root, abs) === MANUAL_ORDER_RELATIVE_PATH
+}
+
 function commentsNotePath(root: string, abs: string): string | null {
   const rel = relativeVaultPath(root, abs)
   if (!rel.startsWith(NOTE_COMMENTS_PREFIX) || !rel.endsWith(NOTE_COMMENTS_SUFFIX)) return null
@@ -48,6 +53,7 @@ export class VaultWatcher {
       persistent: true,
       ignored: (p: string) => {
         if (this.root && isVaultSettingsPath(this.root, p)) return false
+        if (this.root && isManualOrderPath(this.root, p)) return false
         if (this.root && relativeVaultPath(this.root, p) === INTERNAL_VAULT_DIR) return false
         const base = path.basename(p)
         return base.startsWith('.') || base === 'node_modules'
@@ -67,6 +73,15 @@ export class VaultWatcher {
           path: VAULT_SETTINGS_RELATIVE_PATH,
           folder: 'inbox',
           scope: 'vault-settings'
+        })
+        return
+      }
+      if (isManualOrderPath(this.root, absPath)) {
+        onEvent({
+          kind,
+          path: MANUAL_ORDER_RELATIVE_PATH,
+          folder: 'inbox',
+          scope: 'manual-order'
         })
         return
       }

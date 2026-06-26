@@ -35,7 +35,13 @@ import {
 } from '@shared/databases'
 import { parseFrontmatter } from '@shared/template-files'
 import { recordTitle, composePageBody } from './lib/database-cells'
-import { applyManualMove, manualOrderCompare, parentDirOf } from './lib/manual-order'
+import {
+  applyManualPlace,
+  manualItemCompare,
+  parentDirOf,
+  remapManualOrderForMove,
+  type ManualOrderItem
+} from './lib/manual-order'
 import { TAGS_TAB_PATH, isTagsTabPath } from '@shared/tags'
 import { HELP_TAB_PATH, isHelpTabPath } from '@shared/help'
 import { ARCHIVE_TAB_PATH, isArchiveTabPath } from '@shared/archive'
@@ -107,7 +113,8 @@ import {
   toggleFavorite as toggleFavoriteKey,
   weeklyNoteLocationForDate,
   rewriteFolderColorsForRename,
-  rewriteFolderIconsForRename
+  rewriteFolderIconsForRename,
+  vaultRelativeFolderPath
 } from './lib/vault-layout'
 import { renderTemplate, renderTitle } from './lib/template-render'
 import type { NoteTemplate } from '@bridge-contract/templates'
@@ -1150,17 +1157,21 @@ function writeRootBannerDismissed(root: string): void {
   }
 }
 
-// Per-vault manual note order (#224): `parentDir -> ordered note paths`. Stored
-// in localStorage keyed by vault root, like the rollover marker. Not a vault
-// sidecar yet, so it's per-machine — a portable `.zennotes` file is a follow-up.
+// Per-vault manual order (#224): `parentDir -> ordered note/folder paths`. Now
+// persisted in the portable `.zennotes/manual-order-v1.json` sidecar (via the
+// main process) so it travels with the vault. The old localStorage location is
+// read once for a one-time migration.
 type ManualNoteOrder = Record<string, string[]>
-function manualOrderKey(root: string): string {
+const isEmptyOrder = (o: ManualNoteOrder): boolean => Object.keys(o).length === 0
+function legacyManualOrderKey(root: string): string {
   return `zen.notes.manualOrder.${root || 'default'}`
 }
-function readManualOrder(root: string): ManualNoteOrder {
+function readLegacyManualOrder(root: string): ManualNoteOrder {
   try {
     const raw =
-      typeof localStorage !== 'undefined' ? localStorage.getItem(manualOrderKey(root)) : null
+      typeof localStorage !== 'undefined'
+        ? localStorage.getItem(legacyManualOrderKey(root))
+        : null
     if (!raw) return {}
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object') return {}
@@ -1173,15 +1184,50 @@ function readManualOrder(root: string): ManualNoteOrder {
     return {}
   }
 }
-function writeManualOrder(root: string, order: ManualNoteOrder): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(manualOrderKey(root), JSON.stringify(order))
-    }
-  } catch {
-    // localStorage may be unavailable; the manual order is best-effort.
-  }
+
+// Persist the live map to the vault sidecar, debounced so a flurry of reorders
+// collapses into one write. The args are kept for call-site compatibility; we
+// always write the latest in-memory map, and the main process owns the path.
+let manualOrderWriteTimer: ReturnType<typeof setTimeout> | null = null
+function writeManualOrder(_root: string, _order: ManualNoteOrder): void {
+  if (manualOrderWriteTimer) clearTimeout(manualOrderWriteTimer)
+  manualOrderWriteTimer = setTimeout(() => {
+    manualOrderWriteTimer = null
+    void window.zen.setManualOrder(useStore.getState().manualNoteOrder).catch(() => {})
+  }, 300)
 }
+
+/** Load the active vault's order from the sidecar, migrating a legacy
+ *  localStorage order into the sidecar on first run. */
+async function loadManualOrderForVault(root: string): Promise<void> {
+  let order: ManualNoteOrder = await window.zen.getManualOrder().catch(() => ({}))
+  if (isEmptyOrder(order)) {
+    const legacy = readLegacyManualOrder(root)
+    if (!isEmptyOrder(legacy)) {
+      order = legacy
+      void window.zen.setManualOrder(legacy).catch(() => {})
+    }
+  }
+  useStore.setState({ manualNoteOrder: order })
+}
+
+// Reload the sidecar after an external change (sync, manual edit, or deletion),
+// debounced so a sync's delete-then-recreate doesn't flash a reset. Our own
+// writes echo back here too, but the content matches, so they no-op.
+let manualOrderReloadTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleManualOrderReload(): void {
+  if (manualOrderReloadTimer) clearTimeout(manualOrderReloadTimer)
+  manualOrderReloadTimer = setTimeout(() => {
+    manualOrderReloadTimer = null
+    void window.zen.getManualOrder().then((loaded) => {
+      const current = useStore.getState().manualNoteOrder
+      if (JSON.stringify(loaded) !== JSON.stringify(current)) {
+        useStore.setState({ manualNoteOrder: loaded })
+      }
+    }).catch(() => {})
+  }, 150)
+}
+
 // Which vault root the in-memory manual order was loaded for; reloaded on switch.
 let manualOrderLoadedForRoot: string | null = null
 
@@ -2127,11 +2173,15 @@ interface Store {
   setSidebarWidth: (px: number) => void
   setNoteListWidth: (px: number) => void
   setNoteSortOrder: (order: NoteSortOrder) => void
-  /** Move a note before/after a sibling in its folder's manual order (#224). */
-  reorderNoteManually: (
+  /** Place an item at a position in `parentDir`'s manual order: before
+   *  `beforePath`, or appended when it's null. `draggedPath` must already live in
+   *  `parentDir` (callers that move across folders run the filesystem move
+   *  first). Used by the free drop resolver for cross-folder and into-folder
+   *  drops (#224 Phase 2). */
+  placeItemManually: (
     draggedPath: string,
-    targetPath: string,
-    position: 'before' | 'after'
+    parentDir: string,
+    beforePath: string | null
   ) => void
   /** Reorder a task by moving its markdown line before/after another task's
    *  line in the same note (the note's line order is the source of truth).
@@ -2306,11 +2356,13 @@ interface Store {
   revealFolder: (folder: NoteFolder, subpath: string) => Promise<void>
   revealAssetsDir: () => Promise<void>
   /** Move a note to a different folder + subpath. */
+  /** Move a note into another folder; resolves to its new vault-relative path
+   *  (the backend de-duplicates names on collision), or null on failure. */
   moveNote: (
     relPath: string,
     targetFolder: NoteFolder,
     targetSubpath: string
-  ) => Promise<void>
+  ) => Promise<string | null>
   init: () => Promise<void>
   openVaultPicker: () => Promise<void>
   openLocalVault: (root: string) => Promise<void>
@@ -4077,11 +4129,11 @@ export const useStore = create<Store>((set, get) => {
 
   refreshNotes: async () => {
     try {
-      // Load this vault's manual note order once per vault (drives #224).
+      // Load this vault's manual order once per vault from the sidecar (#224).
       const orderRoot = get().vault?.root ?? ''
       if (manualOrderLoadedForRoot !== orderRoot) {
         manualOrderLoadedForRoot = orderRoot
-        set({ manualNoteOrder: readManualOrder(orderRoot) })
+        await loadManualOrderForVault(orderRoot)
       }
       const startedAt = performance.now()
       const [notes, folders, hasAssetsDirOnDisk] = await Promise.all([
@@ -4226,6 +4278,12 @@ export const useStore = create<Store>((set, get) => {
   },
 
   applyChange: async (ev) => {
+    if (ev.scope === 'manual-order') {
+      // The portable order sidecar changed (sync, external edit, or deletion);
+      // reload it so structure and order stay in step across machines.
+      scheduleManualOrderReload()
+      return
+    }
     if (ev.scope === 'comments') {
       await get().loadNoteComments(ev.path)
       return
@@ -4997,21 +5055,36 @@ export const useStore = create<Store>((set, get) => {
     set({ noteSortOrder: order })
     savePrefs(collectPrefs(get()))
   },
-  reorderNoteManually: (draggedPath, targetPath, position) => {
-    const dir = parentDirOf(draggedPath)
-    if (draggedPath === targetPath || parentDirOf(targetPath) !== dir) return
+  placeItemManually: (draggedPath, parentDir, beforePath) => {
+    if (parentDirOf(draggedPath) !== parentDir) return
+    // Dropping an item just before itself is a no-op; without this it would be
+    // filtered out and then re-appended to the end of the folder.
+    if (beforePath === draggedPath) return
     const s = get()
-    const existing = s.manualNoteOrder[dir]
-    // Current sibling order (manual if set, else file order), then move.
-    const ordered = s.notes
-      .filter((n) => parentDirOf(n.path) === dir)
-      .slice()
-      .sort((a, b) =>
-        manualOrderCompare(existing, a.path, a.siblingOrder, b.path, b.siblingOrder)
-      )
-      .map((n) => n.path)
-    const next = applyManualMove(ordered, draggedPath, targetPath, position)
-    const nextMap = { ...s.manualNoteOrder, [dir]: next }
+    const existing = s.manualNoteOrder[parentDir]
+    const siblings: ManualOrderItem[] = []
+    for (const n of s.notes) {
+      if (parentDirOf(n.path) === parentDir) {
+        siblings.push({ path: n.path, kind: 'note', name: '', siblingOrder: n.siblingOrder })
+      }
+    }
+    for (const f of s.folders) {
+      if (!f.subpath) continue
+      const path = vaultRelativeFolderPath(f.folder, f.subpath, s.vaultSettings)
+      if (path && parentDirOf(path) === parentDir) {
+        siblings.push({
+          path,
+          kind: 'folder',
+          name: f.subpath.split('/').pop() ?? f.subpath,
+          siblingOrder: f.siblingOrder
+        })
+      }
+    }
+    const ordered = siblings
+      .sort((a, b) => manualItemCompare(existing, a, b))
+      .map((item) => item.path)
+    const next = applyManualPlace(ordered, draggedPath, beforePath)
+    const nextMap = { ...s.manualNoteOrder, [parentDir]: next }
     set({ manualNoteOrder: nextMap })
     writeManualOrder(s.vault?.root ?? '', nextMap)
   },
@@ -6116,6 +6189,18 @@ export const useStore = create<Store>((set, get) => {
       oldSubpath,
       newSubpath
     )
+    // Migrate manual order: re-key/rewrite the folder's own entry and its whole
+    // subtree (keys and listed paths) from the old prefix to the new one. A
+    // reparent (drag move) additionally drops it from the old parent's list; the
+    // caller then positions it at the destination via placeItemManually.
+    const oldFolderPath = vaultRelativeFolderPath(folder, oldSubpath, get().vaultSettings)
+    const newFolderPath = vaultRelativeFolderPath(folder, newSubpath, get().vaultSettings)
+    const nextManualOrder = remapManualOrderForMove(
+      get().manualNoteOrder,
+      oldFolderPath,
+      newFolderPath,
+      true
+    )
     set((s) => {
       const nextLayout = rewritePathsInTree(s.paneLayout, rewritePath)
       const ensured = ensureActivePane(nextLayout, s.activePaneId)
@@ -6129,6 +6214,7 @@ export const useStore = create<Store>((set, get) => {
       return {
         notes,
         folders,
+        manualNoteOrder: nextManualOrder,
         paneLayout: ensured.layout,
         activePaneId: ensured.activePaneId,
         noteContents: contents,
@@ -6147,6 +6233,7 @@ export const useStore = create<Store>((set, get) => {
         ...activeFieldsFrom(ensured.layout, ensured.activePaneId, contents, dirty)
       }
     })
+    writeManualOrder(get().vault?.root ?? '', nextManualOrder)
 
     // Repoint favorites at the renamed folder (its own key, descendant folder
     // keys, and note favorites that lived under it) and persist.
@@ -6258,6 +6345,15 @@ export const useStore = create<Store>((set, get) => {
     try {
       const meta = await window.zen.moveNote(relPath, targetFolder, targetSubpath)
       await get().refreshNotes()
+      // Drop the note from its old folder's manual order (it lives elsewhere
+      // now); a drag move positions it in the destination via placeItemManually.
+      const nextManualOrder = remapManualOrderForMove(
+        get().manualNoteOrder,
+        relPath,
+        meta.path,
+        false
+      )
+      writeManualOrder(get().vault?.root ?? '', nextManualOrder)
       set((s) => {
         const rewrite = (p: string): string => (p === relPath ? meta.path : p)
         const nextLayout = rewritePathsInTree(s.paneLayout, rewrite)
@@ -6274,6 +6370,7 @@ export const useStore = create<Store>((set, get) => {
           dirty[meta.path] = s.noteDirty[relPath] ?? false
         }
         return {
+          manualNoteOrder: nextManualOrder,
           paneLayout: ensured.layout,
           activePaneId: ensured.activePaneId,
           noteContents: contents,
@@ -6291,8 +6388,10 @@ export const useStore = create<Store>((set, get) => {
       await get().applyFavorites(
         rewriteFavoriteNotePath(get().vaultSettings.favorites, relPath, meta.path)
       )
+      return meta.path
     } catch (err) {
       console.error('moveNote failed', err)
+      return null
     }
   },
 
