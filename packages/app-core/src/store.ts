@@ -6413,9 +6413,14 @@ export const useStore = create<Store>((set, get) => {
     recordRendererPerf('store.init', performance.now() - startedAt, {
       hasVault: initializedVault
     })
-    // Default focus to the sidebar so j/k navigation works immediately
-    if (get().sidebarOpen && !get().focusedPanel) {
-      set({ focusedPanel: 'sidebar' })
+    // Default focus to the editor when a note is open (you usually start by
+    // writing); otherwise the sidebar, so j/k navigation works immediately.
+    if (!get().focusedPanel) {
+      if (get().activeNote) {
+        set({ focusedPanel: 'editor' })
+      } else if (get().sidebarOpen) {
+        set({ focusedPanel: 'sidebar' })
+      }
     }
     // Restore the pinned reference note by loading its content — the
     // path survived in prefs; `refreshNotes` has already confirmed it
