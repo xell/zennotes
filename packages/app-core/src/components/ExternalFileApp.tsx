@@ -19,6 +19,7 @@ import { vimAwareDefaultKeymap } from '../lib/cm-vim-default-keymap'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
 import { applyVimInsertEscape } from '../lib/vim-insert-escape'
+import { applyVimKeymap } from '../lib/vim-keymap'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
 import { vimImeControl } from '../lib/cm-vim-ime'
 import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
@@ -316,7 +317,8 @@ export function ExternalFileApp(): JSX.Element {
     externalFileHandlers.close = (): void => window.zen.windowClose()
     registerExternalFileVimCommands()
     applyVimInsertEscape(prefs.vimInsertEscape)
-  }, [persist, currentBody, prefs.vimInsertEscape])
+    applyVimKeymap(prefs.vimKeymap)
+  }, [persist, currentBody, prefs.vimInsertEscape, prefs.vimKeymap])
 
   const title = useMemo(() => (content ? titleFromName(content.name) : 'Untitled'), [content])
 

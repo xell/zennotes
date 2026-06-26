@@ -31,6 +31,7 @@ import { vimAwareDefaultKeymap } from '../lib/cm-vim-default-keymap'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
 import { applyVimInsertEscape } from '../lib/vim-insert-escape'
+import { applyVimKeymap, DEFAULT_VIM_KEYMAP } from '../lib/vim-keymap'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
 import { vimImeControl } from '../lib/cm-vim-ime'
 import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
@@ -95,6 +96,7 @@ export const paperHighlight = HighlightStyle.define([
 export interface FloatingPrefs {
   vimMode: boolean
   vimInsertEscape: string
+  vimKeymap: string
   livePreview: boolean
   themeId: string
   themeFamily: ThemeFamily
@@ -112,6 +114,7 @@ export function loadFloatingPrefs(): FloatingPrefs {
   const fallback: FloatingPrefs = {
     vimMode: true,
     vimInsertEscape: '',
+    vimKeymap: DEFAULT_VIM_KEYMAP,
     livePreview: true,
     themeId: DEFAULT_THEME_ID,
     themeFamily: 'gruvbox',
@@ -482,7 +485,8 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
     }
     registerFloatingVimCommands()
     applyVimInsertEscape(prefs.vimInsertEscape)
-  }, [persist, prefs.vimInsertEscape])
+    applyVimKeymap(prefs.vimKeymap)
+  }, [persist, prefs.vimInsertEscape, prefs.vimKeymap])
 
   const title = useMemo(() => {
     if (content?.title) return content.title

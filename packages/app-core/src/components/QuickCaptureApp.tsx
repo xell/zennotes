@@ -72,6 +72,7 @@ import {
 } from '../lib/note-search'
 import { deriveTitleFromBody, planQuickCaptureSave } from '../lib/quick-capture-save'
 import { applyVimInsertEscape } from '../lib/vim-insert-escape'
+import { applyVimKeymap, DEFAULT_VIM_KEYMAP } from '../lib/vim-keymap'
 import { isPaletteNextKey, isPalettePreviousKey } from '../lib/palette-nav'
 import { isImeComposing } from '../lib/ime'
 import { PinIcon } from './icons'
@@ -81,6 +82,7 @@ const PREFS_KEY = 'zen:prefs:v2'
 interface QuickCapturePrefs {
   vimMode: boolean
   vimInsertEscape: string
+  vimKeymap: string
   themeId: string
   themeFamily: ThemeFamily
   themeMode: ThemeMode
@@ -95,6 +97,7 @@ function loadPrefs(): QuickCapturePrefs {
   const fallback: QuickCapturePrefs = {
     vimMode: true,
     vimInsertEscape: '',
+    vimKeymap: DEFAULT_VIM_KEYMAP,
     themeId: DEFAULT_THEME_ID,
     themeFamily: 'gruvbox',
     themeMode: 'dark',
@@ -492,7 +495,8 @@ export function QuickCaptureApp(): JSX.Element {
     vimHandlers.openPicker = () => setOverlay('search')
     registerCaptureVimCommands()
     applyVimInsertEscape(prefs.vimInsertEscape)
-  }, [resetToNew, save, submitAndClose, prefs.vimInsertEscape])
+    applyVimKeymap(prefs.vimKeymap)
+  }, [resetToNew, save, submitAndClose, prefs.vimInsertEscape, prefs.vimKeymap])
 
   // Window-level chord handlers. We attach the listener exactly once
   // and read state through refs so the handler is never operating on a
