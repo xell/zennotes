@@ -8,7 +8,6 @@
  * The geometry (which gap, what raw depth) is computed by the caller from the
  * DOM; this module owns the structural resolution so it can be unit-tested.
  */
-import { parentDirOf } from './manual-order'
 
 export interface FlatRow {
   /** Vault-relative identity: a note path, or a folder path. */
@@ -105,18 +104,4 @@ export function resolveDropTarget({
   }
 
   return { parentDir, beforePath, depth, valid }
-}
-
-/** True when `parentDir`/`beforePath` resolves to where `draggedPath` already
- *  sits, so the drop is a no-op rather than a move or reorder. */
-export function isNoOpDrop(
-  draggedPath: string,
-  parentDir: string,
-  beforePath: string | null,
-): boolean {
-  if (parentDirOf(draggedPath) !== parentDir) return false
-  // Inserting before itself, or appending when already last, is a no-op. The
-  // caller's reorder already collapses exact-position moves, so treat only the
-  // self-target as a guaranteed no-op here.
-  return beforePath === draggedPath
 }

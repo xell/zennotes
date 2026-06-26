@@ -83,6 +83,29 @@ export function applyManualMove(
 }
 
 /**
+ * Place `dragged` immediately before `beforePath` within `ordered`, or append it
+ * when `beforePath` is null or not present. Returns a new array. Dropping an item
+ * before itself keeps its position (without this it would be removed and then
+ * re-appended to the end). Used by the free drop resolver for cross-folder,
+ * into-folder, and same-parent positioning.
+ */
+export function applyManualPlace(
+  ordered: readonly string[],
+  dragged: string,
+  beforePath: string | null
+): string[] {
+  if (beforePath === dragged) return [...ordered]
+  const without = ordered.filter((p) => p !== dragged)
+  const idx = beforePath ? without.indexOf(beforePath) : -1
+  if (idx === -1) {
+    without.push(dragged)
+  } else {
+    without.splice(idx, 0, dragged)
+  }
+  return without
+}
+
+/**
  * Compare two sibling notes for a folder's manual order. Notes listed in
  * `order` sort first by their index; the rest follow by `siblingOrder`. A total
  * order, so `Array.sort` is stable.

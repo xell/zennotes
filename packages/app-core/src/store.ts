@@ -36,7 +36,7 @@ import {
 import { parseFrontmatter } from '@shared/template-files'
 import { recordTitle, composePageBody } from './lib/database-cells'
 import {
-  applyManualMove,
+  applyManualPlace,
   manualItemCompare,
   parentDirOf,
   remapManualOrderForMove,
@@ -2120,14 +2120,6 @@ interface Store {
   setSidebarWidth: (px: number) => void
   setNoteListWidth: (px: number) => void
   setNoteSortOrder: (order: NoteSortOrder) => void
-  /** Move a note or folder before/after a sibling in its parent's manual order
-   *  (#224). `draggedPath`/`targetPath` are vault-relative paths (note path or
-   *  `vaultRelativeFolderPath`); both must share a parent directory. */
-  reorderItemManually: (
-    draggedPath: string,
-    targetPath: string,
-    position: 'before' | 'after'
-  ) => void
   /** Place an item at a position in `parentDir`'s manual order: before
    *  `beforePath`, or appended when it's null. `draggedPath` must already live in
    *  `parentDir` (callers that move across folders run the filesystem move
@@ -4999,43 +4991,11 @@ export const useStore = create<Store>((set, get) => {
     set({ noteSortOrder: order })
     savePrefs(collectPrefs(get()))
   },
-  reorderItemManually: (draggedPath, targetPath, position) => {
-    const dir = parentDirOf(draggedPath)
-    if (draggedPath === targetPath || parentDirOf(targetPath) !== dir) return
-    const s = get()
-    const existing = s.manualNoteOrder[dir]
-    // Build the parent's current sibling order over BOTH notes and folders, so
-    // the persisted order interleaves them. The comparator (manual index, else
-    // folders-before-notes) mirrors the renderer, so the move starts from what
-    // the user actually sees.
-    const siblings: ManualOrderItem[] = []
-    for (const n of s.notes) {
-      if (parentDirOf(n.path) === dir) {
-        siblings.push({ path: n.path, kind: 'note', name: '', siblingOrder: n.siblingOrder })
-      }
-    }
-    for (const f of s.folders) {
-      if (!f.subpath) continue
-      const path = vaultRelativeFolderPath(f.folder, f.subpath, s.vaultSettings)
-      if (path && parentDirOf(path) === dir) {
-        siblings.push({
-          path,
-          kind: 'folder',
-          name: f.subpath.split('/').pop() ?? f.subpath,
-          siblingOrder: f.siblingOrder
-        })
-      }
-    }
-    const ordered = siblings
-      .sort((a, b) => manualItemCompare(existing, a, b))
-      .map((item) => item.path)
-    const next = applyManualMove(ordered, draggedPath, targetPath, position)
-    const nextMap = { ...s.manualNoteOrder, [dir]: next }
-    set({ manualNoteOrder: nextMap })
-    writeManualOrder(s.vault?.root ?? '', nextMap)
-  },
   placeItemManually: (draggedPath, parentDir, beforePath) => {
     if (parentDirOf(draggedPath) !== parentDir) return
+    // Dropping an item just before itself is a no-op; without this it would be
+    // filtered out and then re-appended to the end of the folder.
+    if (beforePath === draggedPath) return
     const s = get()
     const existing = s.manualNoteOrder[parentDir]
     const siblings: ManualOrderItem[] = []
@@ -5059,11 +5019,8 @@ export const useStore = create<Store>((set, get) => {
     const ordered = siblings
       .sort((a, b) => manualItemCompare(existing, a, b))
       .map((item) => item.path)
-    const without = ordered.filter((p) => p !== draggedPath)
-    const idx = beforePath ? without.indexOf(beforePath) : -1
-    if (idx === -1) without.push(draggedPath)
-    else without.splice(idx, 0, draggedPath)
-    const nextMap = { ...s.manualNoteOrder, [parentDir]: without }
+    const next = applyManualPlace(ordered, draggedPath, beforePath)
+    const nextMap = { ...s.manualNoteOrder, [parentDir]: next }
     set({ manualNoteOrder: nextMap })
     writeManualOrder(s.vault?.root ?? '', nextMap)
   },
