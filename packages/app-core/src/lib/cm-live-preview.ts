@@ -97,11 +97,22 @@ type SyntaxNodeRefLike = {
   node: SyntaxNodeLike
 }
 
+/**
+ * When `hideActiveLineMarkup` is on, Markdown markup stays hidden even on the
+ * line the caret is on, so moving the cursor no longer flashes marks in and out
+ * (the "stadium wave"). Off (the default) keeps Obsidian-style reveal-on-active-
+ * line for editing the syntax.
+ */
+function revealMarkupOnActiveLine(): boolean {
+  return !useStore.getState().hideActiveLineMarkup
+}
+
 function selectionTouchesRange(
   state: EditorView['state'],
   from: number,
   to: number
 ): boolean {
+  if (!revealMarkupOnActiveLine()) return false
   for (const range of state.selection.ranges) {
     if (range.empty) {
       if (range.from >= from && range.from <= to) return true
@@ -605,13 +616,16 @@ class TaskCheckboxWidget extends WidgetType {
 function computeDecorations(view: EditorView): DecorationSet {
   const { state } = view
 
-  // Every line that holds part of a selection range is "active" and
-  // therefore keeps its syntax markers visible for editing.
+  // Every line that holds part of a selection range is "active" and would keep
+  // its syntax markers visible for editing — unless reveal-on-active-line is
+  // off, in which case the set stays empty and all markup remains hidden.
   const activeLines = new Set<number>()
-  for (const r of state.selection.ranges) {
-    const fromLine = state.doc.lineAt(r.from).number
-    const toLine = state.doc.lineAt(r.to).number
-    for (let l = fromLine; l <= toLine; l++) activeLines.add(l)
+  if (revealMarkupOnActiveLine()) {
+    for (const r of state.selection.ranges) {
+      const fromLine = state.doc.lineAt(r.from).number
+      const toLine = state.doc.lineAt(r.to).number
+      for (let l = fromLine; l <= toLine; l++) activeLines.add(l)
+    }
   }
 
   const pending: PendingDecoration[] = []

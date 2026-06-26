@@ -356,6 +356,10 @@ interface Prefs {
   /** Render Markdown tables as interactive WYSIWYG widgets in live preview.
    *  Off keeps tables as plain editable markdown — full keyboard/Vim editing. */
   renderTablesInLivePreview: boolean
+  /** Hide Markdown markup even on the caret's line in live preview, so moving
+   *  the cursor doesn't flash marks in and out. Off keeps Obsidian-style
+   *  reveal-on-active-line for editing the syntax. */
+  hideActiveLineMarkup: boolean
   /** Auto-close markdown delimiters while typing: `**`+Space → `**|**`,
    *  ```` ``` ````+Enter expands a fenced block. Off restores plain typing. */
   markdownSnippets: boolean
@@ -506,6 +510,7 @@ export const DEFAULT_PREFS: Prefs = {
   fzfBinaryPath: null,
   livePreview: true,
   renderTablesInLivePreview: true,
+  hideActiveLineMarkup: false,
   markdownSnippets: true,
   hideBuiltinTemplates: false,
   tabsEnabled: true,
@@ -614,6 +619,10 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
       typeof p.renderTablesInLivePreview === 'boolean'
         ? p.renderTablesInLivePreview
         : DEFAULT_PREFS.renderTablesInLivePreview,
+    hideActiveLineMarkup:
+      typeof p.hideActiveLineMarkup === 'boolean'
+        ? p.hideActiveLineMarkup
+        : DEFAULT_PREFS.hideActiveLineMarkup,
     markdownSnippets:
       typeof p.markdownSnippets === 'boolean'
         ? p.markdownSnippets
@@ -1349,6 +1358,7 @@ function collectPrefs(s: {
   fzfBinaryPath: string | null
   livePreview: boolean
   renderTablesInLivePreview: boolean
+  hideActiveLineMarkup: boolean
   markdownSnippets: boolean
   hideBuiltinTemplates: boolean
   tabsEnabled: boolean
@@ -1410,6 +1420,7 @@ function collectPrefs(s: {
     fzfBinaryPath: s.fzfBinaryPath,
     livePreview: s.livePreview,
     renderTablesInLivePreview: s.renderTablesInLivePreview,
+    hideActiveLineMarkup: s.hideActiveLineMarkup,
     markdownSnippets: s.markdownSnippets,
     hideBuiltinTemplates: s.hideBuiltinTemplates,
     tabsEnabled: s.tabsEnabled,
@@ -1778,6 +1789,8 @@ interface Store {
   fzfBinaryPath: string | null
   livePreview: boolean
   renderTablesInLivePreview: boolean
+  /** Hide Markdown markup on the caret's line in live preview. Persisted. */
+  hideActiveLineMarkup: boolean
   /** Auto-close markdown delimiters while typing. Persisted. */
   markdownSnippets: boolean
   hideBuiltinTemplates: boolean
@@ -2095,6 +2108,7 @@ interface Store {
   setFzfBinaryPath: (path: string | null) => void
   setLivePreview: (on: boolean) => void
   setRenderTablesInLivePreview: (on: boolean) => void
+  setHideActiveLineMarkup: (on: boolean) => void
   setMarkdownSnippets: (on: boolean) => void
   setHideBuiltinTemplates: (hidden: boolean) => void
   setTabsEnabled: (on: boolean) => void
@@ -3184,6 +3198,7 @@ export const useStore = create<Store>((set, get) => {
   fzfBinaryPath: loadPrefs().fzfBinaryPath,
   livePreview: loadPrefs().livePreview,
   renderTablesInLivePreview: loadPrefs().renderTablesInLivePreview,
+  hideActiveLineMarkup: loadPrefs().hideActiveLineMarkup,
   markdownSnippets: loadPrefs().markdownSnippets,
   hideBuiltinTemplates: loadPrefs().hideBuiltinTemplates,
   tabsEnabled: loadPrefs().tabsEnabled,
@@ -4866,6 +4881,10 @@ export const useStore = create<Store>((set, get) => {
   },
   setRenderTablesInLivePreview: (on) => {
     set({ renderTablesInLivePreview: on })
+    savePrefs(collectPrefs(get()))
+  },
+  setHideActiveLineMarkup: (on) => {
+    set({ hideActiveLineMarkup: on })
     savePrefs(collectPrefs(get()))
   },
   setMarkdownSnippets: (on) => {

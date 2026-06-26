@@ -16,6 +16,7 @@ import {
   type ViewUpdate,
   WidgetType
 } from '@codemirror/view'
+import { useStore } from '../store'
 /** Line number (1-based) of the closing `---` of leading YAML frontmatter,
  *  or -1 when there is none. Lets us leave the frontmatter fences to the
  *  frontmatter styling rather than rendering them as horizontal rules.
@@ -119,6 +120,9 @@ class CalloutTitleWidget extends WidgetType {
 
 function activeLineSet(view: EditorView): Set<number> {
   const lines = new Set<number>()
+  // With `hideActiveLineMarkup` on, no line counts as active, so block markers
+  // (bullets, quote bars, fences) stay rendered even under the caret.
+  if (useStore.getState().hideActiveLineMarkup) return lines
   for (const r of view.state.selection.ranges) {
     const from = view.state.doc.lineAt(r.from).number
     const to = view.state.doc.lineAt(r.to).number

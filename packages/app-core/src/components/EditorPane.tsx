@@ -726,6 +726,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const vimYankToClipboard = useStore((s) => s.vimYankToClipboard)
   const livePreview = useStore((s) => s.livePreview)
   const renderTablesInLivePreview = useStore((s) => s.renderTablesInLivePreview)
+  const hideActiveLineMarkup = useStore((s) => s.hideActiveLineMarkup)
   const editorFontSize = useStore((s) => s.editorFontSize)
   const editorLineHeight = useStore((s) => s.editorLineHeight)
   const lineNumberMode = useStore((s) => s.lineNumberMode)
@@ -1859,7 +1860,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       return
     }
     view.dispatch({ effects: comp.reconfigure(livePreview ? wysiwygExtensions(useStore.getState().renderTablesInLivePreview) : []) })
-  }, [livePreview, renderTablesInLivePreview])
+  }, [livePreview, renderTablesInLivePreview, hideActiveLineMarkup])
   useEffect(() => {
     const view = viewRef.current
     const comp = lineNumbersCompartmentRef.current

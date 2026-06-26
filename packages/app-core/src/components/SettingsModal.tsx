@@ -334,6 +334,8 @@ export function SettingsModal(): JSX.Element {
   const setLivePreview = useStore((s) => s.setLivePreview)
   const renderTablesInLivePreview = useStore((s) => s.renderTablesInLivePreview)
   const setRenderTablesInLivePreview = useStore((s) => s.setRenderTablesInLivePreview)
+  const hideActiveLineMarkup = useStore((s) => s.hideActiveLineMarkup)
+  const setHideActiveLineMarkup = useStore((s) => s.setHideActiveLineMarkup)
   const markdownSnippets = useStore((s) => s.markdownSnippets)
   const setMarkdownSnippets = useStore((s) => s.setMarkdownSnippets)
   const tabsEnabled = useStore((s) => s.tabsEnabled)
@@ -1273,13 +1275,22 @@ export function SettingsModal(): JSX.Element {
               onChange={setLivePreview}
             />
             {livePreview && (
-              <ToggleRow
-                label="Render tables in live preview"
-                description="Show Markdown tables as interactive widgets. Turn off to keep tables as plain markdown text, so you can edit them with the keyboard (and Vim motions) like any other line."
-                value={renderTablesInLivePreview}
-                settingId="render-tables"
-                onChange={setRenderTablesInLivePreview}
-              />
+              <>
+                <ToggleRow
+                  label="Render tables in live preview"
+                  description="Show Markdown tables as interactive widgets. Turn off to keep tables as plain markdown text, so you can edit them with the keyboard (and Vim motions) like any other line."
+                  value={renderTablesInLivePreview}
+                  settingId="render-tables"
+                  onChange={setRenderTablesInLivePreview}
+                />
+                <ToggleRow
+                  label="Hide current line marks"
+                  description="Keep Markdown syntax hidden even on the line you're editing, so moving the cursor between lines doesn't make marks flash in and out. Turn off to reveal #, **, [[…]] on the active line for editing (Obsidian-style)."
+                  value={hideActiveLineMarkup}
+                  settingId="hide-active-line-markup"
+                  onChange={setHideActiveLineMarkup}
+                />
+              </>
             )}
             <ToggleRow
               label="Markdown snippets"

@@ -1094,6 +1094,16 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       run: () => getState().setLivePreview(!getState().livePreview)
     },
     {
+      id: 'editor.hide-active-line-markup.toggle',
+      title: getState().hideActiveLineMarkup
+        ? 'Show Current Line Marks'
+        : 'Hide Current Line Marks',
+      category: 'Editor',
+      keywords: 'markdown syntax markup reveal active line live preview asterisk',
+      when: () => getState().livePreview,
+      run: () => getState().setHideActiveLineMarkup(!getState().hideActiveLineMarkup)
+    },
+    {
       id: 'editor.tabs.toggle',
       title: getState().tabsEnabled ? 'Disable Tabs' : 'Enable Tabs',
       category: 'Editor',
