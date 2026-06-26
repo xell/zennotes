@@ -214,14 +214,31 @@ export function ExternalFileApp(): JSX.Element {
     return () => window.removeEventListener('beforeunload', flush)
   }, [persist])
 
-  // Cmd/Ctrl+W closes the standalone window.
+  // Window-level shortcuts: Cmd/Ctrl+W closes the window, and
+  // Cmd/Ctrl+4/5/6 switch modes to match the main window's
+  // Edit/Split/Preview bindings. There's no Split here, so 5 maps to the
+  // middle Live mode.
   useEffect(() => {
     const handler = (event: KeyboardEvent): void => {
       const mod = event.metaKey || event.ctrlKey
       if (!mod || event.altKey) return
-      if (event.key.toLowerCase() !== 'w') return
-      event.preventDefault()
-      window.zen.windowClose()
+      const key = event.key.toLowerCase()
+      if (key === 'w') {
+        event.preventDefault()
+        window.zen.windowClose()
+        return
+      }
+      if (event.shiftKey) return
+      if (key === '4') {
+        event.preventDefault()
+        setMode('edit')
+      } else if (key === '5') {
+        event.preventDefault()
+        setMode('live')
+      } else if (key === '6') {
+        event.preventDefault()
+        setMode('preview')
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)

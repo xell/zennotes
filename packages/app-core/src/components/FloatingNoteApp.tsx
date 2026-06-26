@@ -407,9 +407,25 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
     const handler = (event: KeyboardEvent): void => {
       const mod = event.metaKey || event.ctrlKey
       if (!mod || event.altKey) return
-      if (event.key.toLowerCase() !== 'w') return
-      event.preventDefault()
-      window.zen.windowClose()
+      const key = event.key.toLowerCase()
+      if (key === 'w') {
+        event.preventDefault()
+        window.zen.windowClose()
+        return
+      }
+      // Mode switching mirrors the main window's Cmd/Ctrl+4/5/6
+      // (Edit/Split/Preview). No Split here, so 5 maps to Live.
+      if (event.shiftKey) return
+      if (key === '4') {
+        event.preventDefault()
+        setMode('edit')
+      } else if (key === '5') {
+        event.preventDefault()
+        setMode('live')
+      } else if (key === '6') {
+        event.preventDefault()
+        setMode('preview')
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
