@@ -71,13 +71,8 @@ import { useStore } from '../store'
 import type { LineNumberMode } from '../store'
 import type { PaneEdge, PaneLeaf } from '../lib/pane-layout'
 import { findLeaf, inferPaneDropEdge } from '../lib/pane-layout'
-import { livePreviewPlugin } from '../lib/cm-live-preview'
-import { codeBlockFlairPlugin } from '../lib/cm-code-block-flair'
-import { tablePlugin, tableVimEntry } from '../lib/cm-table'
-import { wysiwygBlocksPlugin } from '../lib/cm-wysiwyg-blocks'
-import { hashtagExtension } from '../lib/cm-hashtags'
-import { applyHighlight, HIGHLIGHT_COLORS, highlightExtension } from '../lib/cm-highlight'
-import { wikilinkRenderExtension } from '../lib/cm-wikilink-render'
+import { wysiwygExtensions } from '../lib/cm-wysiwyg-compose'
+import { applyHighlight, HIGHLIGHT_COLORS } from '../lib/cm-highlight'
 import { slashCommandSource, slashCommandRender } from '../lib/cm-slash-commands'
 import { dateShortcutSource } from '../lib/cm-date-shortcuts'
 import { wikilinkSource, wikilinkHeadingSource } from '../lib/cm-wikilinks'
@@ -302,31 +297,6 @@ function markdownSyntaxHighlightExtensions(): Extension[] {
   return [
     syntaxHighlighting(paperHighlight),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true })
-  ]
-}
-
-/**
- * Live-preview ("WYSIWYG") rendering bundle: the base marker-hiding/inline
- * plugin plus block-level renderers — tables, blockquote bars, list
- * bullets, horizontal rules, fenced-code cards, hashtag chips, and
- * wikilink rendering. Loaded by the livePreview compartment (gated by the
- * `livePreview` setting); cleared to `[]` when off.
- *
- * Ported from the WYSIWYG work in PR #185 (author: songgnqing). That PR's
- * frontmatter-properties panel is intentionally excluded — it depends on
- * the PR's breaking database restructure.
- */
-function wysiwygExtensions(renderTables: boolean): Extension[] {
-  return [
-    livePreviewPlugin,
-    codeBlockFlairPlugin,
-    // Table widgets are gated on a setting — off keeps tables as plain editable
-    // markdown for full keyboard/Vim editing (#232).
-    ...(renderTables ? [tablePlugin, tableVimEntry] : []),
-    wysiwygBlocksPlugin,
-    ...hashtagExtension,
-    ...highlightExtension,
-    ...wikilinkRenderExtension
   ]
 }
 
