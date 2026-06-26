@@ -88,6 +88,11 @@ import {
   parentDirOf,
   type ManualOrderItem,
 } from "../lib/manual-order";
+import {
+  resolveDropTarget,
+  type FlatRow,
+  type DropResolution,
+} from "../lib/sidebar-drop-resolver";
 import { resolveSystemFolderLabels } from "../lib/system-folder-labels";
 import { assetTabPath } from "../lib/asset-tabs";
 import {
@@ -1030,6 +1035,319 @@ export function Sidebar(): JSX.Element {
   );
   const setCollapsed = (next: Set<string>): void =>
     setCollapsedFoldersAction([...next]);
+
+  // --- Free manual reorder: container-level drop resolver (Manual sort only) -
+  const placeItemManually = useStore((s) => s.placeItemManually);
+  // Between-siblings cue: a horizontal line at the target indent.
+  const [dropLine, setDropLine] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
+  // Into-folder cue: the target folder row glows in the theme accent.
+  const [dropHighlight, setDropHighlight] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const dropResolutionRef = useRef<DropResolution | null>(null);
+  const springRef = useRef<{
+    key: string;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
+
+  const clearSpring = useCallback(() => {
+    if (springRef.current) {
+      clearTimeout(springRef.current.timer);
+      springRef.current = null;
+    }
+  }, []);
+  const clearDrop = useCallback(() => {
+    dropResolutionRef.current = null;
+    setDropLine(null);
+    setDropHighlight(null);
+    clearSpring();
+  }, [clearSpring]);
+
+  // Edge autoscroll while dragging: hovering a thin band at the top/bottom of
+  // the tree scrolls it (after a short delay) so you can drag past the viewport.
+  const autoScrollRef = useRef<{ dir: number; intensity: number; since: number }>({
+    dir: 0,
+    intensity: 0,
+    since: 0,
+  });
+  const autoScrollRafRef = useRef<number | null>(null);
+  const stopAutoScroll = useCallback(() => {
+    autoScrollRef.current = { dir: 0, intensity: 0, since: 0 };
+    if (autoScrollRafRef.current != null) {
+      cancelAnimationFrame(autoScrollRafRef.current);
+      autoScrollRafRef.current = null;
+    }
+  }, []);
+  const updateAutoScroll = useCallback(
+    (clientY: number) => {
+      const el = sidebarScrollRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const EDGE = 48;
+      let dir = 0;
+      let intensity = 0;
+      if (clientY < rect.top + EDGE) {
+        dir = -1;
+        intensity = Math.min(1, (rect.top + EDGE - clientY) / EDGE);
+      } else if (clientY > rect.bottom - EDGE) {
+        dir = 1;
+        intensity = Math.min(1, (clientY - (rect.bottom - EDGE)) / EDGE);
+      }
+      const prev = autoScrollRef.current;
+      if (dir === 0) {
+        if (prev.dir !== 0) stopAutoScroll();
+        return;
+      }
+      autoScrollRef.current = {
+        dir,
+        intensity,
+        since: prev.dir === dir ? prev.since : performance.now(),
+      };
+      if (autoScrollRafRef.current == null) {
+        const DELAY = 220;
+        const step = (): void => {
+          const node = sidebarScrollRef.current;
+          const st = autoScrollRef.current;
+          const scrolledMs = performance.now() - st.since - DELAY;
+          if (node && st.dir !== 0 && scrolledMs > 0) {
+            // Slow, precise start: a position curve (gentle near the inner edge,
+            // quicker only at the very edge) eased in over the first ~1.2s of
+            // continuous scrolling. Tuned for accurate insertion, not speed.
+            const posCurve = Math.pow(st.intensity, 2.2);
+            const timeRamp = Math.min(1, scrolledMs / 1200);
+            const speed = (0.35 + 4.5 * posCurve) * (0.3 + 0.7 * timeRamp);
+            node.scrollTop += st.dir * speed;
+          }
+          autoScrollRafRef.current =
+            autoScrollRef.current.dir !== 0
+              ? requestAnimationFrame(step)
+              : null;
+        };
+        autoScrollRafRef.current = requestAnimationFrame(step);
+      }
+    },
+    [stopAutoScroll],
+  );
+  // Safety net: a drag ending anywhere (drop, Esc-cancel) stops autoscroll and
+  // clears the indicators.
+  useEffect(() => {
+    const onDragEnd = (): void => {
+      stopAutoScroll();
+      clearDrop();
+    };
+    window.addEventListener("dragend", onDragEnd);
+    return () => {
+      window.removeEventListener("dragend", onDragEnd);
+      stopAutoScroll();
+    };
+  }, [clearDrop, stopAutoScroll]);
+
+  const handleTreeDragOver = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      if (useStore.getState().noteSortOrder !== "manual" || !hasZenItem(event))
+        return;
+      const container = sidebarScrollRef.current;
+      if (!container) {
+        clearDrop();
+        return;
+      }
+      // Drive edge autoscroll first, so it works even over empty space / between
+      // rows, not just when a row is under the pointer.
+      updateAutoScroll(event.clientY);
+      const rowEl = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+        "[data-sidebar-idx]",
+      );
+      if (!rowEl) {
+        clearDrop();
+        return;
+      }
+      const vs = useStore.getState().vaultSettings;
+      const drag = getCurrentDragPayload();
+      const draggedPath = draggedItemPath(drag, vs);
+      if (!draggedPath) {
+        clearDrop();
+        return;
+      }
+      const all = scrapeSidebarRows(container, vs);
+      const hoveredPath =
+        rowEl.getAttribute("data-sidebar-type") === "note"
+          ? rowEl.getAttribute("data-sidebar-path")
+          : vaultRelativeFolderPath(
+              (rowEl.getAttribute("data-sidebar-folder") ?? "inbox") as NoteFolder,
+              rowEl.getAttribute("data-sidebar-subpath") ?? "",
+              vs,
+            );
+      const hovered = all.find((r) => r.path === hoveredPath);
+      if (!hovered) {
+        clearDrop();
+        return;
+      }
+      const rows = all.filter((r) => r.section === hovered.section);
+      const hoveredIndex = rows.indexOf(hovered);
+      const fracY =
+        (event.clientY - hovered.rect.top) / Math.max(1, hovered.rect.height);
+      const draggedIsFolder = drag?.kind === "folder";
+
+      // Three-zone model for folder rows: the middle band means "into this
+      // folder" (glow the folder, spring it open if collapsed); the top/bottom
+      // edges mean "beside it" (the sibling line, below). Notes only have edges.
+      if (hovered.isFolder && fracY > 0.3 && fracY < 0.7) {
+        const intoSelf =
+          draggedIsFolder &&
+          (hovered.path === draggedPath ||
+            hovered.path.startsWith(`${draggedPath}/`));
+        if (intoSelf) {
+          clearDrop();
+          return;
+        }
+        // Spring-load a collapsed folder we're hovering into.
+        if (hovered.hasChildren && !hovered.isExpanded) {
+          const key = `${hovered.section}:${hovered.path}`;
+          if (springRef.current?.key !== key) {
+            clearSpring();
+            const folderKey = `${hovered.section}:${rowEl.getAttribute("data-sidebar-subpath") ?? ""}`;
+            springRef.current = {
+              key,
+              timer: setTimeout(() => {
+                toggleCollapse(folderKey);
+                springRef.current = null;
+              }, 600),
+            };
+          }
+        } else {
+          clearSpring();
+        }
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        dropResolutionRef.current = {
+          parentDir: hovered.path,
+          beforePath: null,
+          depth: hovered.depth + 1,
+          valid: true,
+        };
+        setDropLine(null);
+        setDropHighlight({
+          top: hovered.rect.top,
+          left: hovered.rect.left,
+          width: hovered.rect.width,
+          height: hovered.rect.height,
+        });
+        return;
+      }
+
+      clearSpring();
+      setDropHighlight(null);
+      const belowHalf = fracY > 0.5;
+      const gapIndex = hoveredIndex + (belowHalf ? 1 : 0);
+      const pointerDepth = Math.round(
+        (event.clientX - hovered.rect.left - SIDEBAR_INDENT_BASE_PX) /
+          SIDEBAR_INDENT_PX,
+      );
+      const sectionRootDir = vaultRelativeFolderPath(hovered.section, "", vs);
+      const resolution = resolveDropTarget({
+        rows,
+        gapIndex,
+        pointerDepth,
+        sectionRootDir,
+        draggedPath,
+        draggedIsFolder,
+      });
+      if (!resolution.valid) {
+        dropResolutionRef.current = null;
+        setDropLine(null);
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      dropResolutionRef.current = resolution;
+      const gapY = belowHalf ? hovered.rect.bottom : hovered.rect.top;
+      const left =
+        hovered.rect.left +
+        SIDEBAR_INDENT_BASE_PX +
+        resolution.depth * SIDEBAR_INDENT_PX;
+      setDropLine({
+        top: gapY,
+        left,
+        width: Math.max(0, hovered.rect.right - left),
+      });
+    },
+    [clearDrop, clearSpring, toggleCollapse, updateAutoScroll],
+  );
+
+  const performDrop = useCallback(
+    async (resolution: DropResolution, drag: DragPayload | null) => {
+      const vs = useStore.getState().vaultSettings;
+      const draggedPath = draggedItemPath(drag, vs);
+      if (!draggedPath || !drag || !resolution.valid) return;
+      const targetParentDir = resolution.parentDir;
+      if (parentDirOf(draggedPath) === targetParentDir) {
+        placeItemManually(draggedPath, targetParentDir, resolution.beforePath);
+        return;
+      }
+      const target = vaultDirToTarget(targetParentDir, vs);
+      if (drag.kind === "folder") {
+        if (drag.folder !== target.folder) return; // folders stay in their section
+        const srcPath = vaultRelativeFolderPath(drag.folder, drag.subpath, vs);
+        if (
+          targetParentDir === srcPath ||
+          targetParentDir.startsWith(`${srcPath}/`)
+        )
+          return; // descendant guard
+        const leaf = drag.subpath.split("/").pop() ?? drag.subpath;
+        const desired = target.subpath ? `${target.subpath}/${leaf}` : leaf;
+        const newSubpath = uniqueFolderSubpath(
+          drag.folder,
+          desired,
+          useStore.getState().folders,
+        );
+        await renameFolderAction(drag.folder, drag.subpath, newSubpath);
+        placeItemManually(
+          vaultRelativeFolderPath(drag.folder, newSubpath, vs),
+          targetParentDir,
+          resolution.beforePath,
+        );
+      } else if (drag.kind === "note") {
+        const newPath = await moveNoteAction(
+          drag.path,
+          target.folder,
+          target.subpath,
+        );
+        if (newPath)
+          placeItemManually(newPath, targetParentDir, resolution.beforePath);
+      }
+    },
+    [moveNoteAction, placeItemManually, renameFolderAction],
+  );
+
+  const handleTreeDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      const resolution = dropResolutionRef.current;
+      stopAutoScroll();
+      if (useStore.getState().noteSortOrder !== "manual" || !resolution) return;
+      event.preventDefault();
+      const drag = readDragPayload(event) ?? getCurrentDragPayload();
+      clearDrop();
+      void performDrop(resolution, drag);
+    },
+    [clearDrop, performDrop, stopAutoScroll],
+  );
+
+  const handleTreeDragLeave = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      const next = event.relatedTarget as Node | null;
+      if (next && sidebarScrollRef.current?.contains(next)) return;
+      clearDrop();
+      stopAutoScroll();
+    },
+    [clearDrop, stopAutoScroll],
+  );
 
   // Build a folder tree per top-level (quick + inbox + archive). Uses
   // the folders index from main so empty subfolders still appear in
@@ -2917,6 +3235,9 @@ export function Sidebar(): JSX.Element {
         ref={sidebarScrollRef}
         className="mt-3 min-h-0 flex-1 overflow-y-auto px-3"
         style={{ scrollbarGutter: "stable" }}
+        onDragOver={handleTreeDragOver}
+        onDrop={handleTreeDrop}
+        onDragLeave={handleTreeDragLeave}
         onClick={(e) => {
           if (e.target === e.currentTarget) setFocusedPanel("editor");
         }}
@@ -2928,6 +3249,27 @@ export function Sidebar(): JSX.Element {
           }
         }}
       >
+        {dropHighlight && (
+          <div
+            className="pointer-events-none fixed z-40 rounded-lg bg-accent/15 ring-1 ring-inset ring-accent/60"
+            style={{
+              top: dropHighlight.top,
+              left: dropHighlight.left,
+              width: dropHighlight.width,
+              height: dropHighlight.height,
+            }}
+          />
+        )}
+        {dropLine && (
+          <div
+            className="pointer-events-none fixed z-50 h-0.5 rounded-full bg-accent"
+            style={{
+              top: dropLine.top - 1,
+              left: dropLine.left,
+              width: dropLine.width,
+            }}
+          />
+        )}
         <div
           className="flex min-h-full flex-col pb-2"
           onContextMenu={(e) => {
@@ -3889,6 +4231,101 @@ function draggedItemPath(
   return null;
 }
 
+/** One row in the resolver model, enriched with screen geometry and its section. */
+type ScrapedRow = FlatRow & { rect: DOMRect; section: NoteFolder };
+
+const SIDEBAR_INDENT_PX = 14;
+const SIDEBAR_INDENT_BASE_PX = 4;
+
+/** Read the rendered sidebar rows (in visual order) into the resolver's flat
+ *  model, using the data attributes and inline indent every row already carries.
+ *  Avoids re-deriving render order; the DOM is the source of truth. */
+function scrapeSidebarRows(
+  container: HTMLElement,
+  vaultSettings: ReturnType<typeof useStore.getState>["vaultSettings"],
+): ScrapedRow[] {
+  const out: ScrapedRow[] = [];
+  container.querySelectorAll<HTMLElement>("[data-sidebar-idx]").forEach((el) => {
+    const type = el.getAttribute("data-sidebar-type");
+    const padLeft = Number.parseFloat(el.style.paddingLeft || "0");
+    const depth = Math.max(
+      0,
+      Math.round((padLeft - SIDEBAR_INDENT_BASE_PX) / SIDEBAR_INDENT_PX),
+    );
+    const rect = el.getBoundingClientRect();
+    if (type === "note") {
+      const path = el.getAttribute("data-sidebar-path");
+      if (!path) return;
+      out.push({
+        path,
+        parentDir: parentDirOf(path),
+        depth,
+        isFolder: false,
+        isExpanded: false,
+        hasChildren: false,
+        rect,
+        section: folderForVaultRelativePath(path, vaultSettings) ?? "inbox",
+      });
+    } else if (type === "folder") {
+      const section = (el.getAttribute("data-sidebar-folder") ??
+        "inbox") as NoteFolder;
+      const subpath = el.getAttribute("data-sidebar-subpath") ?? "";
+      const path = vaultRelativeFolderPath(section, subpath, vaultSettings);
+      const collapsed = el.getAttribute("data-sidebar-collapsed") === "true";
+      const expandable = el.getAttribute("data-sidebar-expandable") === "true";
+      out.push({
+        path,
+        parentDir: parentDirOf(path),
+        depth,
+        isFolder: true,
+        isExpanded: expandable && !collapsed,
+        hasChildren: expandable,
+        rect,
+        section,
+      });
+    }
+  });
+  return out;
+}
+
+/** Split a vault-relative directory into its (section, subpath) for the move
+ *  APIs, which address folders by top-level section plus subpath. */
+function vaultDirToTarget(
+  dir: string,
+  vaultSettings: ReturnType<typeof useStore.getState>["vaultSettings"],
+): { folder: NoteFolder; subpath: string } {
+  if (!dir) return { folder: "inbox", subpath: "" };
+  const section = folderForVaultRelativePath(dir, vaultSettings) ?? "inbox";
+  if (section === "inbox" && isPrimaryNotesAtRoot(vaultSettings)) {
+    return { folder: section, subpath: dir };
+  }
+  if (dir === section) return { folder: section, subpath: "" };
+  if (dir.startsWith(`${section}/`)) {
+    return { folder: section, subpath: dir.slice(section.length + 1) };
+  }
+  return { folder: section, subpath: dir };
+}
+
+/** A non-colliding subpath under `section`, appending " 2", " 3", … like notes. */
+function uniqueFolderSubpath(
+  section: NoteFolder,
+  desired: string,
+  folders: ReturnType<typeof useStore.getState>["folders"],
+): string {
+  const taken = new Set(
+    folders.filter((f) => f.folder === section).map((f) => f.subpath),
+  );
+  if (!taken.has(desired)) return desired;
+  const slash = desired.lastIndexOf("/");
+  const parent = slash === -1 ? "" : desired.slice(0, slash);
+  const leaf = slash === -1 ? desired : desired.slice(slash + 1);
+  for (let n = 2; n < 1000; n++) {
+    const candidate = `${parent ? `${parent}/` : ""}${leaf} ${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return desired;
+}
+
 /** Build the manual-order descriptor for a node's children, or undefined when
  *  not in Manual sort. Notes and folders share the order map keyed by the node's
  *  own vault-relative path (the parent dir of its children). */
@@ -4488,9 +4925,6 @@ function SubTree({
   useSidebarVisibleNotePrefetch(visibleEntries, showNotes && !isCollapsed);
   const hasChildren = entries.length > 0;
   const [dragHover, setDragHover] = useState(false);
-  const reorderItemManually = useStore((s) => s.reorderItemManually);
-  const [dropPos, setDropPos] = useState<"before" | "after" | null>(null);
-  const folderPath = vaultRelativeFolderPath(folder, node.subpath, vaultSettings);
   const myIdx = idxCounter.value++;
   const selectionKey = folderSelectionKey(folder, node.subpath);
 
@@ -4551,56 +4985,27 @@ function SubTree({
           )
         }
         dropTarget={dragHover}
-        dropPos={dropPos}
         selected={selectedKeys.has(selectionKey)}
         onDragOver={(e) => {
           if (!hasZenItem(e)) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = "move";
-          // In Manual sort, dragging a same-parent sibling reorders this folder
-          // among its siblings (before/after indicator). Anything else (a child
-          // being moved in, a cross-folder drag) keeps the move-into highlight.
-          const draggedPath = manualSort
-            ? draggedItemPath(getCurrentDragPayload(), vaultSettings)
-            : null;
-          if (
-            draggedPath &&
-            draggedPath !== folderPath &&
-            parentDirOf(draggedPath) === parentDirOf(folderPath)
-          ) {
-            e.stopPropagation();
+          if (manualSort) {
+            // In Manual sort the container-level resolver owns every drag
+            // (reorder, into-folder, and spring-load), so don't claim it here —
+            // just let the event bubble up to it.
             if (dragHover) setDragHover(false);
-            const rect = e.currentTarget.getBoundingClientRect();
-            const pos =
-              e.clientY - rect.top < rect.height / 2 ? "before" : "after";
-            if (pos !== dropPos) setDropPos(pos);
             return;
           }
-          if (dropPos) setDropPos(null);
           setDragHover(true);
         }}
-        onDragLeave={() => {
-          setDragHover(false);
-          setDropPos((p) => (p ? null : p));
-        }}
+        onDragLeave={() => setDragHover(false)}
         onDrop={(e) => {
           setDragHover(false);
+          if (manualSort) return; // container resolver owns Manual-sort drops
           const payload = readDragPayload(e);
           if (!payload) return;
           e.preventDefault();
-          if (dropPos) {
-            e.stopPropagation();
-            const draggedPath = draggedItemPath(payload, vaultSettings);
-            const pos = dropPos;
-            setDropPos(null);
-            if (
-              draggedPath &&
-              parentDirOf(draggedPath) === parentDirOf(folderPath)
-            ) {
-              reorderItemManually(draggedPath, folderPath, pos);
-            }
-            return;
-          }
           void onDropOnFolder(payload, folder, node.subpath);
         }}
         sidebarIdx={myIdx}
@@ -4783,56 +5188,8 @@ const NoteLeaf = memo(function NoteLeaf({
     },
     [dragPayloadForItem, note.path],
   );
-  // Manual (drag-to-reorder) ordering — only in Manual sort, within a folder.
-  const manualSort = useStore((s) => s.noteSortOrder === "manual");
-  const reorderItemManually = useStore((s) => s.reorderItemManually);
-  const [dropPos, setDropPos] = useState<"before" | "after" | null>(null);
-  const handleReorderDragOver = useCallback(
-    (event: React.DragEvent<HTMLButtonElement>) => {
-      if (!manualSort || !hasZenItem(event)) return;
-      const draggedPath = draggedItemPath(
-        getCurrentDragPayload(),
-        useStore.getState().vaultSettings,
-      );
-      // A same-parent note/folder drop reorders here; anything else bubbles to
-      // the folder's move handler (so cross-folder moves still work).
-      if (
-        !draggedPath ||
-        draggedPath === note.path ||
-        parentDirOf(draggedPath) !== parentDirOf(note.path)
-      ) {
-        if (dropPos) setDropPos(null);
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      event.dataTransfer.dropEffect = "move";
-      const rect = event.currentTarget.getBoundingClientRect();
-      const pos = event.clientY - rect.top < rect.height / 2 ? "before" : "after";
-      if (pos !== dropPos) setDropPos(pos);
-    },
-    [manualSort, note.path, dropPos],
-  );
-  const handleReorderDragLeave = useCallback(() => {
-    setDropPos((p) => (p ? null : p));
-  }, []);
-  const handleReorderDrop = useCallback(
-    (event: React.DragEvent<HTMLButtonElement>) => {
-      if (!dropPos) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const draggedPath = draggedItemPath(
-        readDragPayload(event) ?? getCurrentDragPayload(),
-        useStore.getState().vaultSettings,
-      );
-      const pos = dropPos;
-      setDropPos(null);
-      if (draggedPath && parentDirOf(draggedPath) === parentDirOf(note.path)) {
-        reorderItemManually(draggedPath, note.path, pos);
-      }
-    },
-    [dropPos, note.path, reorderItemManually],
-  );
+  // Manual reorder (same-parent and cross-folder) is owned by the container-
+  // level drop resolver in Sidebar; the note row only needs to be draggable.
   // Custom icon / color set via the note's right-click menu (keyed by path).
   // Read directly from the store so the row updates when they change — the
   // selector returns a primitive, so it only re-renders for this note.
@@ -4847,9 +5204,6 @@ const NoteLeaf = memo(function NoteLeaf({
       onContextMenu={handleContextMenu}
       draggable
       onDragStart={handleDragStart}
-      onDragOver={handleReorderDragOver}
-      onDragLeave={handleReorderDragLeave}
-      onDrop={handleReorderDrop}
       className={[
         "group relative flex h-9 w-full items-center gap-1.5 rounded-lg px-1 text-left text-sm outline-none transition-colors focus:outline-none",
         active
@@ -4876,12 +5230,6 @@ const NoteLeaf = memo(function NoteLeaf({
           }
         : {})}
     >
-      {dropPos === "before" && (
-        <span className="pointer-events-none absolute inset-x-1 -top-px h-0.5 rounded-full bg-accent" />
-      )}
-      {dropPos === "after" && (
-        <span className="pointer-events-none absolute inset-x-1 -bottom-px h-0.5 rounded-full bg-accent" />
-      )}
       <SidebarGlyph
         active={strongActive}
         rowActive={active || selected}

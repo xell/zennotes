@@ -2311,11 +2311,13 @@ interface Store {
   revealFolder: (folder: NoteFolder, subpath: string) => Promise<void>
   revealAssetsDir: () => Promise<void>
   /** Move a note to a different folder + subpath. */
+  /** Move a note into another folder; resolves to its new vault-relative path
+   *  (the backend de-duplicates names on collision), or null on failure. */
   moveNote: (
     relPath: string,
     targetFolder: NoteFolder,
     targetSubpath: string
-  ) => Promise<void>
+  ) => Promise<string | null>
   init: () => Promise<void>
   openVaultPicker: () => Promise<void>
   openLocalVault: (root: string) => Promise<void>
@@ -6365,8 +6367,10 @@ export const useStore = create<Store>((set, get) => {
       await get().applyFavorites(
         rewriteFavoriteNotePath(get().vaultSettings.favorites, relPath, meta.path)
       )
+      return meta.path
     } catch (err) {
       console.error('moveNote failed', err)
+      return null
     }
   },
 
