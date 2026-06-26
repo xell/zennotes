@@ -209,10 +209,17 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
   // reconfigures in place (keeping undo history + cursor) instead of
   // tearing the editor down.
   const livePreviewCompartment = useMemo(() => new Compartment(), [])
+  // Line numbers + word wrap live in compartments so a settings refresh
+  // (Cmd/Ctrl+Shift+,) can re-apply them in place without rebuilding.
+  const lineNumbersCompartment = useMemo(() => new Compartment(), [])
+  const wordWrapCompartment = useMemo(() => new Compartment(), [])
   // Mirror the current mode into a ref so the deps-light editor-mount
   // callback reads the right initial compartment value across remounts.
   const modeRef = useRef(mode)
   modeRef.current = mode
+  // Latest prefs actually applied to this window; updated by
+  // refreshSettings so editor remounts pick up the refreshed values.
+  const appliedPrefsRef = useRef(prefs)
   /** The body we most recently wrote. Used to suppress watcher echoes
    *  of our own saves — comparing to disk is more robust than a
    *  single-shot ignore flag, since a save can echo more than once
@@ -312,7 +319,9 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
           history(),
           drawSelection(),
           highlightActiveLine(),
-          prefs.wordWrap ? EditorView.lineWrapping : [],
+          wordWrapCompartment.of(
+            appliedPrefsRef.current.wordWrap ? EditorView.lineWrapping : []
+          ),
           markdown({ base: markdownLanguage, codeLanguages: resolveCodeLanguage, addKeymap: true }),
           markdownListIndentPlugin,
           headingFolding(),
@@ -323,7 +332,7 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
               ? wysiwygExtensions(useStore.getState().renderTablesInLivePreview)
               : []
           ),
-          lineNumberExtension(prefs.lineNumberMode),
+          lineNumbersCompartment.of(lineNumberExtension(appliedPrefsRef.current.lineNumberMode)),
           keymap.of([
             indentWithTab,
             ...vimAwareDefaultKeymap(prefs.vimMode),
@@ -370,6 +379,24 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
     })
   }, [mode, livePreviewCompartment])
 
+  // Pull the latest settings from the shared prefs blob and apply them to
+  // this window without a reload. Theme/fonts/sizes go through applyTheme;
+  // line numbers and word wrap reconfigure their compartments in place.
+  // Bound to Cmd/Ctrl+Shift+, in the shortcut handler below.
+  const refreshSettings = useCallback(() => {
+    const next = loadFloatingPrefs()
+    appliedPrefsRef.current = next
+    applyTheme(next)
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({
+      effects: [
+        lineNumbersCompartment.reconfigure(lineNumberExtension(next.lineNumberMode)),
+        wordWrapCompartment.reconfigure(next.wordWrap ? EditorView.lineWrapping : [])
+      ]
+    })
+  }, [lineNumbersCompartment, wordWrapCompartment])
+
   // Push external content updates into the live CM view (with
   // selection clamping to keep cursor near where it was).
   useEffect(() => {
@@ -413,6 +440,13 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
         window.zen.windowClose()
         return
       }
+      // Re-read and apply settings without reloading the window.
+      // event.code is layout-robust (Shift+',' prints '<' on US layouts).
+      if (event.shiftKey && event.code === 'Comma') {
+        event.preventDefault()
+        refreshSettings()
+        return
+      }
       // Mode switching mirrors the main window's Cmd/Ctrl+4/5/6
       // (Edit/Split/Preview). No Split here, so 5 maps to Live.
       if (event.shiftKey) return
@@ -429,7 +463,7 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [])
+  }, [refreshSettings])
 
   // Vim ex commands scoped to the floating window. The main-window
   // `registerVimCommands` never runs here (each Electron window has its

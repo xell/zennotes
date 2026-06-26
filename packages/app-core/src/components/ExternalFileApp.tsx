@@ -66,10 +66,18 @@ export function ExternalFileApp(): JSX.Element {
   // reconfigures the plugin in place (keeping undo history + cursor)
   // rather than tearing the editor down.
   const livePreviewCompartment = useMemo(() => new Compartment(), [])
+  // Line numbers + word wrap live in compartments so a settings refresh
+  // (Cmd/Ctrl+Shift+,) can re-apply them in place without rebuilding.
+  const lineNumbersCompartment = useMemo(() => new Compartment(), [])
+  const wordWrapCompartment = useMemo(() => new Compartment(), [])
   // Mirror the current mode into a ref so the deps-light editor-mount
   // callback can read it without going stale across remounts.
   const modeRef = useRef(mode)
   modeRef.current = mode
+  // Latest prefs actually applied to this window. Seeded from the mount
+  // snapshot; updated by refreshSettings so editor remounts pick up the
+  // refreshed values for the compartments' initial config.
+  const appliedPrefsRef = useRef(prefs)
 
   // Apply theme + font vars before paint.
   useEffect(() => {
@@ -130,7 +138,9 @@ export function ExternalFileApp(): JSX.Element {
           history(),
           drawSelection(),
           highlightActiveLine(),
-          prefs.wordWrap ? EditorView.lineWrapping : [],
+          wordWrapCompartment.of(
+            appliedPrefsRef.current.wordWrap ? EditorView.lineWrapping : []
+          ),
           markdown({ base: markdownLanguage, codeLanguages: resolveCodeLanguage, addKeymap: true }),
           markdownListIndentPlugin,
           headingFolding(),
@@ -141,7 +151,7 @@ export function ExternalFileApp(): JSX.Element {
               ? wysiwygExtensions(useStore.getState().renderTablesInLivePreview)
               : []
           ),
-          lineNumberExtension(prefs.lineNumberMode),
+          lineNumbersCompartment.of(lineNumberExtension(appliedPrefsRef.current.lineNumberMode)),
           keymap.of([
             indentWithTab,
             ...vimAwareDefaultKeymap(prefs.vimMode),
@@ -189,6 +199,26 @@ export function ExternalFileApp(): JSX.Element {
     })
   }, [mode, livePreviewCompartment])
 
+  // Pull the latest settings from the shared prefs blob and apply them to
+  // this window without a reload. The main window writes prefs to
+  // localStorage on every change, so re-reading here is always current.
+  // Theme/fonts/sizes go through applyTheme (CSS vars); line numbers and
+  // word wrap reconfigure their compartments in place. Bound to
+  // Cmd/Ctrl+Shift+, in the shortcut handler below.
+  const refreshSettings = useCallback(() => {
+    const next = loadFloatingPrefs()
+    appliedPrefsRef.current = next
+    applyTheme(next)
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({
+      effects: [
+        lineNumbersCompartment.reconfigure(lineNumberExtension(next.lineNumberMode)),
+        wordWrapCompartment.reconfigure(next.wordWrap ? EditorView.lineWrapping : [])
+      ]
+    })
+  }, [lineNumbersCompartment, wordWrapCompartment])
+
   // Seed the live CM view the first time content arrives.
   useEffect(() => {
     const view = viewRef.current
@@ -214,10 +244,10 @@ export function ExternalFileApp(): JSX.Element {
     return () => window.removeEventListener('beforeunload', flush)
   }, [persist])
 
-  // Window-level shortcuts: Cmd/Ctrl+W closes the window, and
-  // Cmd/Ctrl+4/5/6 switch modes to match the main window's
-  // Edit/Split/Preview bindings. There's no Split here, so 5 maps to the
-  // middle Live mode.
+  // Window-level shortcuts: Cmd/Ctrl+W closes the window, Cmd/Ctrl+4/5/6
+  // switch modes to match the main window's Edit/Split/Preview bindings
+  // (no Split here, so 5 maps to the middle Live mode), and
+  // Cmd/Ctrl+Shift+, pulls the latest settings from the main window.
   useEffect(() => {
     const handler = (event: KeyboardEvent): void => {
       const mod = event.metaKey || event.ctrlKey
@@ -226,6 +256,13 @@ export function ExternalFileApp(): JSX.Element {
       if (key === 'w') {
         event.preventDefault()
         window.zen.windowClose()
+        return
+      }
+      // Re-read and apply settings without reloading the window.
+      // event.code is layout-robust (Shift+',' prints '<' on US layouts).
+      if (event.shiftKey && event.code === 'Comma') {
+        event.preventDefault()
+        refreshSettings()
         return
       }
       if (event.shiftKey) return
@@ -242,7 +279,7 @@ export function ExternalFileApp(): JSX.Element {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [])
+  }, [refreshSettings])
 
   const currentBody = useCallback((): string => {
     return viewRef.current?.state.doc.toString() ?? bodyRef.current ?? content?.body ?? ''
