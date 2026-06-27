@@ -151,6 +151,13 @@ function parseModifierLhs(lhs: string): Omit<ModifierBinding, 'contexts' | 'rhs'
   const m = lhs.match(MODIFIER_LHS_RE)
   if (!m) return null
   const mods = m[1].toUpperCase()
+  const hasMeta = mods.includes('D-')
+  const hasAlt = mods.includes('M-') || mods.includes('A-')
+  // Only intercept bindings that require the window-level handler: those that
+  // include Cmd (<D->) or Option/Alt (<M-> / <A->), which codemirror-vim cannot
+  // handle. Pure Ctrl (<C->) and Shift (<S->) combos work fine via Vim.map and
+  // should not be routed here — doing so breaks e.g. `nmap <C-j> <C-d>`.
+  if (!hasMeta && !hasAlt) return null
   const rawKey = m[2]
   // Translate named vim keys; single characters are used as-is.
   const domKey = (VIM_KEY_TO_DOM[rawKey] ?? (rawKey.length === 1 ? rawKey : null))?.toLowerCase()
@@ -159,9 +166,9 @@ function parseModifierLhs(lhs: string): Omit<ModifierBinding, 'contexts' | 'rhs'
     return null
   }
   return {
-    meta: mods.includes('D-'),
+    meta: hasMeta,
     ctrl: mods.includes('C-'),
-    alt: mods.includes('M-') || mods.includes('A-'),
+    alt: hasAlt,
     shift: mods.includes('S-'),
     key: domKey
   }
