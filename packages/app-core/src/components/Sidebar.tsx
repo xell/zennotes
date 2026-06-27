@@ -2759,7 +2759,7 @@ export function Sidebar(): JSX.Element {
           icon: <VaultBadge name={entry.name} size={16} />,
           disabled: entry.current || (entry.kind === "remote" && !entry.id),
           sideAction:
-            !entry.current && entry.kind === "local"
+            entry.kind === "local"
               ? {
                   title: "Open in new window",
                   icon: (
