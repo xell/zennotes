@@ -38,6 +38,7 @@ import {
   shortcutBindingFromEvent
 } from '../lib/keymaps'
 import { resolveAuto, THEMES, type ThemeFamily, type ThemeMode } from '../lib/themes'
+import { applyVimKeymap } from '../lib/vim-keymap'
 import { hasSystemFontAccess, listSystemFonts } from '../lib/system-fonts'
 import {
   DEFAULT_SYSTEM_FOLDER_LABELS,
@@ -313,6 +314,10 @@ export function SettingsModal(): JSX.Element {
   const setVimMode = useStore((s) => s.setVimMode)
   const vimInsertEscape = useStore((s) => s.vimInsertEscape)
   const setVimInsertEscape = useStore((s) => s.setVimInsertEscape)
+  const vimKeymap = useStore((s) => s.vimKeymap)
+  const setVimKeymap = useStore((s) => s.setVimKeymap)
+  const vimJsScriptsEnabled = useStore((s) => s.vimJsScriptsEnabled)
+  const setVimJsScriptsEnabled = useStore((s) => s.setVimJsScriptsEnabled)
   const vimYankToClipboard = useStore((s) => s.vimYankToClipboard)
   const setVimYankToClipboard = useStore((s) => s.setVimYankToClipboard)
   const keymapOverrides = useStore((s) => s.keymapOverrides)
@@ -803,6 +808,16 @@ export function SettingsModal(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [setSettingsOpen, templateEditor, editingRemoteProfile])
 
+  // Apply Vim key mappings when Settings closes (the modal unmounts on any
+  // close — Done, Esc, backdrop), rather than churning Vim maps on every
+  // keystroke typed into the mappings field. Reads the live (already
+  // persisted) value at close time.
+  useEffect(() => {
+    return () => {
+      applyVimKeymap(useStore.getState().vimKeymap)
+    }
+  }, [])
+
   useEffect(() => {
     return () => {
       if (settingsSearchHighlightTimerRef.current != null) {
@@ -1117,6 +1132,8 @@ export function SettingsModal(): JSX.Element {
           searchIds: [
             'vim-mode',
             'vim-insert-escape',
+            'vim-key-mappings',
+            'vim-js-scripts-enabled',
             'leader-key-hints',
             'leader-hint-behavior',
             'leader-hint-duration',
@@ -1145,6 +1162,35 @@ export function SettingsModal(): JSX.Element {
                   placeholder="jk"
                   settingId="vim-insert-escape"
                   onChange={(next) => setVimInsertEscape(next ?? '')}
+                />
+                <div className="px-5 py-4" {...settingsSearchTargetProps('vim-key-mappings')}>
+                  <div className="text-sm font-medium text-ink-900">Custom key mappings</div>
+                  <div className="mt-1 text-xs leading-5 text-ink-500">
+                    One mapping per line, Obsidian-vimrc style: nmap / nnoremap / vmap /
+                    vnoremap / imap / inoremap / map / noremap, then the keys. The right side
+                    can be vim keys (<code className="font-mono">nmap k gk</code>), a ZenNotes
+                    command (<code className="font-mono">nmap gT zen:note.daily.today</code>),
+                    or a user JS function (
+                    <code className="font-mono">nmap ]] zen:tools:jumpHeading(true)</code>,
+                    needs the toggle below). Lines starting with{' '}
+                    <code className="font-mono">"</code> are ignored; unrecognized lines are
+                    skipped. Applied when you press Done.
+                  </div>
+                  <textarea
+                    value={vimKeymap}
+                    onChange={(e) => setVimKeymap(e.target.value)}
+                    spellCheck={false}
+                    rows={6}
+                    className="mt-2 w-full resize-y rounded-xl border border-paper-300/70 bg-paper-50/80 px-3.5 py-3 font-mono text-xs leading-5 text-ink-900 outline-none placeholder:text-ink-400 focus:border-accent/45"
+                    placeholder={'nmap k gk\nnmap j gj\nnnoremap - $\nvnoremap - $'}
+                  />
+                </div>
+                <ToggleRow
+                  label="Enable user JS scripts"
+                  description="Let zen:<file>:<fn>() mappings run your own JavaScript from <file>.js in the ZenNotes config dir (~/.config/zennotes). Functions receive a zen editor API. Off by default since it executes arbitrary code."
+                  value={vimJsScriptsEnabled}
+                  settingId="vim-js-scripts-enabled"
+                  onChange={setVimJsScriptsEnabled}
                 />
                 <ToggleRow
                   label="Yank to system clipboard"

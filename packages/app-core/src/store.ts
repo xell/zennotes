@@ -65,6 +65,7 @@ import {
   type TaskPriority as TaskLinePriority
 } from '@shared/tasklists'
 import { DEFAULT_THEME_ID, THEMES, type ThemeFamily, type ThemeMode } from './lib/themes'
+import { DEFAULT_VIM_KEYMAP } from './lib/vim-keymap-defaults'
 import { formatMarkdown } from './lib/format-markdown'
 import { confirmMoveToTrash } from './lib/confirm-trash'
 import { confirmApp } from './lib/confirm-requests'
@@ -343,6 +344,11 @@ interface Prefs {
   /** Key sequence that exits insert mode (maps to <Esc>), e.g. "jk".
    *  Empty disables it. */
   vimInsertEscape: string
+  /** User Vim key mappings, Obsidian-vimrc style (one per line). Persisted. */
+  vimKeymap: string
+  /** Allow `zen:<file>:<fn>()` Vim mappings to eval user JS from the config
+   *  dir. Off by default (opt-in, since it runs arbitrary code). */
+  vimJsScriptsEnabled: boolean
   /** When true, Vim yank/delete/change also copy to the system clipboard
    *  (like `set clipboard=unnamed`). */
   vimYankToClipboard: boolean
@@ -511,6 +517,8 @@ function normalizeKanbanColumnTitles(raw: unknown): Record<string, string> {
 export const DEFAULT_PREFS: Prefs = {
   vimMode: true,
   vimInsertEscape: '',
+  vimKeymap: DEFAULT_VIM_KEYMAP,
+  vimJsScriptsEnabled: false,
   vimYankToClipboard: false,
   keymapOverrides: {},
   whichKeyHints: true,
@@ -596,6 +604,12 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
       typeof p.vimInsertEscape === 'string'
         ? p.vimInsertEscape.trim().slice(0, 5)
         : DEFAULT_PREFS.vimInsertEscape,
+    vimKeymap:
+      typeof p.vimKeymap === 'string' ? p.vimKeymap : DEFAULT_PREFS.vimKeymap,
+    vimJsScriptsEnabled:
+      typeof p.vimJsScriptsEnabled === 'boolean'
+        ? p.vimJsScriptsEnabled
+        : DEFAULT_PREFS.vimJsScriptsEnabled,
     vimYankToClipboard:
       typeof p.vimYankToClipboard === 'boolean'
         ? p.vimYankToClipboard
@@ -1408,6 +1422,8 @@ async function rewriteTagAcrossVault(
 function collectPrefs(s: {
   vimMode: boolean
   vimInsertEscape: string
+  vimKeymap: string
+  vimJsScriptsEnabled: boolean
   vimYankToClipboard: boolean
   keymapOverrides: KeymapOverrides
   whichKeyHints: boolean
@@ -1472,6 +1488,8 @@ function collectPrefs(s: {
   return {
     vimMode: s.vimMode,
     vimInsertEscape: s.vimInsertEscape,
+    vimKeymap: s.vimKeymap,
+    vimJsScriptsEnabled: s.vimJsScriptsEnabled,
     vimYankToClipboard: s.vimYankToClipboard,
     keymapOverrides: s.keymapOverrides,
     whichKeyHints: s.whichKeyHints,
@@ -1842,6 +1860,10 @@ interface Store {
   vimMode: boolean
   /** Key sequence that exits insert mode (maps to <Esc>), e.g. "jk". Persisted. */
   vimInsertEscape: string
+  /** User Vim key mappings, Obsidian-vimrc style (one per line). Persisted. */
+  vimKeymap: string
+  /** Allow `zen:<file>:<fn>()` mappings to eval user JS. Off by default. Persisted. */
+  vimJsScriptsEnabled: boolean
   /** When true, Vim yank/delete/change also copy to the system clipboard. Persisted. */
   vimYankToClipboard: boolean
   keymapOverrides: KeymapOverrides
@@ -2165,6 +2187,8 @@ interface Store {
   setFocusMode: (focus: boolean) => void
   setVimMode: (on: boolean) => void
   setVimInsertEscape: (sequence: string) => void
+  setVimKeymap: (text: string) => void
+  setVimJsScriptsEnabled: (on: boolean) => void
   setVimYankToClipboard: (on: boolean) => void
   setKeymapBinding: (id: KeymapId, binding: string | null) => void
   resetAllKeymaps: () => void
@@ -2975,6 +2999,7 @@ export const useStore = create<Store>((set, get) => {
             : state.noteForwardstack,
         pendingJumpLocation: null,
         loadingNote: false,
+        focusedPanel: 'editor',
         ...activeFieldsFrom(nextLayout, state.activePaneId, state.noteContents, state.noteDirty)
       })
       recordRendererPerf('note.open.cached', performance.now() - startedAt, {
@@ -3027,6 +3052,7 @@ export const useStore = create<Store>((set, get) => {
         noteContents: contents,
         noteDirty: dirty,
         loadingNote: false,
+        focusedPanel: 'editor',
         ...activeFieldsFrom(nextLayout, s.activePaneId, contents, dirty),
         noteBackstack: nextBackstack,
         noteForwardstack: nextForwardstack,
@@ -3264,6 +3290,8 @@ export const useStore = create<Store>((set, get) => {
   zenRestoreState: null,
   vimMode: loadPrefs().vimMode,
   vimInsertEscape: loadPrefs().vimInsertEscape,
+  vimKeymap: loadPrefs().vimKeymap,
+  vimJsScriptsEnabled: loadPrefs().vimJsScriptsEnabled,
   vimYankToClipboard: loadPrefs().vimYankToClipboard,
   keymapOverrides: loadPrefs().keymapOverrides,
   whichKeyHints: loadPrefs().whichKeyHints,
@@ -4918,6 +4946,14 @@ export const useStore = create<Store>((set, get) => {
     set({ vimInsertEscape: sequence.trim().slice(0, 5) })
     savePrefs(collectPrefs(get()))
   },
+  setVimKeymap: (text) => {
+    set({ vimKeymap: text })
+    savePrefs(collectPrefs(get()))
+  },
+  setVimJsScriptsEnabled: (on) => {
+    set({ vimJsScriptsEnabled: on })
+    savePrefs(collectPrefs(get()))
+  },
   setVimYankToClipboard: (on) => {
     set({ vimYankToClipboard: on })
     savePrefs(collectPrefs(get()))
@@ -5978,14 +6014,25 @@ export const useStore = create<Store>((set, get) => {
         delete contents[path]
         delete dirty[path]
       }
+      const activeFields = activeFieldsFrom(ensured.layout, ensured.activePaneId, contents, dirty)
       return {
         paneLayout: ensured.layout,
         activePaneId: ensured.activePaneId,
         noteContents: contents,
         noteDirty: dirty,
-        ...activeFieldsFrom(ensured.layout, ensured.activePaneId, contents, dirty)
+        ...activeFields,
+        // Return focus to the editor whenever a note is still open after close.
+        // Without this, a prior sidebar interaction leaves focusedPanel='sidebar'
+        // and the EditorPane focus effect never re-fires (no dep change).
+        ...(activeFields.selectedPath != null ? { focusedPanel: 'editor' } : {})
       }
     })
+    // Imperatively focus the editor after state settles — guards against the
+    // case where focusedPanel was already 'editor' (no dep change → effect
+    // skipped) and the close button's removal drops browser focus to the body.
+    if (get().selectedPath) {
+      requestAnimationFrame(() => get().editorViewRef?.focus())
+    }
   },
 
   reorderTabInPane: (paneId, dragPath, targetPath, position) => {

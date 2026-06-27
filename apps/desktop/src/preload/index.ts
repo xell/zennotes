@@ -271,6 +271,8 @@ const api: ZenBridge = {
     ipcRenderer.invoke(IPC.IME_GET_CURRENT, binaryPath),
   setInputSource: (binaryPath: string, layoutId: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.IME_SET_LAYOUT, binaryPath, layoutId),
+  getUserScript: (name: string): Promise<{ code: string; mtime: number } | null> =>
+    ipcRenderer.invoke(IPC.USER_SCRIPT_GET, name),
   rootContentHiddenByInboxMode: (): Promise<boolean> =>
     ipcRenderer.invoke(IPC.VAULT_ROOT_CONTENT_HIDDEN),
 

@@ -45,6 +45,7 @@ import {
 } from '../lib/keymaps'
 import { navigateActiveBuffer } from '../lib/buffer-navigation'
 import { applyVimInsertEscape } from '../lib/vim-insert-escape'
+import { applyVimKeymap } from '../lib/vim-keymap'
 import { focusEditorNormalMode } from '../lib/editor-focus'
 
 let vimCommandsRegistered = false
@@ -1325,6 +1326,15 @@ export function Editor(): JSX.Element {
   useEffect(() => {
     applyVimInsertEscape(vimInsertEscape)
   }, [vimInsertEscape])
+
+  // Apply user Vim key mappings once at startup. Live edits are applied by
+  // the Settings "Done" button (same renderer), so this is intentionally
+  // not keyed on the pref — we don't want maps churning on every keystroke
+  // typed into the mappings field.
+  useEffect(() => {
+    applyVimKeymap(useStore.getState().vimKeymap)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <section className="flex min-w-0 flex-1 flex-col">

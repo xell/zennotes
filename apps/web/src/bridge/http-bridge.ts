@@ -335,6 +335,10 @@ function getInputSource(_binaryPath: string): Promise<string> {
 function setInputSource(_binaryPath: string, _layoutId: string): Promise<boolean> {
   return Promise.resolve(false)
 }
+function getUserScript(_name: string): Promise<{ code: string; mtime: number } | null> {
+  // No filesystem in the browser; user JS scripts are a desktop-only feature.
+  return Promise.resolve(null)
+}
 
 function listLocalVaults(): Promise<LocalVaultEntry[]> {
   return Promise.resolve([])
@@ -1465,6 +1469,7 @@ export const httpBridge: ZenBridge = {
   setManualOrder,
   getInputSource,
   setInputSource,
+  getUserScript,
   rootContentHiddenByInboxMode,
 
   listNotes,

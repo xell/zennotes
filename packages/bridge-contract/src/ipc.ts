@@ -22,6 +22,7 @@ export const IPC = {
   MANUAL_ORDER_SET: 'manual-order:set',
   IME_GET_CURRENT: 'ime:get-current',
   IME_SET_LAYOUT: 'ime:set-layout',
+  USER_SCRIPT_GET: 'user-script:get',
   VAULT_ROOT_CONTENT_HIDDEN: 'vault:root-content-hidden',
   VAULT_LIST_NOTES: 'vault:list-notes',
   VAULT_LIST_NOTES_STREAM: 'vault:list-notes-stream',
