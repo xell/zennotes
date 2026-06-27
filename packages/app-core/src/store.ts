@@ -2899,6 +2899,7 @@ export const useStore = create<Store>((set, get) => {
             : state.noteForwardstack,
         pendingJumpLocation: null,
         loadingNote: false,
+        focusedPanel: 'editor',
         ...activeFieldsFrom(nextLayout, state.activePaneId, state.noteContents, state.noteDirty)
       })
       recordRendererPerf('note.open.cached', performance.now() - startedAt, {
@@ -2951,6 +2952,7 @@ export const useStore = create<Store>((set, get) => {
         noteContents: contents,
         noteDirty: dirty,
         loadingNote: false,
+        focusedPanel: 'editor',
         ...activeFieldsFrom(nextLayout, s.activePaneId, contents, dirty),
         noteBackstack: nextBackstack,
         noteForwardstack: nextForwardstack,
@@ -5871,14 +5873,25 @@ export const useStore = create<Store>((set, get) => {
         delete contents[path]
         delete dirty[path]
       }
+      const activeFields = activeFieldsFrom(ensured.layout, ensured.activePaneId, contents, dirty)
       return {
         paneLayout: ensured.layout,
         activePaneId: ensured.activePaneId,
         noteContents: contents,
         noteDirty: dirty,
-        ...activeFieldsFrom(ensured.layout, ensured.activePaneId, contents, dirty)
+        ...activeFields,
+        // Return focus to the editor whenever a note is still open after close.
+        // Without this, a prior sidebar interaction leaves focusedPanel='sidebar'
+        // and the EditorPane focus effect never re-fires (no dep change).
+        ...(activeFields.selectedPath != null ? { focusedPanel: 'editor' } : {})
       }
     })
+    // Imperatively focus the editor after state settles — guards against the
+    // case where focusedPanel was already 'editor' (no dep change → effect
+    // skipped) and the close button's removal drops browser focus to the body.
+    if (get().selectedPath) {
+      requestAnimationFrame(() => get().editorViewRef?.focus())
+    }
   },
 
   reorderTabInPane: (paneId, dragPath, targetPath, position) => {
