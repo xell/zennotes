@@ -174,7 +174,6 @@
   --z-glass-blur: 22px;
   --z-glass-sat: 180%;
 
-  --scrollbar: rgb(var(--z-shadow) / 0.18);
   --glass-stroke: rgb(var(--z-shadow) / 0.08);
   --glass-shadow:
     0 1px 0 rgba(255, 255, 255, 0.55) inset, 0 0 0 1px var(--glass-stroke),
@@ -1290,33 +1289,6 @@ textarea,
 .cm-editor,
 .prose-zen {
   user-select: text;
-}
-
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--scrollbar);
-  border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgb(var(--z-shadow) / 0.32);
-  background-clip: padding-box;
-  border: 2px solid transparent;
-}
-
-.workspace-tab-strip {
-  scrollbar-color: var(--scrollbar) transparent;
-}
-
-.workspace-tab-strip::-webkit-scrollbar {
-  height: 6px;
 }
 
 .drag-region {

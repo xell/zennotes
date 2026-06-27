@@ -21,9 +21,8 @@ describe('workspace tab strip overflow styles', () => {
       "tabStripOverflowing ? 'overflow-x-auto' : 'overflow-x-hidden'"
     )
     expect(editorPaneSource).toContain('items-stretch')
-    expect(stylesSource).toMatch(
-      /\.workspace-tab-strip::-webkit-scrollbar\s*\{[^}]*height:\s*6px/s
-    )
+    expect(stylesSource).not.toContain('::-webkit-scrollbar')
+    expect(stylesSource).not.toContain('scrollbar-color')
     expect(stylesSource).not.toMatch(
       /\.workspace-tab-strip::-webkit-scrollbar\s*\{[^}]*display:\s*none/s
     )

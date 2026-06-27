@@ -3250,7 +3250,6 @@ export function Sidebar(): JSX.Element {
       <div
         ref={sidebarScrollRef}
         className="mt-3 min-h-0 flex-1 overflow-y-auto px-3"
-        style={{ scrollbarGutter: "stable" }}
         onDragOver={handleTreeDragOver}
         onDrop={handleTreeDrop}
         onDragLeave={handleTreeDragLeave}
