@@ -28,6 +28,7 @@ export const PORTABLE_PREF_KEYS = [
   'whichKeyHints',
   'whichKeyHintMode',
   'whichKeyHintTimeoutMs',
+  'vimKeymap',
   // keymaps (overrides only)
   'keymapOverrides',
   // search
@@ -118,6 +119,7 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   whichKeyHints: true,
   whichKeyHintMode: 'timed',
   whichKeyHintTimeoutMs: 900,
+  vimKeymap: '',
   keymapOverrides: {},
   vaultTextSearchBackend: 'auto',
   ripgrepBinaryPath: null,

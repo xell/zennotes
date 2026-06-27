@@ -55,6 +55,11 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
     tomlKey: 'yank_to_clipboard',
     comment: 'also copy Vim yank/delete/change to the system clipboard'
   },
+  vimKeymap: {
+    section: 'vim',
+    tomlKey: 'keymap',
+    comment: 'custom Vim mappings (nmap/noremap syntax, one per line); supports zen:cmd and zen:file:fn() RHS'
+  },
   whichKeyHints: {
     section: 'vim',
     tomlKey: 'which_key_hints',
@@ -338,6 +343,19 @@ export function getConfigFilePath(): string {
 // TOML (de)serialization
 // ---------------------------------------------------------------------------
 
+/**
+ * Render a multiline TOML basic string (`"""..."""`).
+ * Used for `vimKeymap` so the config file stays hand-editable.
+ * The opening `"""` is followed immediately by a newline, which TOML strips,
+ * so the first mapping line lands on its own line in the file.
+ */
+function tomlMultilineValue(value: string): string {
+  const escaped = value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+  return `"""\n${escaped}\n"""`
+}
+
 /** Render a single TOML value (basic string / int / float / bool). */
 function tomlValue(value: unknown): string {
   if (typeof value === 'boolean') return value ? 'true' : 'false'
@@ -376,6 +394,19 @@ export function serializeConfig(portable: AppConfigPortable): string {
       if (value === undefined) value = PORTABLE_DEFAULTS[key]
       // TOML has no null — nullable fields persist as "".
       if (value === null) value = NULLABLE_FIELDS.has(key) ? '' : PORTABLE_DEFAULTS[key]
+
+      // vimKeymap is a multiline string and is omitted when empty so an existing
+      // localStorage value is not overwritten on the first launch after upgrade.
+      if (key === 'vimKeymap') {
+        lines.push(`# ${map.comment}`)
+        if (!value || value === '') {
+          lines.push(`# ${map.tomlKey} = "nmap j gj"`)
+        } else {
+          lines.push(`${map.tomlKey} = ${tomlMultilineValue(value as string)}`)
+        }
+        continue
+      }
+
       lines.push(`${map.tomlKey} = ${tomlValue(value)}  # ${map.comment}`)
     }
   }
