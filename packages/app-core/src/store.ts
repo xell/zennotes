@@ -65,7 +65,7 @@ import {
   type TaskPriority as TaskLinePriority
 } from '@shared/tasklists'
 import { DEFAULT_THEME_ID, THEMES, type ThemeFamily, type ThemeMode } from './lib/themes'
-import { DEFAULT_VIM_KEYMAP } from './lib/vim-keymap'
+import { DEFAULT_VIM_KEYMAP } from './lib/vim-keymap-defaults'
 import { formatMarkdown } from './lib/format-markdown'
 import { confirmMoveToTrash } from './lib/confirm-trash'
 import { confirmApp } from './lib/confirm-requests'
@@ -346,6 +346,9 @@ interface Prefs {
   vimInsertEscape: string
   /** User Vim key mappings, Obsidian-vimrc style (one per line). Persisted. */
   vimKeymap: string
+  /** Allow `zen:<file>:<fn>()` Vim mappings to eval user JS from the config
+   *  dir. Off by default (opt-in, since it runs arbitrary code). */
+  vimJsScriptsEnabled: boolean
   /** When true, Vim yank/delete/change also copy to the system clipboard
    *  (like `set clipboard=unnamed`). */
   vimYankToClipboard: boolean
@@ -515,6 +518,7 @@ export const DEFAULT_PREFS: Prefs = {
   vimMode: true,
   vimInsertEscape: '',
   vimKeymap: DEFAULT_VIM_KEYMAP,
+  vimJsScriptsEnabled: false,
   vimYankToClipboard: false,
   keymapOverrides: {},
   whichKeyHints: true,
@@ -602,6 +606,10 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
         : DEFAULT_PREFS.vimInsertEscape,
     vimKeymap:
       typeof p.vimKeymap === 'string' ? p.vimKeymap : DEFAULT_PREFS.vimKeymap,
+    vimJsScriptsEnabled:
+      typeof p.vimJsScriptsEnabled === 'boolean'
+        ? p.vimJsScriptsEnabled
+        : DEFAULT_PREFS.vimJsScriptsEnabled,
     vimYankToClipboard:
       typeof p.vimYankToClipboard === 'boolean'
         ? p.vimYankToClipboard
@@ -1415,6 +1423,7 @@ function collectPrefs(s: {
   vimMode: boolean
   vimInsertEscape: string
   vimKeymap: string
+  vimJsScriptsEnabled: boolean
   vimYankToClipboard: boolean
   keymapOverrides: KeymapOverrides
   whichKeyHints: boolean
@@ -1480,6 +1489,7 @@ function collectPrefs(s: {
     vimMode: s.vimMode,
     vimInsertEscape: s.vimInsertEscape,
     vimKeymap: s.vimKeymap,
+    vimJsScriptsEnabled: s.vimJsScriptsEnabled,
     vimYankToClipboard: s.vimYankToClipboard,
     keymapOverrides: s.keymapOverrides,
     whichKeyHints: s.whichKeyHints,
@@ -1852,6 +1862,8 @@ interface Store {
   vimInsertEscape: string
   /** User Vim key mappings, Obsidian-vimrc style (one per line). Persisted. */
   vimKeymap: string
+  /** Allow `zen:<file>:<fn>()` mappings to eval user JS. Off by default. Persisted. */
+  vimJsScriptsEnabled: boolean
   /** When true, Vim yank/delete/change also copy to the system clipboard. Persisted. */
   vimYankToClipboard: boolean
   keymapOverrides: KeymapOverrides
@@ -2176,6 +2188,7 @@ interface Store {
   setVimMode: (on: boolean) => void
   setVimInsertEscape: (sequence: string) => void
   setVimKeymap: (text: string) => void
+  setVimJsScriptsEnabled: (on: boolean) => void
   setVimYankToClipboard: (on: boolean) => void
   setKeymapBinding: (id: KeymapId, binding: string | null) => void
   resetAllKeymaps: () => void
@@ -3276,6 +3289,7 @@ export const useStore = create<Store>((set, get) => {
   vimMode: loadPrefs().vimMode,
   vimInsertEscape: loadPrefs().vimInsertEscape,
   vimKeymap: loadPrefs().vimKeymap,
+  vimJsScriptsEnabled: loadPrefs().vimJsScriptsEnabled,
   vimYankToClipboard: loadPrefs().vimYankToClipboard,
   keymapOverrides: loadPrefs().keymapOverrides,
   whichKeyHints: loadPrefs().whichKeyHints,
@@ -4932,6 +4946,10 @@ export const useStore = create<Store>((set, get) => {
   },
   setVimKeymap: (text) => {
     set({ vimKeymap: text })
+    savePrefs(collectPrefs(get()))
+  },
+  setVimJsScriptsEnabled: (on) => {
+    set({ vimJsScriptsEnabled: on })
     savePrefs(collectPrefs(get()))
   },
   setVimYankToClipboard: (on) => {

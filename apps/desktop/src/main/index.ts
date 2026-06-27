@@ -104,7 +104,8 @@ import {
   getPortableConfigSnapshot,
   setPortableConfig,
   getConfigFilePath,
-  ensureConfigFile
+  ensureConfigFile,
+  getConfigDir
 } from './app-config'
 import type { AppConfigPortable } from '@shared/app-config'
 import {
@@ -2086,6 +2087,21 @@ function registerIpc(): void {
     } catch (err) {
       console.error('[zen:ime] set-layout failed', err)
       return false
+    }
+  })
+
+  // Read a user JS file for the Vim `zen:<file>:<fn>()` mappings. `name` must
+  // be a bare filename (no separators / `..`); we only ever read `<name>.js`
+  // from inside the config dir.
+  handle(IPC.USER_SCRIPT_GET, async (_e, name: string) => {
+    const base = (name ?? '').trim()
+    if (!base || !/^[\w.-]+$/.test(base) || base.includes('..')) return null
+    try {
+      const file = path.join(getConfigDir(), `${base}.js`)
+      const [code, stat] = await Promise.all([fsp.readFile(file, 'utf8'), fsp.stat(file)])
+      return { code, mtime: stat.mtimeMs }
+    } catch {
+      return null
     }
   })
 

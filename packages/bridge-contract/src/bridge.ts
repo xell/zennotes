@@ -123,6 +123,10 @@ export interface ZenBridge {
   /** Switch the macOS input source to `layoutId` via the switcher binary.
    *  Returns true on success. No-op on non-desktop platforms. */
   setInputSource(binaryPath: string, layoutId: string): Promise<boolean>
+  /** Read a user JS file (`<name>.js`) from the ZenNotes config dir for the
+   *  Vim `zen:<file>:<fn>(args)` mappings. Returns the code + mtime, or null
+   *  if missing/unreadable. `name` is a bare filename (no path separators). */
+  getUserScript(name: string): Promise<{ code: string; mtime: number } | null>
   /** True when the vault is in `inbox` mode but its root holds notes that only
    *  `root` mode would surface (drives the "Switch to Vault root" banner). */
   rootContentHiddenByInboxMode(): Promise<boolean>

@@ -316,6 +316,8 @@ export function SettingsModal(): JSX.Element {
   const setVimInsertEscape = useStore((s) => s.setVimInsertEscape)
   const vimKeymap = useStore((s) => s.vimKeymap)
   const setVimKeymap = useStore((s) => s.setVimKeymap)
+  const vimJsScriptsEnabled = useStore((s) => s.vimJsScriptsEnabled)
+  const setVimJsScriptsEnabled = useStore((s) => s.setVimJsScriptsEnabled)
   const vimYankToClipboard = useStore((s) => s.vimYankToClipboard)
   const setVimYankToClipboard = useStore((s) => s.setVimYankToClipboard)
   const keymapOverrides = useStore((s) => s.keymapOverrides)
@@ -1131,6 +1133,7 @@ export function SettingsModal(): JSX.Element {
             'vim-mode',
             'vim-insert-escape',
             'vim-key-mappings',
+            'vim-js-scripts-enabled',
             'leader-key-hints',
             'leader-hint-behavior',
             'leader-hint-duration',
@@ -1164,8 +1167,12 @@ export function SettingsModal(): JSX.Element {
                   <div className="text-sm font-medium text-ink-900">Custom key mappings</div>
                   <div className="mt-1 text-xs leading-5 text-ink-500">
                     One mapping per line, Obsidian-vimrc style: nmap / nnoremap / vmap /
-                    vnoremap / imap / inoremap / map / noremap, then the keys (e.g.{' '}
-                    <code className="font-mono">nmap k gk</code>). Lines starting with{' '}
+                    vnoremap / imap / inoremap / map / noremap, then the keys. The right side
+                    can be vim keys (<code className="font-mono">nmap k gk</code>), a ZenNotes
+                    command (<code className="font-mono">nmap gT zen:note.daily.today</code>),
+                    or a user JS function (
+                    <code className="font-mono">nmap ]] zen:tools:jumpHeading(true)</code>,
+                    needs the toggle below). Lines starting with{' '}
                     <code className="font-mono">"</code> are ignored; unrecognized lines are
                     skipped. Applied when you press Done.
                   </div>
@@ -1178,6 +1185,13 @@ export function SettingsModal(): JSX.Element {
                     placeholder={'nmap k gk\nnmap j gj\nnnoremap - $\nvnoremap - $'}
                   />
                 </div>
+                <ToggleRow
+                  label="Enable user JS scripts"
+                  description="Let zen:<file>:<fn>() mappings run your own JavaScript from <file>.js in the ZenNotes config dir (~/.config/zennotes). Functions receive a zen editor API. Off by default since it executes arbitrary code."
+                  value={vimJsScriptsEnabled}
+                  settingId="vim-js-scripts-enabled"
+                  onChange={setVimJsScriptsEnabled}
+                />
                 <ToggleRow
                   label="Yank to system clipboard"
                   description="Copy yanked, deleted, and changed text to the system clipboard (like Vim's clipboard=unnamed), so y/d/c/x are available to paste in other apps."

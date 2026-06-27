@@ -53,6 +53,24 @@ export interface Command {
   run: () => void | Promise<void>
 }
 
+/**
+ * Run a registry command by its stable id (e.g. 'note.daily.today').
+ * Used by the Vim `zen:<command-id>` key mappings. Honors the command's
+ * `when()` availability guard; unknown or unavailable ids no-op with a warning.
+ */
+export function runCommandById(id: string): void {
+  const cmd = buildCommands({ includeUnavailable: true }).find((c) => c.id === id)
+  if (!cmd) {
+    console.warn(`[zen:command] unknown command id: ${id}`)
+    return
+  }
+  if (cmd.when && !cmd.when()) {
+    console.warn(`[zen:command] command not available right now: ${id}`)
+    return
+  }
+  void cmd.run()
+}
+
 export function buildCommands(options?: { includeUnavailable?: boolean }): Command[] {
   const getState = (): ReturnType<typeof useStore.getState> => useStore.getState()
   const labels = () => resolveSystemFolderLabels(getState().systemFolderLabels)
