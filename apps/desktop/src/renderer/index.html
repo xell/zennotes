@@ -18,14 +18,15 @@
       style-src keeps 'unsafe-inline' because React inline styles and
       Tailwind arbitrary values emit inline style attributes.
 
-      frame-ancestors 'none' prevents the renderer from being embedded by
-      another document. object-src / base-uri / form-action are all locked
-      down. Navigation is additionally gated by setWindowOpenHandler and
-      will-navigate in the main process.
+      object-src / base-uri / form-action are all locked down. Navigation is
+      additionally gated by setWindowOpenHandler and will-navigate in the main
+      process. Note: frame-ancestors is intentionally absent — browsers ignore
+      it in <meta> tags (spec-mandated); in Electron the equivalent protection
+      comes from the main-process navigation guards above.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self' data: blob: zen-asset:; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: zen-asset:; media-src 'self' data: blob: zen-asset:; frame-src 'self' data: blob: zen-asset:; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self' zen-asset:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; manifest-src 'none';"
+      content="default-src 'self' data: blob: zen-asset:; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: zen-asset:; media-src 'self' data: blob: zen-asset:; frame-src 'self' data: blob: zen-asset:; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self' zen-asset:; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none';"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ZenNotes</title>
