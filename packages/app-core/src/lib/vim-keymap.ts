@@ -178,4 +178,35 @@ export function applyVimKeymap(text: string): void {
       for (const ctx of bindAction(lhs, contexts, action)) applied.push({ lhs, ctx })
     }
   }
+
+  // Fix: codemirror-vim's gj wraps from the last line to line 1 when the
+  // last line is empty. We override gj with a guarded visual-line move.
+  // Placed after the user-mapping loop so it wins even when the user has
+  // `nmap j gj` — pressing j chains through gj which resolves to this action.
+  Vim.defineAction('zen:smartJ', (cm: unknown) => {
+    const view = (cm as { cm6?: EditorView } | null)?.cm6
+    if (!view) return
+    const { doc, selection } = view.state
+    const head = selection.main.head
+    const line = doc.lineAt(head)
+    if (line.number >= doc.lines) return
+    const coords = view.coordsAtPos(head)
+    if (coords) {
+      const next = view.posAtCoords(
+        { x: coords.left, y: coords.bottom + view.defaultLineHeight / 2 },
+        false
+      )
+      if (next != null) {
+        view.dispatch({ selection: { anchor: next }, scrollIntoView: true })
+        return
+      }
+    }
+    const nextLine = doc.line(line.number + 1)
+    view.dispatch({
+      selection: { anchor: Math.min(nextLine.from + (head - line.from), nextLine.to) },
+      scrollIntoView: true,
+    })
+  })
+  Vim.mapCommand('gj', 'action', 'zen:smartJ', {}, { context: 'normal' })
+  applied.push({ lhs: 'gj', ctx: 'normal' })
 }
