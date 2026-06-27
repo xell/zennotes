@@ -126,6 +126,7 @@ interface ModifierBinding {
   alt: boolean    // <M-> or <A-> — Option/Alt (e.altKey)
   shift: boolean  // <S-> — Shift (e.shiftKey)
   key: string     // lowercased base key for comparison against e.key
+  code: string | null
   contexts: Ctx[]
   rhs: Rhs
 }
@@ -140,6 +141,25 @@ const VIM_KEY_TO_DOM: Record<string, string> = {
   Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
   Del: 'Delete', Delete: 'Delete', Insert: 'Insert',
   ...Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`F${i + 1}`, `F${i + 1}`]))
+}
+
+const VIM_KEY_TO_CODE: Record<string, string> = {
+  ...Object.fromEntries(Array.from({ length: 26 }, (_, index) => {
+    const letter = String.fromCharCode(65 + index)
+    return [letter.toLowerCase(), `Key${letter}`]
+  })),
+  ...Object.fromEntries(Array.from({ length: 10 }, (_, index) => [`${index}`, `Digit${index}`])),
+  '-': 'Minus',
+  '=': 'Equal',
+  '[': 'BracketLeft',
+  ']': 'BracketRight',
+  '\\': 'Backslash',
+  ';': 'Semicolon',
+  "'": 'Quote',
+  ',': 'Comma',
+  '.': 'Period',
+  '/': 'Slash',
+  '`': 'Backquote'
 }
 
 // Matches <modifiers-key> notation.  Each modifier is a single letter
@@ -170,8 +190,14 @@ function parseModifierLhs(lhs: string): Omit<ModifierBinding, 'contexts' | 'rhs'
     ctrl: mods.includes('C-'),
     alt: hasAlt,
     shift: mods.includes('S-'),
-    key: domKey
+    key: domKey,
+    code: rawKey.length === 1 ? VIM_KEY_TO_CODE[rawKey.toLowerCase()] ?? null : null
   }
+}
+
+function modifierEventKeyMatches(e: KeyboardEvent, binding: ModifierBinding): boolean {
+  if (e.key.toLowerCase() === binding.key) return true
+  return !!binding.code && e.code === binding.code
 }
 
 let modifierBindings: ModifierBinding[] = []
@@ -218,7 +244,7 @@ function installModifierHandler(): void {
         e.ctrlKey === binding.ctrl &&
         e.altKey === binding.alt &&
         e.shiftKey === binding.shift &&
-        e.key.toLowerCase() === binding.key
+        modifierEventKeyMatches(e, binding)
       ) {
         if (!binding.contexts.includes(mode)) continue
         e.preventDefault()
