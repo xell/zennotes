@@ -316,8 +316,9 @@ export type CalendarWeekStart = 'monday' | 'sunday' | 'locale'
 const VALID_CALENDAR_WEEK_STARTS: CalendarWeekStart[] = ['monday', 'sunday', 'locale']
 
 /** The editor-pane right-side panels whose width the user can drag-resize. */
-export type RightPanelId = 'outline' | 'connections' | 'comments' | 'calendar'
+export type RightPanelId = 'outline' | 'connections' | 'comments' | 'calendar' | 'terminal'
 export interface PanelWidths {
+  terminal: number
   outline: number
   connections: number
   comments: number
@@ -329,7 +330,8 @@ export const DEFAULT_PANEL_WIDTHS: PanelWidths = {
   outline: 260,
   connections: 288,
   comments: 360,
-  calendar: 280
+  calendar: 280,
+  terminal: 300
 }
 
 function clampPanelWidth(px: number): number {
@@ -341,6 +343,7 @@ function normalizePanelWidths(value: unknown): PanelWidths {
   const pick = (key: RightPanelId): number =>
     typeof v[key] === 'number' ? clampPanelWidth(v[key] as number) : DEFAULT_PANEL_WIDTHS[key]
   return {
+    terminal: pick('terminal'),
     outline: pick('outline'),
     connections: pick('connections'),
     comments: pick('comments'),

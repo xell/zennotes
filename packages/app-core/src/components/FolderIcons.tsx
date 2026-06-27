@@ -202,7 +202,7 @@ function PaletteIcon(): JSX.Element {
   )
 }
 
-function TerminalIcon(): JSX.Element {
+export function TerminalIcon(): JSX.Element {
   return (
     <Glyph>
       <rect x="3" y="4" width="18" height="16" rx="2" />

@@ -595,10 +595,21 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       }
     },
     {
+      id: 'view.terminal-panel',
+      title: 'Toggle Terminal Panel',
+      category: 'View',
+      shortcut: shortcut('global.toggleTerminalPanel'),
+      keywords: 'terminal shell command line console',
+      when: () => !!getState().activeNote,
+      run: () => {
+        window.dispatchEvent(new Event('zen:toggle-terminal'))
+      }
+    },
+    {
       id: 'view.close-right-panel',
       title: 'Close Right Panel',
       category: 'View',
-      keywords: 'close hide dismiss right panel pane connections comments outline calendar',
+      keywords: 'close hide dismiss right panel pane connections comments outline calendar terminal',
       when: () => !!getState().activeNote,
       run: () => {
         window.dispatchEvent(new Event('zen:close-right-panel'))

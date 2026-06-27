@@ -92,6 +92,7 @@ import { LazyDiagramTabView, LazyPreview as Preview } from './LazyPreview'
 import { ConnectionsPanel } from './ConnectionsPanel'
 import { OutlinePanel } from './OutlinePanel'
 import { CalendarPanel } from './CalendarPanel'
+import { TerminalPanel } from './TerminalPanel'
 import { CommentsPanel, type CommentDraft } from './CommentsPanel'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 import { promptApp } from '../lib/prompt-requests'
@@ -174,6 +175,7 @@ import {
   TrashIcon,
   ZapIcon
 } from './icons'
+import { TerminalIcon } from './FolderIcons'
 import { focusEditorNormalMode } from '../lib/editor-focus'
 import {
   getSystemFolderLabel,
@@ -723,6 +725,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const [activeOutlineLine, setActiveOutlineLine] = useState<number | null>(null)
   const [commentsOpen, setCommentsOpen] = useState(false)
   const [calendarOpen, setCalendarOpen] = useState(false)
+  const [terminalOpen, setTerminalOpen] = useState(false)
   // The calendar panel is a date navigator. It auto-opens while the pane shows
   // a daily/weekly note, but stays available (Obsidian-style) on any note as
   // long as the daily or weekly feature is enabled.
@@ -884,6 +887,10 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     setCalendarOpen((open) => !open)
   }, [])
 
+  const toggleTerminalPanel = useCallback(() => {
+    setTerminalOpen((open) => !open)
+  }, [])
+
 
   const applyPaneMode = useCallback((nextMode: PaneMode) => {
     setModesByPath((current) => paneModesWithPathMode(current, activeTab, nextMode))
@@ -928,6 +935,16 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     return () => window.removeEventListener('zen:toggle-calendar', handler)
   }, [isActive, toggleCalendarPanel])
 
+  // `zen:toggle-terminal` — same active-pane routing as the panels above.
+  useEffect(() => {
+    if (!isActive) return
+    const handler = (): void => {
+      toggleTerminalPanel()
+    }
+    window.addEventListener('zen:toggle-terminal', handler)
+    return () => window.removeEventListener('zen:toggle-terminal', handler)
+  }, [isActive, toggleTerminalPanel])
+
   // `zen:close-right-panel` — Esc (when a right panel is focused) or the
   // "Close right panel" command dismiss whichever right-hand panel is open in
   // the active pane and return focus to the editor.
@@ -938,6 +955,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       setOutlineOpen(false)
       setCommentsOpen(false)
       setCalendarOpen(false)
+      setTerminalOpen(false)
       setConnectionPreview(null)
       const panel = useStore.getState().focusedPanel
       if (panel === 'connections' || panel === 'comments' || panel === 'hoverpreview') {
@@ -2827,6 +2845,13 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
                 <CalendarIcon />
               </IconBtn>
             )}
+            <IconBtn
+                title={terminalOpen ? 'Hide terminal' : 'Show terminal'}
+                active={terminalOpen}
+                onClick={toggleTerminalPanel}
+            >
+                <TerminalIcon />
+            </IconBtn>
             <IconBtn title="Export as PDF (⇧⌘E)" onClick={() => void exportActiveNotePdf()}>
               <FileDownIcon />
             </IconBtn>
@@ -2864,6 +2889,8 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     calendarAvailable,
     calendarOpen,
     toggleCalendarPanel,
+    terminalOpen,
+    toggleTerminalPanel,
     trashActive,
     archiveActive,
     restoreActive,
@@ -3412,6 +3439,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
         )}
         {content && calendarOpen && calendarAvailable && !zenMode && (
           <CalendarPanel note={content} />
+        )}
+        {content && terminalOpen && !zenMode && (
+          <TerminalPanel />
         )}
       </div>
       {content &&

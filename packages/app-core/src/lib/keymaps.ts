@@ -18,6 +18,7 @@ export type KeymapId =
   | "global.toggleConnections"
   | "global.toggleOutlinePanel"
   | "global.toggleCommentsPanel"
+  | "global.toggleTerminalPanel"
   | "global.addComment"
   | "global.focusPaneLeft"
   | "global.focusPaneRight"
@@ -206,22 +207,13 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     defaultBinding: "Mod+Alt+M",
   },
   {
-    id: "global.focusPaneLeft",
+    id: "global.toggleTerminalPanel",
     kind: "shortcut",
     scope: "app",
     group: "global",
-    title: "Focus pane left",
-    description: "Move focus to the pane/panel on the left. Works without vim mode.",
-    defaultBinding: "Alt+H",
-  },
-  {
-    id: "global.focusPaneDown",
-    kind: "shortcut",
-    scope: "app",
-    group: "global",
-    title: "Focus pane down",
-    description: "Move focus to the pane/panel below. Works without vim mode.",
-    defaultBinding: "Alt+J",
+    title: "Toggle terminal panel",
+    description: "Toggle the terminal panel in the active pane.",
+    defaultBinding: "",
   },
   {
     id: "global.focusPaneUp",
