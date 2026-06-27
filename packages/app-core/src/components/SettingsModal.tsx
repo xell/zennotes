@@ -39,6 +39,7 @@ import {
 } from '../lib/keymaps'
 import { resolveAuto, THEMES, type ThemeFamily, type ThemeMode } from '../lib/themes'
 import { applyVimKeymap } from '../lib/vim-keymap'
+import { focusEditorNormalMode } from '../lib/editor-focus'
 import { hasSystemFontAccess, listSystemFonts } from '../lib/system-fonts'
 import {
   DEFAULT_SYSTEM_FOLDER_LABELS,
@@ -818,6 +819,12 @@ export function SettingsModal(): JSX.Element {
     }
   }, [])
 
+  // Return focus to the editor on every close path (Done button, Esc, backdrop
+  // click). Settings renders its own backdrop div rather than using <Modal>, so
+  // Modal.tsx's opener-restore cleanup does not cover it.
+  useEffect(() => {
+    return () => focusEditorNormalMode()
+  }, [])
   useEffect(() => {
     return () => {
       if (settingsSearchHighlightTimerRef.current != null) {
