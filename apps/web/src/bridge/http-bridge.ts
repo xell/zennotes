@@ -1569,6 +1569,7 @@ export const httpBridge: ZenBridge = {
   // Plain-text config file is a desktop-only feature (needs ~/.config access).
   // On web, the renderer falls back to localStorage when getConfigSync is null.
   getConfigSync: () => null,
+  getWindowId: () => null,
   setConfig: async () => {},
   getConfigPath: async () => null,
   revealConfigFile: async () => {},

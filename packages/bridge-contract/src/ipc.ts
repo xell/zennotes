@@ -98,6 +98,7 @@ export const IPC = {
   WINDOW_TOGGLE_MAXIMIZE: 'window:toggle-maximize',
   WINDOW_MINIMIZE: 'window:minimize',
   WINDOW_CLOSE: 'window:close',
+  WINDOW_GET_ID: 'window:get-id',
   WINDOW_OPEN_NOTE: 'window:open-note',
   WINDOW_OPEN_VAULT: 'window:open-vault',
   WINDOW_TOGGLE_QUICK_CAPTURE: 'window:toggle-quick-capture',

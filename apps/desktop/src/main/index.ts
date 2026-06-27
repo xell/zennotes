@@ -92,6 +92,7 @@ import {
   type PersistedRemoteWorkspaceConfig,
   type PersistedRemoteWorkspaceProfile,
   type PersistedWindowState,
+  type PersistedWindowSession,
   rememberLocalVault,
   updateConfig,
   unarchiveNote,
@@ -407,6 +408,9 @@ function flushWindowNoteOpens(win: BrowserWindow): void {
 // Finder "Open in ZenNotes" that lands in the hidden quick-capture
 // panel looks like the app opened a quick note instead of the file.
 const workspaceWindowIds = new Set<number>()
+// Maps Electron BrowserWindow.id → stable session UUID so each window can be
+// individually identified across launches.
+const windowUuids = new Map<number, string>()
 
 function isWorkspaceWindow(win: BrowserWindow): boolean {
   return workspaceWindowIds.has(win.id)
@@ -867,33 +871,53 @@ function sanitizeWindowState(state: PersistedWindowState | null): PersistedWindo
   }
 }
 
-async function persistWindowState(win: BrowserWindow): Promise<void> {
-  if (win.isDestroyed()) return
+function captureWindowState(win: BrowserWindow): PersistedWindowState {
   const isMaximized = win.isMaximized()
   const bounds = isMaximized ? win.getNormalBounds() : win.getBounds()
-  await updateConfig((cfg) => ({
-    ...cfg,
-    windowState: {
-      x: bounds.x,
-      y: bounds.y,
-      width: bounds.width,
-      height: bounds.height,
-      isMaximized
+  return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, isMaximized }
+}
+
+async function persistWindowState(win: BrowserWindow): Promise<void> {
+  if (win.isDestroyed()) return
+  const state = captureWindowState(win)
+  const uuid = windowUuids.get(win.id)
+  await updateConfig((cfg) => {
+    const updated = { ...cfg, windowState: state }
+    if (uuid) {
+      const vault = windowVaults.vaultForWindow(win.id)
+      if (vault) {
+        const sessions = cfg.openWindows ?? []
+        const idx = sessions.findIndex((s) => s.windowId === uuid)
+        const entry: PersistedWindowSession = { windowId: uuid, root: vault.root, windowState: state }
+        updated.openWindows = idx >= 0
+          ? sessions.map((s, i) => (i === idx ? entry : s))
+          : [...sessions, entry]
+      }
     }
-  }))
+    return updated
+  })
 }
 
 interface CreateWindowOptions {
   initialVaultRoot?: string | null
   inheritWorkspaceFrom?: BrowserWindow | null
   persistInitialVault?: boolean
+  /** Stable UUID to reuse for this window (session restore path). When absent,
+   *  a fresh UUID is generated so every new window gets its own identity. */
+  windowId?: string
+  /** Initial window geometry. When provided, takes precedence over the
+   *  global cfg.windowState (which tracks only the last-focused window). */
+  windowState?: PersistedWindowState | null
 }
 
 async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserWindow> {
   const createWindowStartedAt = performance.now()
   const mac = isMac()
+  const winUuid = options.windowId ?? randomUUID()
   const cfg = await loadConfig()
-  const restoredState = sanitizeWindowState(cfg.windowState)
+  const restoredState = sanitizeWindowState(
+    options.windowState !== undefined ? options.windowState : cfg.windowState
+  )
   currentZoomFactor = normalizeZoomFactor(cfg.zoomFactor)
   const win = new BrowserWindow({
     width: restoredState?.width ?? DEFAULT_WINDOW_WIDTH,
@@ -930,6 +954,7 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
   })
 
   workspaceWindowIds.add(win.id)
+  windowUuids.set(win.id, winUuid)
 
   if (!mainWindow || mainWindow.isDestroyed()) {
     mainWindow = win
@@ -980,6 +1005,14 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
     windowVaults.clearWindow(win.id)
     readyWindowIds.delete(win.id)
     pendingWindowNoteOpens.delete(win.id)
+    const closedUuid = windowUuids.get(win.id)
+    windowUuids.delete(win.id)
+    if (closedUuid) {
+      void updateConfig((cfg) => ({
+        ...cfg,
+        openWindows: (cfg.openWindows ?? []).filter((s) => s.windowId !== closedUuid)
+      }))
+    }
     if (mainWindow === win) {
       // Promote only a real workspace window — never quick capture,
       // floating notes, or other utility windows. With none left,
@@ -1241,15 +1274,32 @@ async function setVaultForWindow(
     remoteServerCapabilities = null
     stopRemoteWatch()
   }
-  if (options.persist !== false) {
-    await updateConfig((cfg) => ({
-      ...cfg,
-      workspaceMode: 'local',
-      vaultRoot: vault.root,
-      localVaults: rememberLocalVault(cfg.localVaults, vault),
-      remoteWorkspaceProfileId: null
-    }))
-  }
+  const uuid = windowUuids.get(win.id)
+  const windowStateOnOpen = win.isDestroyed() ? null : captureWindowState(win)
+  await updateConfig((cfg) => {
+    // Always track in openWindows regardless of persist flag — openWindows
+    // records what is currently open, not which vault to remember.
+    const sessions = cfg.openWindows ?? []
+    let newSessions = sessions
+    if (uuid && windowStateOnOpen) {
+      const idx = sessions.findIndex((s) => s.windowId === uuid)
+      const entry: PersistedWindowSession = { windowId: uuid, root: vault.root, windowState: windowStateOnOpen }
+      newSessions = idx >= 0
+        ? sessions.map((s, i) => (i === idx ? entry : s))
+        : [...sessions, entry]
+    }
+    const base = { ...cfg, openWindows: newSessions }
+    if (options.persist !== false) {
+      return {
+        ...base,
+        workspaceMode: 'local',
+        vaultRoot: vault.root,
+        localVaults: rememberLocalVault(cfg.localVaults, vault),
+        remoteWorkspaceProfileId: null
+      }
+    }
+    return base
+  })
   return vault
 }
 
@@ -2807,6 +2857,15 @@ function registerIpc(): void {
       event.returnValue = null
     }
   })
+  ipcMain.on(IPC.WINDOW_GET_ID, (event) => {
+    try {
+      assertTrustedIpcEvent(event)
+      const win = BrowserWindow.fromWebContents(event.sender)
+      event.returnValue = win ? (windowUuids.get(win.id) ?? null) : null
+    } catch {
+      event.returnValue = null
+    }
+  })
   handle(IPC.CONFIG_SET, async (_event, next: AppConfigPortable) => {
     await setPortableConfig(next ?? {})
   })
@@ -3427,7 +3486,27 @@ app.whenReady().then(async () => {
   // unrelated window.
   const openedFromFile = await flushPendingFileOpens()
   if (!openedFromFile && startupDeepLinkResult !== 'quick-capture') {
-    await ensureMainWindow()
+    const startupCfg = await loadConfig()
+    const sessions = (startupCfg.openWindows ?? []).filter((s) => s.root && s.windowId)
+    if (sessions.length > 0) {
+      for (const session of sessions) {
+        try {
+          await createWindow({
+            initialVaultRoot: session.root,
+            windowId: session.windowId,
+            windowState: session.windowState,
+            persistInitialVault: true
+          })
+        } catch (err) {
+          console.error('[session restore] failed to restore window', session.windowId, err)
+        }
+      }
+      if (BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && isWorkspaceWindow(w)).length === 0) {
+        await ensureMainWindow()
+      }
+    } else {
+      await ensureMainWindow()
+    }
   }
   void flushPendingFloatingNoteRequests()
   scheduleBackgroundAppUpdateCheck()

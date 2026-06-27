@@ -49,7 +49,8 @@ describe('config persistence', () => {
       windowState: null,
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
-      quickCapturePinned: false
+      quickCapturePinned: false,
+      openWindows: null
     })
 
     const cfg = await loadConfig()
@@ -75,7 +76,8 @@ describe('config persistence', () => {
       windowState: null,
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
-      quickCapturePinned: false
+      quickCapturePinned: false,
+      openWindows: null
     })
     // Second save triggers the rotation: the first config is copied to .bak,
     // then the new payload replaces the primary.
@@ -89,7 +91,8 @@ describe('config persistence', () => {
       windowState: null,
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
-      quickCapturePinned: false
+      quickCapturePinned: false,
+      openWindows: null
     })
     // Backup now holds the first config; corrupt the primary.
     await writeFile(configFile(), '{ not valid json', 'utf8')
@@ -128,7 +131,8 @@ describe('config persistence', () => {
       windowState: null,
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
-      quickCapturePinned: false
+      quickCapturePinned: false,
+      openWindows: null
     })
 
     for (let i = 0; i < 5; i += 1) {
@@ -158,7 +162,8 @@ describe('config persistence', () => {
       windowState: null,
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
-      quickCapturePinned: false
+      quickCapturePinned: false,
+      openWindows: null
     })
     const raw = await readFile(configFile(), 'utf8')
     expect(() => JSON.parse(raw)).not.toThrow()
@@ -175,7 +180,8 @@ describe('config persistence', () => {
       windowState: null,
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
-      quickCapturePinned: false
+      quickCapturePinned: false,
+      openWindows: null
     })
     await saveConfig({
       workspaceMode: 'local',
@@ -187,7 +193,8 @@ describe('config persistence', () => {
       windowState: null,
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
-      quickCapturePinned: false
+      quickCapturePinned: false,
+      openWindows: null
     })
     // Delete the primary — but the backup from the previous save survives.
     await rm(configFile())
@@ -210,7 +217,8 @@ describe('config persistence', () => {
       windowState: null,
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
-      quickCapturePinned: false
+      quickCapturePinned: false,
+      openWindows: null
     })
     await chmod(configFile(), 0o000)
     try {
@@ -234,7 +242,8 @@ describe('config persistence', () => {
       windowState: null,
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
-      quickCapturePinned: false
+      quickCapturePinned: false,
+      openWindows: null
     })
     // Corrupt the primary AND delete the backup so loadConfigSafely() must
     // return `readable: false` — the dangerous state where the old code

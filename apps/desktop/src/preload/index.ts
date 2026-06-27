@@ -507,6 +507,13 @@ const api: ZenBridge = {
       return null
     }
   },
+  getWindowId: (): string | null => {
+    try {
+      return ipcRenderer.sendSync(IPC.WINDOW_GET_ID) as string | null
+    } catch {
+      return null
+    }
+  },
   setConfig: (next: AppConfigPortable): Promise<void> =>
     ipcRenderer.invoke(IPC.CONFIG_SET, next),
   getConfigPath: (): Promise<string | null> => ipcRenderer.invoke(IPC.CONFIG_GET_PATH),

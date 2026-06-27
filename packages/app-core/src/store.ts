@@ -176,6 +176,15 @@ export type CommandPaletteInitialMode = 'main' | 'vault'
 
 const PREFS_KEY = 'zen:prefs:v2'
 const WORKSPACE_KEY = 'zen:workspace:v1'
+// Stable UUID for this window from the main process. Keyed snapshots so
+// multiple windows on the same vault each have independent tab state.
+const MY_WINDOW_ID: string | null = (() => {
+  try {
+    return (typeof window !== 'undefined' ? window.zen?.getWindowId?.() : null) ?? null
+  } catch {
+    return null
+  }
+})()
 const VALID_FAMILIES: ThemeFamily[] = [
   'apple',
   'gruvbox',
@@ -1595,7 +1604,10 @@ function loadWorkspaceSnapshots(): Record<string, unknown> {
 function saveWorkspaceSnapshot(root: string, snapshot: WorkspaceSnapshot): void {
   try {
     const allSnapshots = loadWorkspaceSnapshots()
-    allSnapshots[root] = snapshot
+    // Key by window UUID when available so that multiple windows on the same
+    // vault each maintain independent tab state. Fall back to vault root for
+    // the web build and older desktop sessions.
+    allSnapshots[MY_WINDOW_ID ?? root] = snapshot
     localStorage.setItem(WORKSPACE_KEY, JSON.stringify(allSnapshots))
   } catch {
     /* ignore */
@@ -1603,7 +1615,11 @@ function saveWorkspaceSnapshot(root: string, snapshot: WorkspaceSnapshot): void 
 }
 
 function loadWorkspaceSnapshot(root: string): unknown {
-  return loadWorkspaceSnapshots()[root] ?? null
+  const all = loadWorkspaceSnapshots()
+  // Prefer the window-ID slot; fall back to the vault-root slot so that
+  // existing sessions from builds before multi-window support still restore.
+  if (MY_WINDOW_ID) return all[MY_WINDOW_ID] ?? all[root] ?? null
+  return all[root] ?? null
 }
 
 function normalizeWorkspaceView(raw: unknown): View {

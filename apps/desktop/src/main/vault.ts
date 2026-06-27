@@ -249,6 +249,12 @@ export interface PersistedWindowState {
   isMaximized: boolean
 }
 
+export interface PersistedWindowSession {
+  windowId: string
+  root: string
+  windowState: PersistedWindowState
+}
+
 export interface PersistedRemoteWorkspaceConfig {
   baseUrl: string
   authToken?: string | null
@@ -278,6 +284,9 @@ export interface PersistedConfig {
   /** When true, the quick-capture window stays pinned on top of all windows
    *  and does not auto-hide when it loses focus. */
   quickCapturePinned: boolean
+  /** All windows that were open when the app last ran. Restored on next
+   *  launch so the user's multi-window layout persists across sessions. */
+  openWindows: PersistedWindowSession[] | null
 }
 
 export const DEFAULT_QUICK_CAPTURE_HOTKEY = 'CommandOrControl+Shift+Space'
@@ -292,7 +301,8 @@ const DEFAULT_CONFIG: PersistedConfig = {
   windowState: null,
   zoomFactor: 1,
   quickCaptureHotkey: DEFAULT_QUICK_CAPTURE_HOTKEY,
-  quickCapturePinned: false
+  quickCapturePinned: false,
+  openWindows: null
 }
 
 let configWriteQueue = Promise.resolve()
@@ -412,6 +422,21 @@ function normalizePersistedConfig(value: unknown): PersistedConfig {
       ? candidate.quickCaptureHotkey.trim()
       : DEFAULT_QUICK_CAPTURE_HOTKEY
   const quickCapturePinned = candidate.quickCapturePinned === true
+  const normalizeWindowSession = (raw: unknown): PersistedWindowSession | null => {
+    if (!raw || typeof raw !== 'object') return null
+    const v = raw as Record<string, unknown>
+    const windowId = typeof v.windowId === 'string' && v.windowId.trim() ? v.windowId.trim() : ''
+    const root = typeof v.root === 'string' && v.root.trim() ? path.resolve(v.root.trim()) : ''
+    const windowState = normalizeWindowState(v.windowState)
+    if (!windowId || !root || !windowState) return null
+    return { windowId, root, windowState }
+  }
+  const openWindows = Array.isArray(candidate.openWindows)
+    ? candidate.openWindows
+        .map(normalizeWindowSession)
+        .filter((s): s is PersistedWindowSession => s !== null)
+        .filter((s, i, arr) => arr.findIndex((o) => o.windowId === s.windowId) === i)
+    : null
   return {
     workspaceMode: candidate.workspaceMode === 'remote' ? 'remote' : 'local',
     vaultRoot: typeof candidate.vaultRoot === 'string' ? candidate.vaultRoot : null,
@@ -428,7 +453,8 @@ function normalizePersistedConfig(value: unknown): PersistedConfig {
     windowState: normalizeWindowState(candidate.windowState),
     zoomFactor,
     quickCaptureHotkey,
-    quickCapturePinned
+    quickCapturePinned,
+    openWindows
   }
 }
 

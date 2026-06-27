@@ -261,6 +261,10 @@ export interface ZenBridge {
    * file doesn't exist yet — the renderer seeds it from current prefs.
    */
   getConfigSync(): AppConfigPortable | null
+  /** Stable UUID for this window, assigned by the main process. Used to key
+   *  per-window workspace snapshots so multiple windows on the same vault each
+   *  have independent tab state. Returns null in the web build. */
+  getWindowId(): string | null
   /** Persist the portable preferences subset to the config file (debounced by
    *  the caller). No-op on web. */
   setConfig(next: AppConfigPortable): Promise<void>
