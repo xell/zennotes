@@ -3139,9 +3139,7 @@ function installAppMenu(): void {
       submenu: [
         { role: 'reload' },
         { role: 'forceReload' },
-        ...(app.isPackaged
-          ? []
-          : ([{ role: 'toggleDevTools' }] as Electron.MenuItemConstructorOptions[])),
+        { role: 'toggleDevTools', accelerator: 'CmdOrCtrl+Alt+I' },
         { type: 'separator' },
         {
           label: 'Actual Size',
