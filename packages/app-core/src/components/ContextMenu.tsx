@@ -6,8 +6,11 @@ export interface ContextMenuItem {
   label?: string
   /** Optional SVG icon to the left of the label. */
   icon?: JSX.Element
-  /** Right-aligned hint, e.g. a keyboard shortcut. */
+  /** Right-aligned hint text, e.g. a keyboard shortcut. Hidden when sideAction is present. */
   hint?: string
+  /** Optional icon button rendered at the right edge. Clicking it fires its own
+   *  onSelect and closes the menu without triggering the row's onSelect. */
+  sideAction?: { icon: JSX.Element; title?: string; onSelect: () => void }
   /** Displayed in muted red (used for destructive actions). */
   danger?: boolean
   disabled?: boolean
@@ -210,9 +213,10 @@ export function ContextMenu({ x, y, items, onClose }: Props): JSX.Element {
           }
           const active = i === visibleActive
           return (
-            <button
+            <div
               key={`${originalIdx}-${item.label}`}
-              disabled={item.disabled}
+              role="menuitem"
+              aria-disabled={item.disabled}
               onMouseEnter={() => setVisibleActive(i)}
               onClick={() => {
                 if (item.disabled) return
@@ -225,18 +229,35 @@ export function ContextMenu({ x, y, items, onClose }: Props): JSX.Element {
                   ? 'cursor-default text-ink-400'
                   : item.danger
                     ? active
-                      ? 'bg-red-500/90 text-white'
-                      : 'text-[rgb(var(--z-red))] hover:bg-red-500/10'
+                      ? 'bg-red-500/90 text-white cursor-pointer'
+                      : 'text-[rgb(var(--z-red))] hover:bg-red-500/10 cursor-pointer'
                     : active
-                      ? 'bg-paper-200 text-ink-900'
-                      : 'text-ink-800 hover:bg-paper-200/70'
+                      ? 'bg-paper-200 text-ink-900 cursor-pointer'
+                      : 'text-ink-800 hover:bg-paper-200/70 cursor-pointer'
               ].join(' ')}
             >
               {item.icon && <span className="shrink-0">{item.icon}</span>}
               <span className="flex-1 truncate">
                 {highlightMatch(item.label ?? '', query)}
               </span>
-              {item.hint && (
+              {item.sideAction ? (
+                <button
+                  title={item.sideAction.title}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onClose()
+                    item.sideAction!.onSelect()
+                  }}
+                  className={[
+                    'shrink-0 rounded p-0.5 transition-opacity',
+                    active
+                      ? 'opacity-100 text-ink-500 hover:bg-paper-300 hover:text-ink-800'
+                      : 'opacity-0 pointer-events-none'
+                  ].join(' ')}
+                >
+                  {item.sideAction.icon}
+                </button>
+              ) : item.hint ? (
                 <span
                   className={[
                     'shrink-0 text-xs',
@@ -245,8 +266,8 @@ export function ContextMenu({ x, y, items, onClose }: Props): JSX.Element {
                 >
                   {item.hint}
                 </span>
-              )}
-            </button>
+              ) : null}
+            </div>
           )
         })
       )}

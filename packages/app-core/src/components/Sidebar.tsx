@@ -2758,6 +2758,22 @@ export function Sidebar(): JSX.Element {
           hint: entry.current ? "Current" : entry.kind === "remote" ? "Remote" : undefined,
           icon: <VaultBadge name={entry.name} size={16} />,
           disabled: entry.current || (entry.kind === "remote" && !entry.id),
+          sideAction:
+            !entry.current && entry.kind === "local"
+              ? {
+                  title: "Open in new window",
+                  icon: (
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M4.5 2H2.5A1.5 1.5 0 0 0 1 3.5v6A1.5 1.5 0 0 0 2.5 11h6A1.5 1.5 0 0 0 10 9.5V7.5"/>
+                      <path d="M7 1h4v4"/>
+                      <line x1="11" y1="1" x2="5.5" y2="6.5"/>
+                    </svg>
+                  ),
+                  onSelect: () => {
+                    void window.zen?.openVaultWindow(entry.root);
+                  },
+                }
+              : undefined,
           onSelect: async () => {
             if (entry.kind === "local") {
               await openLocalVault(entry.root);
