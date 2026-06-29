@@ -434,7 +434,6 @@ interface Prefs {
   pinnedRefWidth: number
   panelWidths: PanelWidths
   pinnedRefMode: 'edit' | 'preview'
-  rightPaneTab: 'reference' | 'terminal'
   /** When true, "New Quick Note" auto-titles to today's date
    *  (YYYY-MM-DD), appending " (2)", " (3)" etc. for collisions. */
   quickNoteDateTitle: boolean
@@ -1964,6 +1963,8 @@ interface Store {
   pinnedRefWidth: number
   panelWidths: PanelWidths
   pinnedRefMode: 'edit' | 'preview'
+  /** Runtime-only: which tab is active in the right pane (not persisted). */
+  rightPaneTab: 'reference' | 'terminal'
 
   /** Auto-title new Quick Notes to today's date instead of the
    *  default "Quick Note <ts>" pattern. */

@@ -35,6 +35,7 @@
     "dist:linux": "npm run dist:linux --workspace @zennotes/desktop"
   },
   "devDependencies": {
-    "turbo": "^2.5.8"
+    "turbo": "^2.5.8",
+    "node-pty": "^1.0.0"
   }
 }
