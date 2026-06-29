@@ -50,17 +50,42 @@ export function TerminalPanel({ visible }: Props): JSX.Element {
   const terminalScrollbarOnHover = useStore((s) => s.terminalScrollbarOnHover)
   const terminalLightTheme = useStore((s) => s.terminalLightTheme)
   const terminalDarkTheme = useStore((s) => s.terminalDarkTheme)
+  const terminalFontFamily = useStore((s) => s.terminalFontFamily)
+  const terminalFontSize = useStore((s) => s.terminalFontSize)
+
+  const DEFAULT_FONT_FAMILY =
+    'ui-monospace, Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono", "Roboto Mono", monospace'
+  const DEFAULT_FONT_SIZE = 13
 
   const lightThemeRef = useRef(terminalLightTheme)
   const darkThemeRef = useRef(terminalDarkTheme)
+  const fontFamilyRef = useRef(terminalFontFamily)
+  const fontSizeRef = useRef(terminalFontSize)
   lightThemeRef.current = terminalLightTheme
   darkThemeRef.current = terminalDarkTheme
+  fontFamilyRef.current = terminalFontFamily
+  fontSizeRef.current = terminalFontSize
 
   // Re-apply theme whenever light/dark theme names change in settings.
   useEffect(() => {
     const term = termRef.current
     if (term) term.options.theme = buildXtermTheme(terminalLightTheme, terminalDarkTheme)
   }, [terminalLightTheme, terminalDarkTheme])
+
+  // Re-apply font whenever font settings change in settings.
+  useEffect(() => {
+    const term = termRef.current
+    const fit = fitRef.current
+    if (!term || !fit) return
+    term.options.fontFamily = terminalFontFamily || DEFAULT_FONT_FAMILY
+    term.options.fontSize = terminalFontSize || DEFAULT_FONT_SIZE
+    requestAnimationFrame(() => {
+      fit.fit()
+      if (sessionRef.current) {
+        window.zen?.terminal?.resize(sessionRef.current, term.cols, term.rows)
+      }
+    })
+  }, [terminalFontFamily, terminalFontSize])
 
   // Create xterm once on mount, destroy on unmount.
   useEffect(() => {
@@ -69,9 +94,8 @@ export function TerminalPanel({ visible }: Props): JSX.Element {
 
     const term = new Terminal({
       cursorBlink: true,
-      fontFamily:
-        'ui-monospace, Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono", "Roboto Mono", monospace',
-      fontSize: 13,
+      fontFamily: fontFamilyRef.current || DEFAULT_FONT_FAMILY,
+      fontSize: fontSizeRef.current || DEFAULT_FONT_SIZE,
       theme: buildXtermTheme(lightThemeRef.current, darkThemeRef.current),
     })
     const fit = new FitAddon()

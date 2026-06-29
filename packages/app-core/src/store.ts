@@ -491,6 +491,10 @@ interface Prefs {
   terminalDarkTheme: string
   /** When true, the terminal scrollbar appears while hovering the terminal area. When false it is always hidden. */
   terminalScrollbarOnHover: boolean
+  /** Font family for the terminal. Empty string = use built-in default. */
+  terminalFontFamily: string
+  /** Font size for the terminal in px. 0 = use built-in default (13px). */
+  terminalFontSize: number
 }
 
 export type TasksViewMode = 'list' | 'calendar' | 'kanban'
@@ -602,7 +606,9 @@ export const DEFAULT_PREFS: Prefs = {
   hasCompletedOnboarding: false,
   terminalLightTheme: 'github-light',
   terminalDarkTheme: 'github-dark',
-  terminalScrollbarOnHover: true
+  terminalScrollbarOnHover: true,
+  terminalFontFamily: '',
+  terminalFontSize: 0
 }
 /** Coerce any loaded prefs blob into a valid Prefs object, dropping
  *  anything unknown (e.g. tokyo-night left over from earlier versions). */
@@ -855,7 +861,11 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
     terminalScrollbarOnHover:
       typeof p.terminalScrollbarOnHover === 'boolean'
         ? p.terminalScrollbarOnHover
-        : DEFAULT_PREFS.terminalScrollbarOnHover
+        : DEFAULT_PREFS.terminalScrollbarOnHover,
+    terminalFontFamily:
+      typeof p.terminalFontFamily === 'string' ? p.terminalFontFamily : DEFAULT_PREFS.terminalFontFamily,
+    terminalFontSize:
+      typeof p.terminalFontSize === 'number' ? p.terminalFontSize : DEFAULT_PREFS.terminalFontSize
   }
 }
 // --- Portable config file integration (desktop) -----------------------------
@@ -1516,6 +1526,8 @@ function collectPrefs(s: {
   terminalLightTheme: string
   terminalDarkTheme: string
   terminalScrollbarOnHover: boolean
+  terminalFontFamily: string
+  terminalFontSize: number
 }): Prefs {
   return {
     vimMode: s.vimMode,
@@ -1584,7 +1596,9 @@ function collectPrefs(s: {
     hasCompletedOnboarding: s.hasCompletedOnboarding,
     terminalLightTheme: s.terminalLightTheme,
     terminalDarkTheme: s.terminalDarkTheme,
-    terminalScrollbarOnHover: s.terminalScrollbarOnHover
+    terminalScrollbarOnHover: s.terminalScrollbarOnHover,
+    terminalFontFamily: s.terminalFontFamily,
+    terminalFontSize: s.terminalFontSize
   }
 }
 
@@ -2030,6 +2044,8 @@ interface Store {
   terminalLightTheme: string
   terminalDarkTheme: string
   terminalScrollbarOnHover: boolean
+  terminalFontFamily: string
+  terminalFontSize: number
   /** ISO YYYY-MM-DD currently selected in the Calendar view. null = today. */
   tasksCalendarSelectedDate: string | null
   /** First-of-month anchor (ISO YYYY-MM-01) for the Calendar view's grid. */
@@ -2352,6 +2368,8 @@ interface Store {
   setTerminalLightTheme: (name: string) => void
   setTerminalDarkTheme: (name: string) => void
   setTerminalScrollbarOnHover: (on: boolean) => void
+  setTerminalFontFamily: (family: string) => void
+  setTerminalFontSize: (size: number) => void
   openDailyNoteForDate: (date: Date) => Promise<void>
   openWeeklyNoteForDate: (date: Date) => Promise<void>
   /** Find the daily note for `date`, creating it on disk (template-aware)
@@ -3408,6 +3426,8 @@ export const useStore = create<Store>((set, get) => {
   terminalLightTheme: loadPrefs().terminalLightTheme,
   terminalDarkTheme: loadPrefs().terminalDarkTheme,
   terminalScrollbarOnHover: loadPrefs().terminalScrollbarOnHover,
+  terminalFontFamily: loadPrefs().terminalFontFamily,
+  terminalFontSize: loadPrefs().terminalFontSize,
   vaultTasks: [],
   tasksLoading: false,
   tasksFilter: '',
@@ -5822,6 +5842,14 @@ export const useStore = create<Store>((set, get) => {
   },
   setTerminalScrollbarOnHover: (on) => {
     set({ terminalScrollbarOnHover: on })
+    savePrefs(collectPrefs(get()))
+  },
+  setTerminalFontFamily: (family) => {
+    set({ terminalFontFamily: family })
+    savePrefs(collectPrefs(get()))
+  },
+  setTerminalFontSize: (size) => {
+    set({ terminalFontSize: size })
     savePrefs(collectPrefs(get()))
   },
   completeOnboarding: () => {

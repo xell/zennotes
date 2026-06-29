@@ -370,6 +370,10 @@ export function SettingsModal(): JSX.Element {
   const setTerminalDarkTheme = useStore((s) => s.setTerminalDarkTheme)
   const terminalScrollbarOnHover = useStore((s) => s.terminalScrollbarOnHover)
   const setTerminalScrollbarOnHover = useStore((s) => s.setTerminalScrollbarOnHover)
+  const terminalFontFamily = useStore((s) => s.terminalFontFamily)
+  const setTerminalFontFamily = useStore((s) => s.setTerminalFontFamily)
+  const terminalFontSize = useStore((s) => s.terminalFontSize)
+  const setTerminalFontSize = useStore((s) => s.setTerminalFontSize)
   const wordWrap = useStore((s) => s.wordWrap)
   const setWordWrap = useStore((s) => s.setWordWrap)
   const previewSmoothScroll = useStore((s) => s.previewSmoothScroll)
@@ -1486,6 +1490,18 @@ export function SettingsModal(): JSX.Element {
           title: 'Show scrollbar on hover',
           description: 'Show the terminal scrollbar when the cursor is over the terminal.',
           keywords: ['terminal', 'scrollbar']
+        },
+        {
+          id: 'terminal-font-family',
+          title: 'Font family',
+          description: 'Font family used in the terminal. Leave blank to use the default monospace stack.',
+          keywords: ['terminal', 'font', 'family', 'typeface']
+        },
+        {
+          id: 'terminal-font-size',
+          title: 'Font size',
+          description: 'Font size in px used in the terminal. Leave blank to use the default (13px).',
+          keywords: ['terminal', 'font', 'size']
         }
       ],
       content: (
@@ -1525,6 +1541,26 @@ export function SettingsModal(): JSX.Element {
               value={terminalScrollbarOnHover}
               settingId="terminal-scrollbar"
               onChange={setTerminalScrollbarOnHover}
+            />
+          </Section>
+          <Section title="Font">
+            <TextInputRow
+              label="Font family"
+              description="Leave blank to use the built-in default monospace stack."
+              value={terminalFontFamily}
+              placeholder="Default"
+              settingId="terminal-font-family"
+              commitOnBlur
+              onChange={(next) => setTerminalFontFamily(next ?? '')}
+            />
+            <TextInputRow
+              label="Font size"
+              description="Size in px. Leave blank to use the default (13px)."
+              value={terminalFontSize > 0 ? String(terminalFontSize) : ''}
+              placeholder="13"
+              settingId="terminal-font-size"
+              commitOnBlur
+              onChange={(next) => setTerminalFontSize(next ? Number(next) : 0)}
             />
           </Section>
         </div>
