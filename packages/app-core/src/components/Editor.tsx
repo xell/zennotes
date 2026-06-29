@@ -33,7 +33,6 @@ import {
   validateMoveNoteTarget
 } from '../lib/move-note'
 import { promptApp } from '../lib/prompt-requests'
-import { StatusBar } from './StatusBar'
 import { EditorPane } from './EditorPane'
 import { focusPaneInDirection, focusPaneOrEdgePanel } from '../lib/pane-nav'
 import { requestPaneMode } from '../lib/pane-mode'
@@ -1341,7 +1340,6 @@ export function Editor(): JSX.Element {
       <div className="flex min-h-0 min-w-0 flex-1">
         <PaneTreeView node={paneLayout} />
       </div>
-      {!zenMode && activeNote && <StatusBar note={activeNote} />}
     </section>
   )
 }

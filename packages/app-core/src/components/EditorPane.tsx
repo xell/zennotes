@@ -111,6 +111,7 @@ import { ArchiveView } from './ArchiveView'
 import { TrashView } from './TrashView'
 import { AssetsView } from './AssetsView'
 import { QuickNotesView } from './QuickNotesView'
+import { NoteStats } from './StatusBar'
 import { isTasksTabPath } from '@shared/tasks'
 import { isDatabaseTabPath, databaseTitleFromTab, databaseTabPath, isDatabaseCsvPath } from '@shared/databases'
 import { isTagsTabPath } from '@shared/tags'
@@ -3249,6 +3250,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
               />
             )}
           </div>
+          <NoteStats note={content} />
           {toolbar}
         </header>
       )}

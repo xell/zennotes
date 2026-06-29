@@ -142,6 +142,13 @@ export const ColumnsIcon = (p: IconProps): JSX.Element => (
   </I>
 )
 
+export const ClockIcon = (p: IconProps): JSX.Element => (
+  <I {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l4 2" />
+  </I>
+)
+
 export const SplitColumnsIcon = (p: IconProps): JSX.Element => (
   <I {...p}>
     <rect x="3" y="4" width="18" height="16" rx="2" />

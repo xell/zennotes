@@ -3,17 +3,9 @@ import { useStore } from '../store'
 import type { NoteContent, NoteMeta } from '@shared/ipc'
 import { backlinksForNote } from '../lib/wikilinks'
 import { countWords } from '../lib/word-count'
+import { ClockIcon, LinkIcon } from './icons'
 
-/**
- * Footer strip showing quick stats for the active note: backlinks,
- * word count, character count, and estimated read time. Modelled on
- * the Obsidian status bar.
- *
- * Backlinks use the `wikilinks` field populated by the main process
- * on every `readMeta` call, so we don't need to re-scan note bodies
- * at render time.
- */
-export function StatusBar({ note }: { note: NoteContent }): JSX.Element {
+export function NoteStats({ note }: { note: NoteContent }): JSX.Element {
   const notes = useStore((s) => s.notes)
 
   const { words, characters, minutes } = useMemo(() => {
@@ -24,32 +16,29 @@ export function StatusBar({ note }: { note: NoteContent }): JSX.Element {
     return { words: w, characters: c, minutes: m }
   }, [note.body])
 
-  // Backlinks depend only on the active note's *path* and the vault's
-  // wikilink metadata — never on the note body. Keying the memo on
-  // `note.path` (instead of the whole `note` object, which changes on every
-  // keystroke) keeps this O(n) scan off the typing hot path while producing
-  // an identical count.
   const backlinks = useMemo(() => {
     return backlinksForNote(notes as NoteMeta[], note).length
   }, [note.path, notes])
 
   return (
-    <div
-      className="flex h-8 shrink-0 items-center justify-end gap-5 px-6 text-xs text-ink-500"
-      style={{ borderTop: '1px solid var(--glass-stroke)' }}
-    >
-      <Stat>
-        {backlinks} {backlinks === 1 ? 'backlink' : 'backlinks'}
-      </Stat>
-      <Stat>
-        {words.toLocaleString()} {words === 1 ? 'word' : 'words'}
-      </Stat>
-      <Stat>{characters.toLocaleString()} characters</Stat>
-      <Stat>{minutes} min read</Stat>
+    <div className="flex shrink-0 items-center gap-1 text-xs text-ink-500 tabular-nums">
+      {backlinks > 0 && (
+        <>
+          <LinkIcon width={12} height={12} />
+          <span>{backlinks}</span>
+          <Sep />
+        </>
+      )}
+      <span>{words.toLocaleString()}</span>
+      <Sep />
+      <span>{characters.toLocaleString()}</span>
+      <Sep />
+      <ClockIcon width={12} height={12} />
+      <span>{minutes}</span>
     </div>
   )
 }
 
-function Stat({ children }: { children: React.ReactNode }): JSX.Element {
-  return <span className="tabular-nums">{children}</span>
+function Sep(): JSX.Element {
+  return <span className="select-none opacity-30">|</span>
 }
