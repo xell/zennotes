@@ -1186,6 +1186,7 @@ export function SettingsModal(): JSX.Element {
                   <textarea
                     value={vimKeymap}
                     onChange={(e) => setVimKeymap(e.target.value)}
+                    onBlur={(e) => setVimKeymap(e.target.value.trimEnd())}
                     spellCheck={false}
                     rows={6}
                     className="mt-2 w-full resize-y rounded-xl border border-paper-300/70 bg-paper-50/80 px-3.5 py-3 font-mono text-xs leading-5 text-ink-900 outline-none placeholder:text-ink-400 focus:border-accent/45"

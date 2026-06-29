@@ -4945,7 +4945,7 @@ export const useStore = create<Store>((set, get) => {
     savePrefs(collectPrefs(get()))
   },
   setVimKeymap: (text) => {
-    set({ vimKeymap: text.trimEnd() })
+    set({ vimKeymap: text })
     savePrefs(collectPrefs(get()))
   },
   setVimJsScriptsEnabled: (on) => {
