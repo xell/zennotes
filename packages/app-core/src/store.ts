@@ -632,7 +632,7 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
         ? p.vimInsertEscape.trim().slice(0, 5)
         : DEFAULT_PREFS.vimInsertEscape,
     vimKeymap:
-      typeof p.vimKeymap === 'string' ? p.vimKeymap : DEFAULT_PREFS.vimKeymap,
+      typeof p.vimKeymap === 'string' ? p.vimKeymap.trimEnd() : DEFAULT_PREFS.vimKeymap,
     vimJsScriptsEnabled:
       typeof p.vimJsScriptsEnabled === 'boolean'
         ? p.vimJsScriptsEnabled

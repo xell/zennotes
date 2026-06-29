@@ -351,6 +351,7 @@ export function getConfigFilePath(): string {
  */
 function tomlMultilineValue(value: string): string {
   const escaped = value
+    .trimEnd()
     .replace(/\\/g, '\\\\')
     .replace(/"/g, '\\"')
   return `"""\n${escaped}\n"""`
