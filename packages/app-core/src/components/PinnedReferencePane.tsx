@@ -124,6 +124,7 @@ export function PinnedReferencePane(): JSX.Element | null {
   const pinnedRefPath = noteRef?.path ?? globalRefPath
   const pinnedRefKind = noteRef?.kind ?? globalRefKind
   const isPerNotePin = !!noteRef
+  const zenMode = useStore((s) => s.zenMode)
   const pinnedRefVisible = useStore((s) => s.pinnedRefVisible)
   const pinnedRefWidth = useStore((s) => s.pinnedRefWidth)
   const pinnedRefMode = useStore((s) => s.pinnedRefMode)
@@ -360,7 +361,7 @@ export function PinnedReferencePane(): JSX.Element | null {
   }, [assetUrl, useAssetIframe])
 
   const showEditor = pinnedRefMode === 'edit'
-  const hidden = !pinnedRefVisible || (rightPaneTab === 'reference' && !pinnedRefPath)
+  const hidden = zenMode || !pinnedRefVisible || (rightPaneTab === 'reference' && !pinnedRefPath)
 
   return (
     <section

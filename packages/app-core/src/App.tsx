@@ -281,7 +281,6 @@ function App(): JSX.Element {
     () => (selectedPath ? noteRefs[selectedPath]?.path ?? pinnedRefPath : pinnedRefPath),
     [noteRefs, pinnedRefPath, selectedPath]
   )
-  const showPinnedReferencePane = !zenMode && pinnedRefVisible && !!activePinnedRefPath
 
   useEffect(() => {
     void init()
@@ -802,11 +801,9 @@ function App(): JSX.Element {
         <Suspense fallback={<EditorLoadingFallback />}>
           <Editor />
         </Suspense>
-        {showPinnedReferencePane && (
-          <Suspense fallback={null}>
-            <PinnedReferencePane />
-          </Suspense>
-        )}
+        <Suspense fallback={null}>
+          <PinnedReferencePane />
+        </Suspense>
       </div>
       {searchOpen && (
         <Suspense fallback={null}>
