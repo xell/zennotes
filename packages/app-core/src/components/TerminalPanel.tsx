@@ -1,11 +1,42 @@
 import { useEffect, useRef } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
-import { Terminal } from '@xterm/xterm'
+import { Terminal, type ITheme } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { useStore } from '../store'
+import { TERMINAL_THEMES } from '../lib/terminal-themes'
 
 interface Props {
   visible: boolean
+}
+
+function cssVarTheme(): ITheme {
+  const css = getComputedStyle(document.documentElement)
+  const rgb = (v: string): string => {
+    const parts = css.getPropertyValue(v).trim().split(' ').map(Number)
+    return parts.length === 3 ? `rgb(${parts.join(',')})` : '#888'
+  }
+  const bgParts = css.getPropertyValue('--z-bg').trim().split(' ').map(Number)
+  const lum =
+    bgParts.length === 3
+      ? (bgParts[0] * 0.299 + bgParts[1] * 0.587 + bgParts[2] * 0.114) / 255
+      : 0
+  const isDark = lum < 0.5
+  return {
+    background: rgb('--z-bg'),
+    foreground: rgb('--z-fg'),
+    cursor: rgb('--z-accent'),
+    cursorAccent: rgb('--z-bg'),
+    selectionBackground: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)',
+  }
+}
+
+function buildXtermTheme(lightName: string, darkName: string): ITheme {
+  const isDark =
+    document.documentElement.getAttribute('data-theme') === 'dark' ||
+    (document.documentElement.getAttribute('data-theme') !== 'light' &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches)
+  const name = isDark ? darkName : lightName
+  return TERMINAL_THEMES[name] ?? cssVarTheme()
 }
 
 export function TerminalPanel({ visible }: Props): JSX.Element {
@@ -13,9 +44,23 @@ export function TerminalPanel({ visible }: Props): JSX.Element {
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const sessionRef = useRef<string | null>(null)
-  // Ref so the ResizeObserver closure always sees current visibility.
   const visibleRef = useRef(visible)
   visibleRef.current = visible
+
+  const terminalScrollbarOnHover = useStore((s) => s.terminalScrollbarOnHover)
+  const terminalLightTheme = useStore((s) => s.terminalLightTheme)
+  const terminalDarkTheme = useStore((s) => s.terminalDarkTheme)
+
+  const lightThemeRef = useRef(terminalLightTheme)
+  const darkThemeRef = useRef(terminalDarkTheme)
+  lightThemeRef.current = terminalLightTheme
+  darkThemeRef.current = terminalDarkTheme
+
+  // Re-apply theme whenever light/dark theme names change in settings.
+  useEffect(() => {
+    const term = termRef.current
+    if (term) term.options.theme = buildXtermTheme(terminalLightTheme, terminalDarkTheme)
+  }, [terminalLightTheme, terminalDarkTheme])
 
   // Create xterm once on mount, destroy on unmount.
   useEffect(() => {
@@ -27,12 +72,7 @@ export function TerminalPanel({ visible }: Props): JSX.Element {
       fontFamily:
         'ui-monospace, Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono", "Roboto Mono", monospace',
       fontSize: 13,
-      theme: {
-        background: '#171717',
-        foreground: '#e5e5e5',
-        cursor: '#f5c56f',
-        selectionBackground: '#3f3f46',
-      },
+      theme: buildXtermTheme(lightThemeRef.current, darkThemeRef.current),
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
@@ -40,14 +80,25 @@ export function TerminalPanel({ visible }: Props): JSX.Element {
     termRef.current = term
     fitRef.current = fit
 
-    const unsubData = window.zen?.terminal?.onData((id, data) => {
-      if (id === sessionRef.current) term.write(data)
-    }) ?? (() => {})
-    const unsubExit = window.zen?.terminal?.onExit((id, code) => {
-      if (id !== sessionRef.current) return
-      term.writeln(`\r\n\x1b[2m[process exited with code ${code}]\x1b[0m`)
-      sessionRef.current = null
-    }) ?? (() => {})
+    // Re-apply xterm theme whenever html[data-theme] changes.
+    const observer = new MutationObserver(() => {
+      term.options.theme = buildXtermTheme(lightThemeRef.current, darkThemeRef.current)
+    })
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    })
+
+    const unsubData =
+      window.zen?.terminal?.onData((id, data) => {
+        if (id === sessionRef.current) term.write(data)
+      }) ?? (() => {})
+    const unsubExit =
+      window.zen?.terminal?.onExit((id, code) => {
+        if (id !== sessionRef.current) return
+        term.writeln(`\r\n\x1b[2m[process exited with code ${code}]\x1b[0m`)
+        sessionRef.current = null
+      }) ?? (() => {})
 
     const ro = new ResizeObserver(() => {
       if (!visibleRef.current) return
@@ -61,6 +112,7 @@ export function TerminalPanel({ visible }: Props): JSX.Element {
     ro.observe(container)
 
     return () => {
+      observer.disconnect()
       ro.disconnect()
       unsubData()
       unsubExit()
@@ -74,8 +126,7 @@ export function TerminalPanel({ visible }: Props): JSX.Element {
     }
   }, [])
 
-  // When the panel becomes visible: fit to available space, then create the
-  // PTY session on first show or just send a resize on subsequent shows.
+  // When the panel becomes visible: fit and start PTY on first show.
   useEffect(() => {
     if (!visible) return
     const term = termRef.current
@@ -108,10 +159,16 @@ export function TerminalPanel({ visible }: Props): JSX.Element {
 
   return (
     <div
-      className="flex flex-col overflow-hidden flex-1 min-h-0 bg-neutral-950"
-      style={{ display: visible ? 'flex' : 'none' }}
+      className="flex flex-col overflow-hidden flex-1 min-h-0 p-2"
+      style={{ display: visible ? 'flex' : 'none', background: 'rgb(var(--z-bg))' }}
     >
-      <div ref={containerRef} className="h-full w-full p-2" />
+      <div
+        ref={containerRef}
+        className={[
+          'flex-1 min-h-0 overflow-hidden',
+          terminalScrollbarOnHover ? 'terminal-scrollbar-on-hover' : 'terminal-scrollbar-hidden',
+        ].join(' ')}
+      />
     </div>
   )
 }

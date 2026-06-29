@@ -485,6 +485,12 @@ interface Prefs {
   kanbanColumnTitles: Record<string, string>
   /** True once the user has dismissed the first-run onboarding wizard. */
   hasCompletedOnboarding: boolean
+  /** xterm.js theme name to use when the app is in light mode. Empty string = derive from CSS variables. */
+  terminalLightTheme: string
+  /** xterm.js theme name to use when the app is in dark mode. Empty string = derive from CSS variables. */
+  terminalDarkTheme: string
+  /** When true, the terminal scrollbar appears while hovering the terminal area. When false it is always hidden. */
+  terminalScrollbarOnHover: boolean
 }
 
 export type TasksViewMode = 'list' | 'calendar' | 'kanban'
@@ -593,7 +599,10 @@ export const DEFAULT_PREFS: Prefs = {
   tasksViewMode: 'list',
   kanbanGroupBy: 'status',
   kanbanColumnTitles: {},
-  hasCompletedOnboarding: false
+  hasCompletedOnboarding: false,
+  terminalLightTheme: 'github-light',
+  terminalDarkTheme: 'github-dark',
+  terminalScrollbarOnHover: true
 }
 /** Coerce any loaded prefs blob into a valid Prefs object, dropping
  *  anything unknown (e.g. tokyo-night left over from earlier versions). */
@@ -838,7 +847,15 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
     hasCompletedOnboarding:
       typeof p.hasCompletedOnboarding === 'boolean'
         ? p.hasCompletedOnboarding
-        : DEFAULT_PREFS.hasCompletedOnboarding
+        : DEFAULT_PREFS.hasCompletedOnboarding,
+    terminalLightTheme:
+      typeof p.terminalLightTheme === 'string' ? p.terminalLightTheme : DEFAULT_PREFS.terminalLightTheme,
+    terminalDarkTheme:
+      typeof p.terminalDarkTheme === 'string' ? p.terminalDarkTheme : DEFAULT_PREFS.terminalDarkTheme,
+    terminalScrollbarOnHover:
+      typeof p.terminalScrollbarOnHover === 'boolean'
+        ? p.terminalScrollbarOnHover
+        : DEFAULT_PREFS.terminalScrollbarOnHover
   }
 }
 // --- Portable config file integration (desktop) -----------------------------
@@ -1496,6 +1513,9 @@ function collectPrefs(s: {
   kanbanGroupBy: KanbanGroupBy
   kanbanColumnTitles: Record<string, string>
   hasCompletedOnboarding: boolean
+  terminalLightTheme: string
+  terminalDarkTheme: string
+  terminalScrollbarOnHover: boolean
 }): Prefs {
   return {
     vimMode: s.vimMode,
@@ -1561,7 +1581,10 @@ function collectPrefs(s: {
     tasksViewMode: s.tasksViewMode,
     kanbanGroupBy: s.kanbanGroupBy,
     kanbanColumnTitles: s.kanbanColumnTitles,
-    hasCompletedOnboarding: s.hasCompletedOnboarding
+    hasCompletedOnboarding: s.hasCompletedOnboarding,
+    terminalLightTheme: s.terminalLightTheme,
+    terminalDarkTheme: s.terminalDarkTheme,
+    terminalScrollbarOnHover: s.terminalScrollbarOnHover
   }
 }
 
@@ -2002,6 +2025,9 @@ interface Store {
   kanbanColumnTitles: Record<string, string>
   /** True once the user has finished or skipped the first-run onboarding. */
   hasCompletedOnboarding: boolean
+  terminalLightTheme: string
+  terminalDarkTheme: string
+  terminalScrollbarOnHover: boolean
   /** ISO YYYY-MM-DD currently selected in the Calendar view. null = today. */
   tasksCalendarSelectedDate: string | null
   /** First-of-month anchor (ISO YYYY-MM-01) for the Calendar view's grid. */
@@ -2320,6 +2346,9 @@ interface Store {
   setAutoCalendarPanel: (enabled: boolean) => void
   setCalendarWeekStart: (start: CalendarWeekStart) => void
   setCalendarShowWeekNumbers: (show: boolean) => void
+  setTerminalLightTheme: (name: string) => void
+  setTerminalDarkTheme: (name: string) => void
+  setTerminalScrollbarOnHover: (on: boolean) => void
   openDailyNoteForDate: (date: Date) => Promise<void>
   openWeeklyNoteForDate: (date: Date) => Promise<void>
   /** Find the daily note for `date`, creating it on disk (template-aware)
@@ -3372,6 +3401,9 @@ export const useStore = create<Store>((set, get) => {
   kanbanGroupBy: loadPrefs().kanbanGroupBy,
   kanbanColumnTitles: loadPrefs().kanbanColumnTitles,
   hasCompletedOnboarding: loadPrefs().hasCompletedOnboarding,
+  terminalLightTheme: loadPrefs().terminalLightTheme,
+  terminalDarkTheme: loadPrefs().terminalDarkTheme,
+  terminalScrollbarOnHover: loadPrefs().terminalScrollbarOnHover,
   vaultTasks: [],
   tasksLoading: false,
   tasksFilter: '',
@@ -5770,6 +5802,18 @@ export const useStore = create<Store>((set, get) => {
   },
   setCalendarShowWeekNumbers: (show) => {
     set({ calendarShowWeekNumbers: show })
+    savePrefs(collectPrefs(get()))
+  },
+  setTerminalLightTheme: (name) => {
+    set({ terminalLightTheme: name })
+    savePrefs(collectPrefs(get()))
+  },
+  setTerminalDarkTheme: (name) => {
+    set({ terminalDarkTheme: name })
+    savePrefs(collectPrefs(get()))
+  },
+  setTerminalScrollbarOnHover: (on) => {
+    set({ terminalScrollbarOnHover: on })
     savePrefs(collectPrefs(get()))
   },
   completeOnboarding: () => {

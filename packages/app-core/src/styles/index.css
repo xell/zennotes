@@ -4116,3 +4116,33 @@ textarea,
 .cm-wysiwyg .cm-editor .cm-hashtag:hover {
   background-color: rgb(var(--z-accent) / 0.2);
 }
+
+/* xterm.js v6 scrollbar — xterm uses a Monaco custom scrollbar (.scrollbar)
+   AND a native overflow scrollbar on .xterm-viewport for scroll events.
+   Both must be addressed. */
+
+/* always-hidden mode */
+.terminal-scrollbar-hidden .xterm .xterm-scrollable-element > .scrollbar {
+  display: none !important;
+}
+.terminal-scrollbar-hidden .xterm-viewport {
+  scrollbar-width: none !important;
+}
+.terminal-scrollbar-hidden .xterm-viewport::-webkit-scrollbar {
+  display: none !important;
+}
+
+/* show-on-hover mode: hide Monaco custom scrollbar; show on container hover */
+.terminal-scrollbar-on-hover .xterm .xterm-scrollable-element > .scrollbar {
+  display: none;
+}
+.terminal-scrollbar-on-hover:hover .xterm .xterm-scrollable-element > .scrollbar {
+  display: block;
+}
+/* also hide the native viewport scrollbar always */
+.terminal-scrollbar-on-hover .xterm-viewport {
+  scrollbar-width: none;
+}
+.terminal-scrollbar-on-hover .xterm-viewport::-webkit-scrollbar {
+  display: none;
+}

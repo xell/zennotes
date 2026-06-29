@@ -68,10 +68,12 @@ import { confirmApp } from '../lib/confirm-requests'
 import { isImeComposing } from '../lib/ime'
 import { RemoteWorkspaceProfileModal } from './RemoteWorkspaceProfileModal'
 import { Button } from './ui/Button'
+import { TERMINAL_THEME_NAMES } from '../lib/terminal-themes'
 
 type SettingsCategoryId =
   | 'appearance'
   | 'editor'
+  | 'terminal'
   | 'keymaps'
   | 'typography'
   | 'vault'
@@ -142,6 +144,12 @@ const SETTINGS_CATEGORY_ICONS: Record<SettingsCategoryId, JSX.Element> = {
       <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
     </NavIcon>
   ),
+  terminal: (
+    <NavIcon>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="m7 9 3 3-3 3M13 15h4" />
+    </NavIcon>
+  ),
   keymaps: (
     <NavIcon>
       <rect x="3" y="6" width="18" height="12" rx="2" />
@@ -182,7 +190,7 @@ const SETTINGS_CATEGORY_ICONS: Record<SettingsCategoryId, JSX.Element> = {
 
 const SETTINGS_SECTIONS: { id: SettingsSectionId; title: string; categoryIds: SettingsCategoryId[] }[] = [
   { id: 'look', title: 'Look & feel', categoryIds: ['appearance', 'typography'] },
-  { id: 'editing', title: 'Editing', categoryIds: ['editor', 'keymaps'] },
+  { id: 'editing', title: 'Editing', categoryIds: ['editor', 'terminal', 'keymaps'] },
   { id: 'vault', title: 'Vault', categoryIds: ['vault', 'templates'] },
   { id: 'system', title: 'System', categoryIds: ['mcp', 'cli', 'about'] }
 ]
@@ -356,6 +364,12 @@ export function SettingsModal(): JSX.Element {
   const setQuickNoteDateTitle = useStore((s) => s.setQuickNoteDateTitle)
   const quickNoteTitlePrefix = useStore((s) => s.quickNoteTitlePrefix)
   const setQuickNoteTitlePrefix = useStore((s) => s.setQuickNoteTitlePrefix)
+  const terminalLightTheme = useStore((s) => s.terminalLightTheme)
+  const setTerminalLightTheme = useStore((s) => s.setTerminalLightTheme)
+  const terminalDarkTheme = useStore((s) => s.terminalDarkTheme)
+  const setTerminalDarkTheme = useStore((s) => s.setTerminalDarkTheme)
+  const terminalScrollbarOnHover = useStore((s) => s.terminalScrollbarOnHover)
+  const setTerminalScrollbarOnHover = useStore((s) => s.setTerminalScrollbarOnHover)
   const wordWrap = useStore((s) => s.wordWrap)
   const setWordWrap = useStore((s) => s.setWordWrap)
   const previewSmoothScroll = useStore((s) => s.previewSmoothScroll)
@@ -1448,6 +1462,73 @@ export function SettingsModal(): JSX.Element {
           )
         }
       ]
+    },
+    {
+      id: 'terminal',
+      title: 'Terminal',
+      description: 'Appearance and behavior of the built-in terminal panel.',
+      keywords: ['terminal', 'shell', 'pty', 'theme', 'scrollbar'],
+      searchItems: [
+        {
+          id: 'terminal-light-theme',
+          title: 'Light theme',
+          description: 'Color scheme name used in the terminal when the app is in light mode.',
+          keywords: ['terminal', 'theme', 'light']
+        },
+        {
+          id: 'terminal-dark-theme',
+          title: 'Dark theme',
+          description: 'Color scheme name used in the terminal when the app is in dark mode.',
+          keywords: ['terminal', 'theme', 'dark']
+        },
+        {
+          id: 'terminal-scrollbar',
+          title: 'Show scrollbar on hover',
+          description: 'Show the terminal scrollbar when the cursor is over the terminal.',
+          keywords: ['terminal', 'scrollbar']
+        }
+      ],
+      content: (
+        <div className="space-y-6">
+          <Section title="Theme" description="Color scheme for the built-in terminal panel.">
+            {(
+              [
+                ['Light theme', terminalLightTheme, setTerminalLightTheme, 'terminal-light-theme'],
+                ['Dark theme', terminalDarkTheme, setTerminalDarkTheme, 'terminal-dark-theme'],
+              ] as const
+            ).map(([label, value, setter, id]) => (
+              <div
+                key={id}
+                className="flex items-center justify-between gap-5 px-5 py-4"
+                {...settingsSearchTargetProps(id)}
+              >
+                <div className="text-sm font-medium text-ink-900">{label}</div>
+                <select
+                  value={value}
+                  onChange={(e) => setter(e.target.value)}
+                  className="w-[23rem] max-w-[50vw] rounded-xl border border-paper-300/70 bg-paper-100/80 px-3 py-2 text-sm text-ink-900 outline-none focus:border-accent/45"
+                >
+                  <option value="">Auto (follow ZenNotes theme)</option>
+                  {TERMINAL_THEME_NAMES.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </Section>
+          <Section title="Scrollbar">
+            <ToggleRow
+              label="Show scrollbar on hover"
+              description="Reveal the terminal scrollbar while the cursor is over the terminal area. When off the scrollbar is always hidden."
+              value={terminalScrollbarOnHover}
+              settingId="terminal-scrollbar"
+              onChange={setTerminalScrollbarOnHover}
+            />
+          </Section>
+        </div>
+      )
     },
     {
       id: 'keymaps',
