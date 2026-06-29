@@ -28,6 +28,7 @@ export type Panel =
   | 'editor'
   | 'connections'
   | 'comments'
+  | 'calendar'
   | 'hoverpreview'
   | 'tasks'
   | 'tags'
@@ -38,7 +39,8 @@ export function getVisiblePanels(
   unifiedSidebar: boolean,
   connectionsOpen: boolean,
   commentsOpen: boolean,
-  tasksViewOpen = false
+  tasksViewOpen = false,
+  calendarOpen = false
 ): Panel[] {
   const panels: Panel[] = []
   if (sidebarOpen) panels.push('sidebar')
@@ -46,6 +48,9 @@ export function getVisiblePanels(
   panels.push(tasksViewOpen ? 'tasks' : 'editor')
   if (connectionsOpen) panels.push('connections')
   if (commentsOpen) panels.push('comments')
+  // The calendar is the right-most of the editor-pane side panels (it renders
+  // after connections/comments), so it's last in the focus order. (#285)
+  if (calendarOpen) panels.push('calendar')
   return panels
 }
 

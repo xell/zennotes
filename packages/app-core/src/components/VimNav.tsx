@@ -341,6 +341,13 @@ export function VimNav(): JSX.Element | null {
       ) {
         return
       }
+      // #285: when focus is inside the calendar panel, stand down entirely — it
+      // owns its keys (h/j/k/l + arrows for day navigation, Escape to leave) via
+      // its own focus-gated capture handler. Without this the pane-nav/leader
+      // routing below would hijack the arrows. We don't consume the event, so
+      // the panel's handler (and any global app shortcut) still sees it.
+      const calendarPanelEl = document.querySelector('[data-calendar-panel]')
+      if (calendarPanelEl && target && calendarPanelEl.contains(target)) return
       const previewEl = getPreviewScrollElement()
       const hoverPreviewEl = getHoverPreviewScrollElement()
 
@@ -506,7 +513,8 @@ export function VimNav(): JSX.Element | null {
           state.unifiedSidebar,
           document.querySelector('[data-connections-panel]') !== null,
           document.querySelector('[data-comments-panel]') !== null,
-          isTasksViewActive(state)
+          isTasksViewActive(state),
+          document.querySelector('[data-calendar-panel]') !== null
         )
         const direction =
           matchesSequenceToken(e, overrides, 'vim.paneFocusLeft') ||
@@ -543,6 +551,15 @@ export function VimNav(): JSX.Element | null {
           ;(document.activeElement as HTMLElement)?.blur()
           requestAnimationFrame(() => {
             focusCommentsPanel(state)
+          })
+        } else if (next === 'calendar') {
+          // Focus the calendar so its own handler takes over; the CalendarPanel
+          // also focuses itself via its focusedPanel effect as a backstop. (#285)
+          ;(document.activeElement as HTMLElement)?.blur()
+          requestAnimationFrame(() => {
+            document
+              .querySelector<HTMLElement>('[data-calendar-panel]')
+              ?.focus({ preventScroll: true })
           })
         } else {
           // Steal focus away from the editor so it stops processing keys
@@ -737,7 +754,12 @@ export function VimNav(): JSX.Element | null {
           e.preventDefault()
           e.stopImmediatePropagation()
           resetLeader()
+          // If the calendar is opening (not already shown), move focus into it
+          // once it mounts — the CalendarPanel focuses itself when it sees
+          // focusedPanel === 'calendar'. If it's closing, leave focus alone. (#285)
+          const wasOpen = document.querySelector('[data-calendar-panel]') !== null
           window.dispatchEvent(new Event('zen:toggle-calendar'))
+          if (!wasOpen) state.setFocusedPanel('calendar')
           return
         }
         // Any other key cancels leader and falls through to normal routing.

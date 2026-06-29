@@ -513,6 +513,22 @@ export function CalendarPanel({ note }: { note: NoteContent }): JSX.Element {
     [selectedDate, anchor]
   )
 
+  // #285: keyboard-focus integration. Take focus when this becomes the focused
+  // panel (via pane navigation or <leader>c) so the in-panel h/j/k/l + arrow
+  // day navigation below activates; hand focus back to the editor when the
+  // panel closes so focusedPanel never dangles on a gone panel.
+  const focusedPanel = useStore((s) => s.focusedPanel)
+  useEffect(() => {
+    if (focusedPanel === 'calendar') panelRef.current?.focus({ preventScroll: true })
+  }, [focusedPanel])
+  useEffect(
+    () => () => {
+      const s = useStore.getState()
+      if (s.focusedPanel === 'calendar') s.setFocusedPanel('editor')
+    },
+    []
+  )
+
   // Vim keyboard control — active only while focus is inside the panel, so it
   // never intercepts keys meant for the editor. Mirrors the big calendar.
   useEffect(() => {
@@ -589,6 +605,15 @@ export function CalendarPanel({ note }: { note: NoteContent }): JSX.Element {
         }
       }
 
+      // #285: Escape hands focus back to the editor (h/l are taken by day
+      // navigation, so there's no pane-nav-out; Escape is the way back).
+      if (e.key === 'Escape') {
+        consume()
+        const s = useStore.getState()
+        s.setFocusedPanel('editor')
+        s.editorViewRef?.focus()
+        return
+      }
       if (e.key === 'a') {
         consume()
         requestAnimationFrame(() => addInputRef.current?.focus())
@@ -846,6 +871,7 @@ export function CalendarPanel({ note }: { note: NoteContent }): JSX.Element {
   return (
     <section
       ref={panelRef}
+      data-calendar-panel
       aria-label="Calendar"
       tabIndex={0}
       style={{ width }}
