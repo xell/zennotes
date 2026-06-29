@@ -32,6 +32,8 @@ export interface ZenFacade {
   insert(text: string): void
   /** Run a registry command by id, e.g. `zen.run('note.daily.today')`. */
   run(id: string): void
+  /** Send text to the active terminal as if typed — no newline appended. */
+  sendToTerminal(text: string): void
 }
 
 export function makeZenFacade(view: EditorView): ZenFacade {
@@ -80,6 +82,10 @@ export function makeZenFacade(view: EditorView): ZenFacade {
     },
     run(id) {
       runCommandById(id)
+    },
+    sendToTerminal(text) {
+      const w = window as Window & { __zenTerminalSend?: (t: string) => void }
+      w.__zenTerminalSend?.(text)
     }
   }
 }

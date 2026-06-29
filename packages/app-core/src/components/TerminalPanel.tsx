@@ -116,6 +116,11 @@ export function TerminalPanel({ visible }: Props): JSX.Element {
     })
     ro.observe(container)
 
+    const w = window as Window & { __zenTerminalSend?: (text: string) => void }
+    w.__zenTerminalSend = (text: string): void => {
+      if (sessionRef.current) window.zen?.terminal?.input(sessionRef.current, text)
+    }
+
     return () => {
       observer.disconnect()
       ro.disconnect()
@@ -129,6 +134,7 @@ export function TerminalPanel({ visible }: Props): JSX.Element {
       term.dispose()
       termRef.current = null
       fitRef.current = null
+      w.__zenTerminalSend = undefined
     }
   }, [])
 
