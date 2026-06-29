@@ -5312,8 +5312,10 @@ export const useStore = create<Store>((set, get) => {
     // Already pinned to this path — just make sure it's visible.
     if (s.pinnedRefPath === path && s.pinnedRefKind === 'note') {
       if (!s.pinnedRefVisible) {
-        set({ pinnedRefVisible: true })
+        set({ pinnedRefVisible: true, rightPaneTab: 'reference' })
         savePrefs(collectPrefs(get()))
+      } else {
+        set({ rightPaneTab: 'reference' })
       }
       return
     }
@@ -5334,6 +5336,7 @@ export const useStore = create<Store>((set, get) => {
       pinnedRefPath: path,
       pinnedRefKind: 'note',
       pinnedRefVisible: true,
+      rightPaneTab: 'reference',
       noteContents: contents,
       noteDirty: dirty
     })
@@ -5362,6 +5365,7 @@ export const useStore = create<Store>((set, get) => {
       pinnedRefPath: path,
       pinnedRefKind: 'asset',
       pinnedRefVisible: true,
+      rightPaneTab: 'reference',
       noteContents: contents,
       noteDirty: dirty
     })
@@ -5372,7 +5376,8 @@ export const useStore = create<Store>((set, get) => {
     if (!notePath || !assetPath) return
     set((s) => ({
       noteRefs: { ...s.noteRefs, [notePath]: { path: assetPath, kind: 'asset' } },
-      pinnedRefVisible: true
+      pinnedRefVisible: true,
+      rightPaneTab: 'reference'
     }))
     savePrefs(collectPrefs(get()))
   },

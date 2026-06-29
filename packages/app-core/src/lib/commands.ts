@@ -605,10 +605,12 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
         if (!vis) {
           setRightPaneTab('terminal')
           togglePinnedRefVisible()
+          requestAnimationFrame(() => window.dispatchEvent(new Event('zen:focus-terminal-input')))
         } else if (tab === 'terminal') {
           togglePinnedRefVisible()
         } else {
           setRightPaneTab('terminal')
+          requestAnimationFrame(() => window.dispatchEvent(new Event('zen:focus-terminal-input')))
         }
       }
     },
@@ -1199,7 +1201,11 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       when: () => !!getState().activeNote,
       run: async () => {
         const path = getState().activeNote?.path
-        if (path) await getState().pinReference(path)
+        if (!path) return
+        await getState().pinReference(path)
+        requestAnimationFrame(() => {
+          document.querySelector<HTMLElement>('[data-pane-id="pinned-ref"] .cm-content')?.focus()
+        })
       }
     },
     {

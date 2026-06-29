@@ -650,10 +650,12 @@ function App(): JSX.Element {
         if (!vis) {
           setRightPaneTab('terminal')
           togglePinnedRefVisible()
+          requestAnimationFrame(() => window.dispatchEvent(new Event('zen:focus-terminal-input')))
         } else if (tab === 'terminal') {
           togglePinnedRefVisible()
         } else {
           setRightPaneTab('terminal')
+          requestAnimationFrame(() => window.dispatchEvent(new Event('zen:focus-terminal-input')))
         }
         return
       }
