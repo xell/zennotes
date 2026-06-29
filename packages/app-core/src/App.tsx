@@ -556,6 +556,16 @@ function App(): JSX.Element {
         return
       }
       if (matchesShortcut(e, overrides, 'global.closeActiveTab')) {
+        // When focus is inside the right pane (pinned ref or terminal), Cmd/Ctrl+W
+        // closes the right pane instead of the active editor tab, then returns
+        // focus to the editor — mirroring how Cmd+W closes the focused panel.
+        const activeEl = document.activeElement as HTMLElement | null
+        if (activeEl?.closest('[data-pane-id="pinned-ref"]')) {
+          e.preventDefault()
+          state.togglePinnedRefVisible()
+          focusEditorNormalMode()
+          return
+        }
         // On Linux/Windows `Mod+W` (close tab) resolves to Ctrl+W, which is also
         // the vim pane-focus prefix (`<C-w>hjkl`) and insert-mode word delete.
         // When vim mode is on AND a tab is open, reserve Ctrl+W for vim (close

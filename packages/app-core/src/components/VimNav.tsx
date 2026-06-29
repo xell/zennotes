@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { EditorView } from '@codemirror/view'
 import { isTagsViewActive, isTasksViewActive, useStore } from '../store'
 import { HintOverlay } from './HintOverlay'
 import { WhichKeyOverlay, type WhichKeyItem } from './WhichKeyOverlay'
@@ -335,11 +336,29 @@ export function VimNav(): JSX.Element | null {
       // CodeMirror's editor surface is contenteditable; keep global
       // hint/navigation bindings working there. Only skip other
       // unrelated contenteditable widgets.
+      // The pinned-ref pane is also a CM contenteditable outside editorViewRef —
+      // let Ctrl+W and leader sequences through (same pattern as data-zen-db-grid
+      // above), but block everything else so Vim's own j/k/h/l cursor movement
+      // stays with the pinned-ref editor.
+      const inPinnedRef = !!target?.closest('[data-pane-id="pinned-ref"]')
+      // Compute pinned-ref insert mode once; reused in Ctrl+W and leader guards.
+      let pinnedRefInInsertMode = false
+      if (inPinnedRef && state.vimMode) {
+        const cmEl = target?.closest('.cm-editor') as HTMLElement | null
+        if (cmEl) {
+          const pv = EditorView.findFromDOM(cmEl)
+          if (pv) pinnedRefInInsertMode = isEditorInsertMode(pv, state.vimMode)
+        }
+      }
       if (
         target?.isContentEditable &&
         (!state.editorViewRef || !state.editorViewRef.dom.contains(target))
       ) {
-        return
+        const isCtrlWRelated = ctrlWPending.current || sequenceTokenFromEvent(e) === panePrefixToken
+        const isLeaderRelated = leaderPending.current !== null || sequenceTokenFromEvent(e) === leaderToken
+        if (!inPinnedRef || (!isCtrlWRelated && !isLeaderRelated)) {
+          return
+        }
       }
       const previewEl = getPreviewScrollElement()
       const hoverPreviewEl = getHoverPreviewScrollElement()
@@ -585,9 +604,13 @@ export function VimNav(): JSX.Element | null {
       // ------- Ctrl+w initiation ----------------------------------------
       if (sequenceTokenFromEvent(e) === panePrefixToken) {
         if (isEditorFocused(state.editorViewRef) && isEditorInsertMode(state.editorViewRef, state.vimMode)) return
+        if (pinnedRefInInsertMode) return
         e.preventDefault()
         e.stopImmediatePropagation()
-        if (isEditorFocused(state.editorViewRef)) state.setFocusedPanel('editor')
+        // Mark focusedPanel='editor' for both main editor and pinned-ref so the
+        // resolution block below can always call focusPaneInDirection correctly,
+        // even when focus arrived by click (leaving focusedPanel stale).
+        if (isEditorFocused(state.editorViewRef) || inPinnedRef) state.setFocusedPanel('editor')
         clearEditorPendingVimStatus(state.editorViewRef)
         ctrlWPending.current = true
         if (ctrlWTimer.current) clearTimeout(ctrlWTimer.current)
@@ -790,6 +813,7 @@ export function VimNav(): JSX.Element | null {
       if (
         sequenceTokenFromEvent(e) === leaderToken &&
         !editorInsertMode &&
+        !pinnedRefInInsertMode &&
         // While Vim is mid-command in the focused editor (e.g. after f/t/r or an
         // operator), Space is the command's argument (r<Space>, f<Space>), not
         // the leader — let it fall through to codemirror-vim. (#147)
