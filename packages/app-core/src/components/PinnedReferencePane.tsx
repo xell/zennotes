@@ -405,7 +405,7 @@ export function PinnedReferencePane(): JSX.Element | null {
             <div className="absolute -left-1 top-0 h-full w-[9px]" />
           </div>
 
-          <header className="glass-header flex h-12 shrink-0 items-center justify-between gap-2 border-b border-paper-300/70 px-3">
+          <header className="glass-header flex h-10 shrink-0 items-center justify-between gap-2 border-b border-paper-300/70 px-3">
             {rightPaneTab === 'terminal' ? (
               <span className="flex min-w-0 flex-1 items-center gap-2 text-sm font-semibold text-ink-900">
                 <TerminalIcon width={14} height={14} className="shrink-0 text-accent" />
