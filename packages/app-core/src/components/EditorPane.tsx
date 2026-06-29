@@ -92,7 +92,6 @@ import { LazyDiagramTabView, LazyPreview as Preview } from './LazyPreview'
 import { ConnectionsPanel } from './ConnectionsPanel'
 import { OutlinePanel } from './OutlinePanel'
 import { CalendarPanel } from './CalendarPanel'
-import { TerminalPanel } from './TerminalPanel'
 import { CommentsPanel, type CommentDraft } from './CommentsPanel'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 import { promptApp } from '../lib/prompt-requests'
@@ -175,7 +174,6 @@ import {
   TrashIcon,
   ZapIcon
 } from './icons'
-import { TerminalIcon } from './FolderIcons'
 import { focusEditorNormalMode } from '../lib/editor-focus'
 import {
   getSystemFolderLabel,
@@ -727,10 +725,6 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const [activeOutlineLine, setActiveOutlineLine] = useState<number | null>(null)
   const [commentsOpen, setCommentsOpen] = useState(false)
   const [calendarOpen, setCalendarOpen] = useState(false)
-  const [terminalOpen, setTerminalOpen] = useState(false)
-  const [terminalWidth, setTerminalWidthState] = useState(
-    () => Number(localStorage.getItem('zen:terminal-width') || 400)
-  )
   // The calendar panel is a date navigator. It auto-opens while the pane shows
   // a daily/weekly note, but stays available (Obsidian-style) on any note as
   // long as the daily or weekly feature is enabled.
@@ -892,45 +886,6 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     setCalendarOpen((open) => !open)
   }, [])
 
-  const toggleTerminalPanel = useCallback(() => {
-    setTerminalOpen((open) => {
-      if (open) {
-        const xtermActive =
-          document.activeElement instanceof HTMLTextAreaElement &&
-          document.activeElement.closest('.xterm') !== null
-        if (xtermActive) {
-          requestAnimationFrame(() => focusEditorNormalMode())
-        }
-      } else {
-        requestAnimationFrame(() => {
-          window.dispatchEvent(new Event('zen:focus-terminal-input'))
-        })
-      }
-      return !open
-    })
-  }, [])
-
-
-  const setTerminalWidth = useCallback((w: number) => {
-    setTerminalWidthState(w)
-    localStorage.setItem('zen:terminal-width', String(w))
-  }, [])
-
-  const handleTerminalResizeDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    const startX = e.clientX
-    const startWidth = terminalWidth
-    const onMove = (ev: PointerEvent): void => {
-      setTerminalWidth(Math.max(120, Math.min(900, startWidth + (startX - ev.clientX))))
-    }
-    const onUp = (): void => {
-      document.removeEventListener('pointermove', onMove)
-      document.removeEventListener('pointerup', onUp)
-    }
-    document.addEventListener('pointermove', onMove)
-    document.addEventListener('pointerup', onUp)
-  }, [terminalWidth, setTerminalWidth])
-
   const applyPaneMode = useCallback((nextMode: PaneMode) => {
     setModesByPath((current) => paneModesWithPathMode(current, activeTab, nextMode))
     setActivePane(paneId)
@@ -973,38 +928,6 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     window.addEventListener('zen:toggle-calendar', handler)
     return () => window.removeEventListener('zen:toggle-calendar', handler)
   }, [isActive, toggleCalendarPanel])
-
-  // `zen:toggle-terminal` — same active-pane routing as the panels above.
-  useEffect(() => {
-    if (!isActive) return
-    const handler = (): void => {
-      toggleTerminalPanel()
-    }
-    window.addEventListener('zen:toggle-terminal', handler)
-    return () => window.removeEventListener('zen:toggle-terminal', handler)
-  }, [isActive, toggleTerminalPanel])
-
-  // `zen:focus-terminal` — Cmd+T focus switch: only acts when the terminal
-  // panel is already visible. Moves focus into xterm if the editor is active,
-  // or back to the editor if the xterm textarea is already focused.
-  useEffect(() => {
-    if (!isActive) return
-    const handler = (): void => {
-      if (!terminalOpen) return
-      const xtermActive =
-        document.activeElement instanceof HTMLTextAreaElement &&
-        document.activeElement.closest('.xterm') !== null
-      if (xtermActive) {
-        focusEditorNormalMode()
-      } else {
-        requestAnimationFrame(() => {
-          window.dispatchEvent(new Event('zen:focus-terminal-input'))
-        })
-      }
-    }
-    window.addEventListener('zen:focus-terminal', handler)
-    return () => window.removeEventListener('zen:focus-terminal', handler)
-  }, [isActive, terminalOpen])
 
   // `zen:close-right-panel` — Esc (when a right panel is focused) or the
   // "Close right panel" command dismiss whichever right-hand panel is open in
@@ -2906,13 +2829,6 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
                 <CalendarIcon />
               </IconBtn>
             )}
-            <IconBtn
-                title={terminalOpen ? 'Hide terminal' : 'Show terminal'}
-                active={terminalOpen}
-                onClick={toggleTerminalPanel}
-            >
-                <TerminalIcon />
-            </IconBtn>
             <IconBtn title="Export as PDF (⇧⌘E)" onClick={() => void exportActiveNotePdf()}>
               <FileDownIcon />
             </IconBtn>
@@ -2950,8 +2866,6 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     calendarAvailable,
     calendarOpen,
     toggleCalendarPanel,
-    terminalOpen,
-    toggleTerminalPanel,
     trashActive,
     archiveActive,
     restoreActive,
@@ -3509,24 +3423,6 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
         {content && calendarOpen && calendarAvailable && !zenMode && (
           <CalendarPanel note={content} />
         )}
-        {/* Always mounted so the PTY session survives both panel hide/show
-            and zen mode toggles. display:none is the only way it hides. */}
-        <div
-          style={{
-            width: terminalWidth,
-            flexShrink: 0,
-            display: terminalOpen && !zenMode ? 'flex' : 'none',
-          }}
-          className="min-h-0 flex-row"
-        >
-          <div
-            onPointerDown={handleTerminalResizeDown}
-            className="w-1 flex-shrink-0 cursor-col-resize border-l border-paper-300/60 hover:border-accent/50 hover:bg-accent/10 transition-colors"
-          />
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <TerminalPanel visible={terminalOpen && !zenMode} />
-          </div>
-        </div>
       </div>
       {content &&
         showEditor &&

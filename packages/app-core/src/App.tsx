@@ -637,12 +637,37 @@ function App(): JSX.Element {
       }
       if (matchesShortcut(e, overrides, 'global.toggleTerminalPanel')) {
         e.preventDefault()
-        window.dispatchEvent(new Event('zen:toggle-terminal'))
+        const { pinnedRefVisible: vis, rightPaneTab: tab, togglePinnedRefVisible, setRightPaneTab } = useStore.getState()
+        if (!vis) {
+          setRightPaneTab('terminal')
+          togglePinnedRefVisible()
+        } else if (tab === 'terminal') {
+          togglePinnedRefVisible()
+        } else {
+          setRightPaneTab('terminal')
+        }
         return
       }
       if (matchesShortcut(e, overrides, 'global.focusTerminal')) {
         e.preventDefault()
-        window.dispatchEvent(new Event('zen:focus-terminal'))
+        const { pinnedRefVisible: vis, rightPaneTab: tab, togglePinnedRefVisible, setRightPaneTab } = useStore.getState()
+        const xtermActive =
+          document.activeElement instanceof HTMLTextAreaElement &&
+          document.activeElement.closest('.xterm') !== null
+        if (!vis) {
+          setRightPaneTab('terminal')
+          togglePinnedRefVisible()
+          requestAnimationFrame(() => window.dispatchEvent(new Event('zen:focus-terminal-input')))
+        } else if (tab === 'terminal') {
+          if (xtermActive) {
+            focusEditorNormalMode()
+          } else {
+            requestAnimationFrame(() => window.dispatchEvent(new Event('zen:focus-terminal-input')))
+          }
+        } else {
+          setRightPaneTab('terminal')
+          requestAnimationFrame(() => window.dispatchEvent(new Event('zen:focus-terminal-input')))
+        }
         return
       }
       // ⌥⌘M — comment the current selection (or line) without the mouse

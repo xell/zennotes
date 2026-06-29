@@ -434,6 +434,7 @@ interface Prefs {
   pinnedRefWidth: number
   panelWidths: PanelWidths
   pinnedRefMode: 'edit' | 'preview'
+  rightPaneTab: 'reference' | 'terminal'
   /** When true, "New Quick Note" auto-titles to today's date
    *  (YYYY-MM-DD), appending " (2)", " (3)" etc. for collisions. */
   quickNoteDateTitle: boolean
@@ -2306,6 +2307,7 @@ interface Store {
   setPinnedRefWidth: (px: number) => void
   setPanelWidth: (panel: RightPanelId, px: number) => void
   setPinnedRefMode: (mode: 'edit' | 'preview') => void
+  setRightPaneTab: (tab: 'reference' | 'terminal') => void
 
   setQuickNoteDateTitle: (on: boolean) => void
   setQuickNoteTitlePrefix: (prefix: string | null) => void
@@ -3384,6 +3386,7 @@ export const useStore = create<Store>((set, get) => {
   pinnedRefWidth: loadPrefs().pinnedRefWidth,
   panelWidths: loadPrefs().panelWidths,
   pinnedRefMode: loadPrefs().pinnedRefMode,
+  rightPaneTab: 'reference' as const,
   quickNoteDateTitle: loadPrefs().quickNoteDateTitle,
   quickNoteTitlePrefix: loadPrefs().quickNoteTitlePrefix,
   wordWrap: loadPrefs().wordWrap,
@@ -5415,6 +5418,10 @@ export const useStore = create<Store>((set, get) => {
   setPinnedRefMode: (mode) => {
     set({ pinnedRefMode: mode })
     savePrefs(collectPrefs(get()))
+  },
+
+  setRightPaneTab: (tab) => {
+    set({ rightPaneTab: tab })
   },
 
   setQuickNoteDateTitle: (on) => {

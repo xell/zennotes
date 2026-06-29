@@ -600,9 +600,16 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       category: 'View',
       shortcut: shortcut('global.toggleTerminalPanel'),
       keywords: 'terminal shell command line console',
-      when: () => !!getState().activeNote,
       run: () => {
-        window.dispatchEvent(new Event('zen:toggle-terminal'))
+        const { pinnedRefVisible: vis, rightPaneTab: tab, togglePinnedRefVisible, setRightPaneTab } = getState()
+        if (!vis) {
+          setRightPaneTab('terminal')
+          togglePinnedRefVisible()
+        } else if (tab === 'terminal') {
+          togglePinnedRefVisible()
+        } else {
+          setRightPaneTab('terminal')
+        }
       }
     },
     {

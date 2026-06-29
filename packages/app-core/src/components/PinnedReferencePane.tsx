@@ -45,6 +45,7 @@ import { wikilinkSource, wikilinkHeadingSource } from '../lib/cm-wikilinks'
 import { completionNavKeymap } from '../lib/cm-completion-nav'
 import { classifyLocalAssetHref, type LocalAssetKind } from '../lib/local-assets'
 import { LazyPreview as Preview } from './LazyPreview'
+import { TerminalPanel } from './TerminalPanel'
 import { DocumentTextIcon, EyeIcon, PencilIcon, PinIcon, TerminalIcon } from './icons'
 
 const PINNED_REF_PANE_ID = 'pinned-ref'
@@ -157,8 +158,10 @@ export function PinnedReferencePane(): JSX.Element | null {
   const livePreviewCompartmentRef = useRef<Compartment | null>(null)
   const lineNumbersCompartmentRef = useRef<Compartment | null>(null)
 
+  const rightPaneTab = useStore((s) => s.rightPaneTab)
+  const setRightPaneTab = useStore((s) => s.setRightPaneTab)
+
   const [resizing, setResizing] = useState(false)
-  const [activeTab, setActiveTab] = useState<'reference' | 'terminal'>('reference')
 
   /* -------- Mount CodeMirror view -------- */
   const setContainerRef = useCallback(
@@ -357,7 +360,7 @@ export function PinnedReferencePane(): JSX.Element | null {
   }, [assetUrl, useAssetIframe])
 
   const showEditor = pinnedRefMode === 'edit'
-  const hidden = !pinnedRefPath || !pinnedRefVisible
+  const hidden = !pinnedRefVisible || (rightPaneTab === 'reference' && !pinnedRefPath)
 
   return (
     <section
@@ -442,10 +445,10 @@ export function PinnedReferencePane(): JSX.Element | null {
                 <button
                   type="button"
                   title="Reference"
-                  onClick={() => setActiveTab('reference')}
+                  onClick={() => setRightPaneTab('reference')}
                   className={[
                     'flex h-6 w-6 items-center justify-center rounded transition-colors',
-                    activeTab === 'reference' ? 'bg-paper-50 text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800'
+                    rightPaneTab === 'reference' ? 'bg-paper-50 text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800'
                   ].join(' ')}
                 >
                   <DocumentTextIcon width={13} height={13} />
@@ -453,10 +456,10 @@ export function PinnedReferencePane(): JSX.Element | null {
                 <button
                   type="button"
                   title="Terminal"
-                  onClick={() => setActiveTab('terminal')}
+                  onClick={() => setRightPaneTab('terminal')}
                   className={[
                     'flex h-6 w-6 items-center justify-center rounded transition-colors',
-                    activeTab === 'terminal' ? 'bg-paper-50 text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800'
+                    rightPaneTab === 'terminal' ? 'bg-paper-50 text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800'
                   ].join(' ')}
                 >
                   <TerminalIcon width={13} height={13} />
@@ -467,7 +470,13 @@ export function PinnedReferencePane(): JSX.Element | null {
         </>
       )}
 
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      {/* Terminal — always mounted so the PTY survives tab switches. */}
+      <TerminalPanel visible={rightPaneTab === 'terminal' && pinnedRefVisible} />
+
+      <div
+        className="relative flex min-h-0 min-w-0 flex-1 flex-col"
+        style={{ display: rightPaneTab === 'reference' ? 'flex' : 'none' }}
+      >
         {/* Note editor / preview — only mounted when the pin is a note.
             Unmount when switching to an asset so CM view isn't running
             invisibly; this half doesn't need the "preserve state" trick
