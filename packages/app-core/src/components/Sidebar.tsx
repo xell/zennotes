@@ -224,10 +224,7 @@ function SidebarSectionHeading({
 
   return (
     <div
-      className={[
-        "rounded-lg px-2 pb-2 pt-4 text-xs font-medium uppercase tracking-wide transition-colors",
-        dragHover ? "bg-accent/10 text-accent" : "text-ink-500",
-      ].join(" ")}
+      className="px-2 pb-2 pt-4 text-xs font-medium uppercase tracking-wide text-accent"
       onDragOver={
         droppable
           ? (e) => {
@@ -257,7 +254,14 @@ function SidebarSectionHeading({
           : undefined
       }
     >
-      {label}
+      <span
+        className={[
+          "rounded-full px-2 py-0.5 transition-colors",
+          dragHover ? "bg-accent/20" : "bg-accent/10",
+        ].join(" ")}
+      >
+        {label}
+      </span>
     </div>
   );
 }
@@ -3534,9 +3538,9 @@ export function Sidebar(): JSX.Element {
                 onClick={() => setTagsCollapsed(!tagsCollapsed)}
                 title={tagsCollapsed ? "Show tags" : "Hide tags"}
                 aria-expanded={!tagsCollapsed}
-                className="flex w-full items-center gap-1 rounded px-2 pb-2 text-xs font-medium uppercase tracking-wide text-ink-500 transition-colors hover:text-ink-800"
+                className="flex w-full items-center gap-1 px-2 pb-2 text-xs font-medium uppercase tracking-wide text-accent"
               >
-                <span>Tags</span>
+                <span className="rounded-full bg-accent/10 px-2 py-0.5 transition-colors hover:bg-accent/20">Tags</span>
                 <span className="ml-1 text-ink-500 normal-case tracking-normal">
                   {tags.length}
                 </span>
