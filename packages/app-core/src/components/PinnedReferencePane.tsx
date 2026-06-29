@@ -45,7 +45,7 @@ import { wikilinkSource, wikilinkHeadingSource } from '../lib/cm-wikilinks'
 import { completionNavKeymap } from '../lib/cm-completion-nav'
 import { classifyLocalAssetHref, type LocalAssetKind } from '../lib/local-assets'
 import { LazyPreview as Preview } from './LazyPreview'
-import { CloseIcon, PanelLeftIcon, PinIcon } from './icons'
+import { DocumentTextIcon, EyeIcon, PencilIcon, PinIcon, TerminalIcon } from './icons'
 
 const PINNED_REF_PANE_ID = 'pinned-ref'
 export const pinnedRefPaneId = PINNED_REF_PANE_ID
@@ -129,7 +129,6 @@ export function PinnedReferencePane(): JSX.Element | null {
   const vaultRoot = useStore((s) => s.vault?.root ?? null)
   const unpinReferenceGlobal = useStore((s) => s.unpinReference)
   const unpinReferenceForNote = useStore((s) => s.unpinReferenceForNote)
-  const togglePinnedRefVisible = useStore((s) => s.togglePinnedRefVisible)
   const setPinnedRefWidth = useStore((s) => s.setPinnedRefWidth)
   const setPinnedRefMode = useStore((s) => s.setPinnedRefMode)
   const unpinReference = (): void => {
@@ -159,6 +158,7 @@ export function PinnedReferencePane(): JSX.Element | null {
   const lineNumbersCompartmentRef = useRef<Compartment | null>(null)
 
   const [resizing, setResizing] = useState(false)
+  const [activeTab, setActiveTab] = useState<'reference' | 'terminal'>('reference')
 
   /* -------- Mount CodeMirror view -------- */
   const setContainerRef = useCallback(
@@ -413,39 +413,55 @@ export function PinnedReferencePane(): JSX.Element | null {
             </button>
             <div className="flex shrink-0 items-center gap-1">
               {!isAsset && (
-                <div className="flex items-center gap-1 rounded-md bg-paper-200/70 p-0.5 text-xs">
-                  {(['edit', 'preview'] as const).map((m) => (
-                    <button
-                      key={m}
-                      onClick={() => setPinnedRefMode(m)}
-                      className={[
-                        'rounded px-1.5 py-0.5 capitalize transition-colors',
-                        pinnedRefMode === m
-                          ? 'bg-paper-50 text-ink-900 shadow-sm'
-                          : 'text-ink-500 hover:text-ink-800'
-                      ].join(' ')}
-                    >
-                      {m}
-                    </button>
-                  ))}
+                <div className="flex items-center rounded-md bg-paper-200/70 p-0.5">
+                  <button
+                    type="button"
+                    title="Edit"
+                    onClick={() => setPinnedRefMode('edit')}
+                    className={[
+                      'flex h-6 w-6 items-center justify-center rounded transition-colors',
+                      pinnedRefMode === 'edit' ? 'bg-paper-50 text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800'
+                    ].join(' ')}
+                  >
+                    <PencilIcon width={13} height={13} />
+                  </button>
+                  <button
+                    type="button"
+                    title="Preview"
+                    onClick={() => setPinnedRefMode('preview')}
+                    className={[
+                      'flex h-6 w-6 items-center justify-center rounded transition-colors',
+                      pinnedRefMode === 'preview' ? 'bg-paper-50 text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800'
+                    ].join(' ')}
+                  >
+                    <EyeIcon width={13} height={13} />
+                  </button>
                 </div>
               )}
-              <button
-                type="button"
-                title="Hide reference pane (pin stays)"
-                onClick={togglePinnedRefVisible}
-                className="flex h-7 w-7 items-center justify-center rounded-md text-ink-500 hover:bg-paper-200 hover:text-ink-900"
-              >
-                <PanelLeftIcon width={14} height={14} />
-              </button>
-              <button
-                type="button"
-                title="Unpin reference"
-                onClick={unpinReference}
-                className="flex h-7 w-7 items-center justify-center rounded-md text-ink-500 hover:bg-paper-200 hover:text-ink-900"
-              >
-                <CloseIcon width={14} height={14} />
-              </button>
+              <div className="flex items-center rounded-md bg-paper-200/70 p-0.5">
+                <button
+                  type="button"
+                  title="Reference"
+                  onClick={() => setActiveTab('reference')}
+                  className={[
+                    'flex h-6 w-6 items-center justify-center rounded transition-colors',
+                    activeTab === 'reference' ? 'bg-paper-50 text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800'
+                  ].join(' ')}
+                >
+                  <DocumentTextIcon width={13} height={13} />
+                </button>
+                <button
+                  type="button"
+                  title="Terminal"
+                  onClick={() => setActiveTab('terminal')}
+                  className={[
+                    'flex h-6 w-6 items-center justify-center rounded transition-colors',
+                    activeTab === 'terminal' ? 'bg-paper-50 text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800'
+                  ].join(' ')}
+                >
+                  <TerminalIcon width={13} height={13} />
+                </button>
+              </div>
             </div>
           </header>
         </>

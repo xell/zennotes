@@ -688,6 +688,8 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const sidebarOpen = useStore((s) => s.sidebarOpen)
   const zenMode = useStore((s) => s.zenMode)
   const toggleSidebar = useStore((s) => s.toggleSidebar)
+  const pinnedRefVisible = useStore((s) => s.pinnedRefVisible)
+  const togglePinnedRefVisible = useStore((s) => s.togglePinnedRefVisible)
   const setFocusedPanel = useStore((s) => s.setFocusedPanel)
   const focusedPanel = useStore((s) => s.focusedPanel)
   const setConnectionPreview = useStore((s) => s.setConnectionPreview)
@@ -3284,7 +3286,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
             {tabItems.map((tab, i) => {
             // Draw a subtle vertical separator between the last pinned
             // tab and the first unpinned one (VSCode convention). The
-            // separator is a flex sibling, not a wrapper, so drag hit-
+            // separator is a flex sibling, not a wrapper so drag hit-
             // detection on the tab itself is unchanged.
             const prevPinned = i > 0 ? tabItems[i - 1].pinned : false
             const needsSeparator = prevPinned && !tab.pinned
@@ -3300,6 +3302,14 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
               </Fragment>
             )
           })}
+          </div>
+          <div className="flex shrink-0 items-center gap-0.5 self-center pr-1">
+            <IconBtn
+              title={pinnedRefVisible ? 'Hide right pane' : 'Show right pane'}
+              onClick={togglePinnedRefVisible}
+            >
+              <PanelRightIcon width={16} height={16} />
+            </IconBtn>
           </div>
         </div>
       )}

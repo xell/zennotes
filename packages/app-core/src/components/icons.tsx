@@ -412,3 +412,18 @@ export const LinkIcon = (p: IconProps): JSX.Element => (
     <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
   </I>
 )
+
+export const EyeIcon = (p: IconProps): JSX.Element => (
+  <I {...p}>
+    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+    <circle cx="12" cy="12" r="3" />
+  </I>
+)
+
+export const TerminalIcon = (p: IconProps): JSX.Element => (
+  <I {...p}>
+    <rect x="2" y="4" width="20" height="16" rx="2" />
+    <polyline points="6 9 9 12 6 15" />
+    <line x1="12" y1="15" x2="17" y2="15" />
+  </I>
+)
