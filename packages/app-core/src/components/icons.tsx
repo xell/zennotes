@@ -142,6 +142,13 @@ export const ColumnsIcon = (p: IconProps): JSX.Element => (
   </I>
 )
 
+export const SplitColumnsIcon = (p: IconProps): JSX.Element => (
+  <I {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M12 4v16" />
+  </I>
+)
+
 export const ChevronRightIcon = (p: IconProps): JSX.Element => (
   <I {...p}>
     <path d="m9 6 6 6-6 6" />
@@ -215,6 +222,14 @@ export const MoreIcon = (p: IconProps): JSX.Element => (
     <circle cx="5" cy="12" r="1" />
     <circle cx="12" cy="12" r="1" />
     <circle cx="19" cy="12" r="1" />
+  </I>
+)
+
+export const MoreVerticalIcon = (p: IconProps): JSX.Element => (
+  <I {...p}>
+    <circle cx="12" cy="5" r="1" />
+    <circle cx="12" cy="12" r="1" />
+    <circle cx="12" cy="19" r="1" />
   </I>
 )
 

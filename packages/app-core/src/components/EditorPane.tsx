@@ -161,14 +161,18 @@ import {
   CalendarIcon,
   CheckSquareIcon,
   CloseIcon,
+  EyeIcon,
+  SplitColumnsIcon,
   PaperclipIcon,
   DocumentIcon,
   FileDownIcon,
   FeedbackIcon,
   HighlighterIcon,
   ListTreeIcon,
+  MoreVerticalIcon,
   PanelLeftIcon,
   PanelRightIcon,
+  PencilIcon,
   PinIcon,
   TagIcon,
   TrashIcon,
@@ -2788,67 +2792,66 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     // Markdown-specific controls (edit/split/preview, connections, comments,
     // outline, calendar, PDF export) don't apply to a canvas.
     const isDrawing = isExcalidrawPath(content.path)
+
+    const fileAction =
+      folder === 'trash'
+        ? { icon: <ArrowUpRightIcon />, title: 'Restore', onClick: () => void restoreActive() }
+        : folder === 'archive'
+          ? { icon: <ArrowUpRightIcon />, title: 'Unarchive', onClick: () => void unarchiveActive() }
+          : { icon: <ArchiveIcon />, title: folderLabels.archive, onClick: () => void archiveActive() }
+
+    const tools: ToolItem[] = [
+      ...(!isDrawing
+        ? [
+            {
+              icon: <PanelRightIcon />,
+              title: connectionsOpen ? 'Hide connections' : 'Show connections',
+              onClick: toggleConnectionsPanel,
+              active: connectionsOpen
+            },
+            {
+              icon: <FeedbackIcon />,
+              title: commentsOpen
+                ? 'Hide comments'
+                : `Show comments${openCommentCount > 0 ? ` (${openCommentCount})` : ''}`,
+              onClick: toggleCommentsPanel,
+              active: commentsOpen
+            },
+            {
+              icon: <ListTreeIcon />,
+              title: outlineOpen ? 'Hide outline' : 'Show outline',
+              onClick: toggleOutlinePanel,
+              active: outlineOpen
+            },
+            ...(calendarAvailable
+              ? [
+                  {
+                    icon: <CalendarIcon />,
+                    title: calendarOpen ? 'Hide calendar' : 'Show calendar',
+                    onClick: toggleCalendarPanel,
+                    active: calendarOpen
+                  }
+                ]
+              : []),
+            {
+              icon: <FileDownIcon />,
+              title: 'Export as PDF (⇧⌘E)',
+              onClick: () => void exportActiveNotePdf()
+            }
+          ]
+        : []),
+      fileAction,
+      {
+        icon: <TrashIcon />,
+        title: `Move to ${folderLabels.trash.toLowerCase()}`,
+        onClick: () => void trashActive()
+      }
+    ]
+
     return (
-      <div className="flex items-center gap-1 text-ink-500">
-        {!isDrawing && (
-          <>
-            <ToggleGroup mode={mode} onChange={applyPaneMode} />
-            <div className="mx-2 h-4 w-px bg-paper-300" />
-            <IconBtn
-              title={connectionsOpen ? 'Hide connections' : 'Show connections'}
-              active={connectionsOpen}
-              onClick={toggleConnectionsPanel}
-            >
-              <PanelRightIcon />
-            </IconBtn>
-            <IconBtn
-              title={
-                commentsOpen
-                  ? 'Hide comments'
-                  : `Show comments${openCommentCount > 0 ? ` (${openCommentCount})` : ''}`
-              }
-              active={commentsOpen}
-              onClick={toggleCommentsPanel}
-            >
-              <FeedbackIcon />
-            </IconBtn>
-            <IconBtn
-              title={outlineOpen ? 'Hide outline' : 'Show outline'}
-              active={outlineOpen}
-              onClick={toggleOutlinePanel}
-            >
-              <ListTreeIcon />
-            </IconBtn>
-            {calendarAvailable && (
-              <IconBtn
-                title={calendarOpen ? 'Hide calendar' : 'Show calendar'}
-                active={calendarOpen}
-                onClick={toggleCalendarPanel}
-              >
-                <CalendarIcon />
-              </IconBtn>
-            )}
-            <IconBtn title="Export as PDF (⇧⌘E)" onClick={() => void exportActiveNotePdf()}>
-              <FileDownIcon />
-            </IconBtn>
-          </>
-        )}
-        {folder === 'trash' ? (
-          <IconBtn title="Restore" onClick={() => void restoreActive()}>
-            <ArrowUpRightIcon />
-          </IconBtn>
-        ) : folder === 'archive' ? (
-          <IconBtn title="Unarchive" onClick={() => void unarchiveActive()}>
-            <ArrowUpRightIcon />
-          </IconBtn>
-        ) : (
-          <IconBtn title={folderLabels.archive} onClick={() => void archiveActive()}>
-            <ArchiveIcon />
-          </IconBtn>
-        )}
-        <IconBtn title={`Move to ${folderLabels.trash.toLowerCase()}`} onClick={() => void trashActive()}>
-          <TrashIcon />
-        </IconBtn>
+      <div className="flex items-center gap-1.5 text-ink-500">
+        {!isDrawing && <ModeDropdown mode={mode} onChange={applyPaneMode} />}
+        <ToolsDropdown tools={tools} />
       </div>
     )
   }, [
@@ -2869,7 +2872,8 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     archiveActive,
     restoreActive,
     unarchiveActive,
-    exportActiveNotePdf
+    exportActiveNotePdf,
+    folderLabels
   ])
 
   const showEditor = !!content && mode !== 'preview'
@@ -3725,6 +3729,158 @@ function EmptyPaneState({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Toolbar dropdown components
+// ---------------------------------------------------------------------------
+
+type ToolItem = {
+  icon: JSX.Element
+  title: string
+  onClick: () => void
+  active?: boolean
+}
+
+const MODE_ICONS: Record<PaneMode, () => JSX.Element> = {
+  edit: () => <PencilIcon />,
+  split: () => <SplitColumnsIcon />,
+  preview: () => <EyeIcon />
+}
+
+function useHoverDropdown(openDelay = 150, closeDelay = 100) {
+  const [open, setOpen] = useState(false)
+  const openTimer = useRef<ReturnType<typeof setTimeout>>()
+  const closeTimer = useRef<ReturnType<typeof setTimeout>>()
+  const onEnter = () => {
+    clearTimeout(closeTimer.current)
+    openTimer.current = setTimeout(() => setOpen(true), openDelay)
+  }
+  const onLeave = () => {
+    clearTimeout(openTimer.current)
+    closeTimer.current = setTimeout(() => setOpen(false), closeDelay)
+  }
+  return { open, onEnter, onLeave }
+}
+
+function DropdownItem({
+  icon,
+  title,
+  onClick,
+  active = false
+}: ToolItem): JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={title}
+      aria-pressed={active}
+      className={[
+        'group/item relative flex h-7 w-7 items-center justify-center rounded transition-colors',
+        active ? 'bg-paper-200 text-ink-900' : 'text-ink-500 hover:bg-paper-200 hover:text-ink-900'
+      ].join(' ')}
+    >
+      <span className="pointer-events-none">{icon}</span>
+      <span className="pointer-events-none absolute right-full mr-2 top-1/2 -translate-y-1/2 z-40 hidden whitespace-nowrap rounded-md border border-paper-300 bg-paper-50 px-2 py-1 text-xs font-medium text-ink-800 shadow-panel group-hover/item:block">
+        {title}
+      </span>
+    </button>
+  )
+}
+
+function DropdownPanel({
+  open,
+  onEnter,
+  onLeave,
+  children
+}: {
+  open: boolean
+  onEnter: () => void
+  onLeave: () => void
+  children: React.ReactNode
+}): JSX.Element {
+  return (
+    <div
+      className={[
+        'absolute right-0 top-full z-30 pt-1 translate-x-[3px] transition-all duration-100 origin-top',
+        open ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-95 pointer-events-none'
+      ].join(' ')}
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
+    >
+      <div className="flex flex-col gap-px rounded-md border border-paper-300 bg-paper-50 p-0.5 shadow-panel">
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function ModeDropdown({
+  mode,
+  onChange
+}: {
+  mode: PaneMode
+  onChange: (m: PaneMode) => void
+}): JSX.Element {
+  const { open, onEnter, onLeave } = useHoverDropdown()
+  const keymapOverrides = useStore((s) => s.keymapOverrides)
+  const CurrentIcon = MODE_ICONS[mode]
+  const currentOption = MODE_OPTIONS.find((o) => o.mode === mode)
+
+  return (
+    <div className="relative" onMouseEnter={onEnter} onMouseLeave={onLeave}>
+      <button
+        type="button"
+        title={currentOption?.tooltipLabel}
+        aria-label={currentOption?.tooltipLabel}
+        className={[
+          'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
+          open ? 'bg-paper-200 text-ink-900' : 'text-ink-500 hover:bg-paper-200 hover:text-ink-900'
+        ].join(' ')}
+      >
+        <CurrentIcon />
+      </button>
+      <DropdownPanel open={open} onEnter={onEnter} onLeave={onLeave}>
+        {MODE_OPTIONS.map((option) => {
+          const shortcut = getKeymapDisplay(keymapOverrides, option.keymapId)
+          return (
+            <DropdownItem
+              key={option.mode}
+              icon={<>{MODE_ICONS[option.mode]()}</>}
+              title={`${option.tooltipLabel} (${shortcut})`}
+              onClick={() => onChange(option.mode)}
+              active={mode === option.mode}
+            />
+          )
+        })}
+      </DropdownPanel>
+    </div>
+  )
+}
+
+function ToolsDropdown({ tools }: { tools: ToolItem[] }): JSX.Element {
+  const { open, onEnter, onLeave } = useHoverDropdown()
+
+  return (
+    <div className="relative" onMouseEnter={onEnter} onMouseLeave={onLeave}>
+      <button
+        type="button"
+        title="More actions"
+        aria-label="More actions"
+        className={[
+          'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
+          open ? 'bg-paper-200 text-ink-900' : 'text-ink-500 hover:bg-paper-200 hover:text-ink-900'
+        ].join(' ')}
+      >
+        <MoreVerticalIcon />
+      </button>
+      <DropdownPanel open={open} onEnter={onEnter} onLeave={onLeave}>
+        {tools.map((tool, i) => (
+          <DropdownItem key={i} {...tool} />
+        ))}
+      </DropdownPanel>
     </div>
   )
 }
