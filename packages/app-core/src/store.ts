@@ -3386,7 +3386,7 @@ export const useStore = create<Store>((set, get) => {
   pinnedRefWidth: loadPrefs().pinnedRefWidth,
   panelWidths: loadPrefs().panelWidths,
   pinnedRefMode: loadPrefs().pinnedRefMode,
-  rightPaneTab: 'reference' as const,
+  rightPaneTab: 'terminal' as const,
   quickNoteDateTitle: loadPrefs().quickNoteDateTitle,
   quickNoteTitlePrefix: loadPrefs().quickNoteTitlePrefix,
   wordWrap: loadPrefs().wordWrap,

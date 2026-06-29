@@ -375,7 +375,7 @@ export function PinnedReferencePane(): JSX.Element | null {
         display: hidden ? 'none' : 'flex'
       }}
     >
-      {pinnedRefPath && (
+      {(pinnedRefPath || rightPaneTab === 'terminal') && (
         <>
           {/* Resize handle on the left edge. */}
           <div
@@ -391,32 +391,39 @@ export function PinnedReferencePane(): JSX.Element | null {
           </div>
 
           <header className="glass-header flex h-12 shrink-0 items-center justify-between gap-2 border-b border-paper-300/70 px-3">
-            <button
-              type="button"
-              title={isAsset ? `Reveal ${title} in files` : `Reveal ${title} in the sidebar`}
-              onClick={() => {
-                if (isAsset) {
-                  setView({ kind: 'assets' })
-                  return
-                }
-                const parts = pinnedRefPath.split('/')
-                const top = parts[0] as 'inbox' | 'quick' | 'archive' | 'trash'
-                const subpath = parts.slice(1, -1).join('/')
-                setView({ kind: 'folder', folder: top, subpath })
-              }}
-              className="flex min-w-0 flex-1 items-center gap-2 truncate text-left text-sm font-semibold text-ink-900 hover:text-ink-700"
-            >
-              <PinIcon width={14} height={14} className="shrink-0 text-accent" />
-              <span className="truncate">{title}</span>
-              {!isAsset && isDirty && (
-                <span
-                  aria-label="Unsaved changes"
-                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent/80"
-                />
-              )}
-            </button>
+            {rightPaneTab === 'terminal' ? (
+              <span className="flex min-w-0 flex-1 items-center gap-2 text-sm font-semibold text-ink-900">
+                <TerminalIcon width={14} height={14} className="shrink-0 text-accent" />
+                Terminal
+              </span>
+            ) : (
+              <button
+                type="button"
+                title={isAsset ? `Reveal ${title} in files` : `Reveal ${title} in the sidebar`}
+                onClick={() => {
+                  if (isAsset) {
+                    setView({ kind: 'assets' })
+                    return
+                  }
+                  const parts = pinnedRefPath!.split('/')
+                  const top = parts[0] as 'inbox' | 'quick' | 'archive' | 'trash'
+                  const subpath = parts.slice(1, -1).join('/')
+                  setView({ kind: 'folder', folder: top, subpath })
+                }}
+                className="flex min-w-0 flex-1 items-center gap-2 truncate text-left text-sm font-semibold text-ink-900 hover:text-ink-700"
+              >
+                <PinIcon width={14} height={14} className="shrink-0 text-accent" />
+                <span className="truncate">{title}</span>
+                {!isAsset && isDirty && (
+                  <span
+                    aria-label="Unsaved changes"
+                    className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent/80"
+                  />
+                )}
+              </button>
+            )}
             <div className="flex shrink-0 items-center gap-1">
-              {!isAsset && (
+              {!isAsset && rightPaneTab === 'reference' && (
                 <div className="flex items-center rounded-md bg-paper-200/70 p-0.5">
                   <button
                     type="button"
@@ -445,17 +452,6 @@ export function PinnedReferencePane(): JSX.Element | null {
               <div className="flex items-center rounded-md bg-paper-200/70 p-0.5">
                 <button
                   type="button"
-                  title="Reference"
-                  onClick={() => setRightPaneTab('reference')}
-                  className={[
-                    'flex h-6 w-6 items-center justify-center rounded transition-colors',
-                    rightPaneTab === 'reference' ? 'bg-paper-50 text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800'
-                  ].join(' ')}
-                >
-                  <DocumentTextIcon width={13} height={13} />
-                </button>
-                <button
-                  type="button"
                   title="Terminal"
                   onClick={() => setRightPaneTab('terminal')}
                   className={[
@@ -464,6 +460,17 @@ export function PinnedReferencePane(): JSX.Element | null {
                   ].join(' ')}
                 >
                   <TerminalIcon width={13} height={13} />
+                </button>
+                <button
+                  type="button"
+                  title="Reference"
+                  onClick={() => setRightPaneTab('reference')}
+                  className={[
+                    'flex h-6 w-6 items-center justify-center rounded transition-colors',
+                    rightPaneTab === 'reference' ? 'bg-paper-50 text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800'
+                  ].join(' ')}
+                >
+                  <DocumentTextIcon width={13} height={13} />
                 </button>
               </div>
             </div>
