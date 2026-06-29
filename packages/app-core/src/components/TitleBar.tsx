@@ -16,23 +16,42 @@ export function TitleBar(): JSX.Element {
   const isMac = window.zen.platformSync() === 'darwin'
   const labels = resolveSystemFolderLabels(systemFolderLabels)
 
-  const title = activeNote
-    ? activeNote.title
-    : isQuickNotesTabPath(selectedPath)
-      ? labels.quick
-    : isTasksTabPath(selectedPath)
-      ? labels.tasks
-      : isTagsTabPath(selectedPath)
-        ? 'Tags'
-        : isHelpTabPath(selectedPath)
-          ? 'Help'
-          : isArchiveTabPath(selectedPath)
-            ? labels.archive
-          : isTrashTabPath(selectedPath)
-            ? labels.trash
-          : vault
-            ? vault.name
-            : 'ZenNotes'
+  let titleContent: JSX.Element
+
+  if (activeNote && vault) {
+    const pathNoExt = activeNote.path.replace(/\.[^.]+$/, '')
+    const lastSlash = pathNoExt.lastIndexOf('/')
+    const folderPart = lastSlash >= 0 ? pathNoExt.slice(0, lastSlash + 1) : ''
+    const filenamePart = lastSlash >= 0 ? pathNoExt.slice(lastSlash + 1) : pathNoExt
+
+    titleContent = (
+      <span className="truncate">
+        {vault.name}
+        <span className="mx-1.5 opacity-40">|</span>
+        {folderPart}
+        <span className="font-medium text-ink-700">{filenamePart}</span>
+      </span>
+    )
+  } else {
+    const text = activeNote
+      ? activeNote.title
+      : isQuickNotesTabPath(selectedPath)
+        ? labels.quick
+        : isTasksTabPath(selectedPath)
+          ? labels.tasks
+          : isTagsTabPath(selectedPath)
+            ? 'Tags'
+            : isHelpTabPath(selectedPath)
+              ? 'Help'
+              : isArchiveTabPath(selectedPath)
+                ? labels.archive
+                : isTrashTabPath(selectedPath)
+                  ? labels.trash
+                  : vault
+                    ? vault.name
+                    : 'ZenNotes'
+    titleContent = <span className="truncate">{text}</span>
+  }
 
   return (
     <div
@@ -40,7 +59,7 @@ export function TitleBar(): JSX.Element {
       style={{ paddingLeft: isMac ? 80 : 12 }}
     >
       <div className="flex flex-1 items-center justify-center gap-2 text-center tracking-wide">
-        <span className="truncate">{title}</span>
+        {titleContent}
         {workspaceMode === 'remote' && (
           <span className="rounded-full border border-paper-300/70 bg-paper-100/80 px-2 py-0.5 text-2xs font-medium uppercase tracking-[0.14em] text-ink-700">
             Remote
