@@ -100,6 +100,11 @@ export function TerminalPanel({ visible }: Props): JSX.Element {
         sessionRef.current = null
       }) ?? (() => {})
 
+    const focusHandler = (): void => {
+      term.focus()
+    }
+    window.addEventListener('zen:focus-terminal-input', focusHandler)
+
     const ro = new ResizeObserver(() => {
       if (!visibleRef.current) return
       requestAnimationFrame(() => {
@@ -114,6 +119,7 @@ export function TerminalPanel({ visible }: Props): JSX.Element {
     return () => {
       observer.disconnect()
       ro.disconnect()
+      window.removeEventListener('zen:focus-terminal-input', focusHandler)
       unsubData()
       unsubExit()
       if (sessionRef.current) {

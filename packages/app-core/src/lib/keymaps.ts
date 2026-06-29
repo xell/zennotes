@@ -19,6 +19,7 @@ export type KeymapId =
   | "global.toggleOutlinePanel"
   | "global.toggleCommentsPanel"
   | "global.toggleTerminalPanel"
+  | "global.focusTerminal"
   | "global.addComment"
   | "global.focusPaneLeft"
   | "global.focusPaneRight"
@@ -212,8 +213,17 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     scope: "app",
     group: "global",
     title: "Toggle terminal panel",
-    description: "Toggle the terminal panel in the active pane.",
+    description: "Show or hide the terminal panel in the active pane.",
     defaultBinding: "",
+  },
+  {
+    id: "global.focusTerminal",
+    kind: "shortcut",
+    scope: "app",
+    group: "navigation",
+    title: "Switch focus: terminal / editor",
+    description: "Move keyboard focus between the terminal panel and the editor. Does nothing if the terminal panel is not visible.",
+    defaultBinding: "Mod+T",
   },
   {
     id: "global.focusPaneLeft",

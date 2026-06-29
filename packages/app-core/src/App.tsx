@@ -635,6 +635,16 @@ function App(): JSX.Element {
         window.dispatchEvent(new Event('zen:toggle-comments'))
         return
       }
+      if (matchesShortcut(e, overrides, 'global.toggleTerminalPanel')) {
+        e.preventDefault()
+        window.dispatchEvent(new Event('zen:toggle-terminal'))
+        return
+      }
+      if (matchesShortcut(e, overrides, 'global.focusTerminal')) {
+        e.preventDefault()
+        window.dispatchEvent(new Event('zen:focus-terminal'))
+        return
+      }
       // ⌥⌘M — comment the current selection (or line) without the mouse
       if (matchesShortcut(e, overrides, 'global.addComment')) {
         e.preventDefault()
