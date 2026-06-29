@@ -433,7 +433,7 @@ interface Prefs {
   pinnedRefVisible: boolean
   pinnedRefWidth: number
   panelWidths: PanelWidths
-  pinnedRefMode: 'edit' | 'preview'
+  pinnedRefMode: 'edit' | 'live' | 'preview'
   /** When true, "New Quick Note" auto-titles to today's date
    *  (YYYY-MM-DD), appending " (2)", " (3)" etc. for collisions. */
   quickNoteDateTitle: boolean
@@ -780,7 +780,7 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
         : DEFAULT_PREFS.pinnedRefWidth,
     panelWidths: normalizePanelWidths(p.panelWidths),
     pinnedRefMode:
-      p.pinnedRefMode === 'edit' || p.pinnedRefMode === 'preview'
+      p.pinnedRefMode === 'edit' || p.pinnedRefMode === 'live' || p.pinnedRefMode === 'preview'
         ? p.pinnedRefMode
         : DEFAULT_PREFS.pinnedRefMode,
     quickNoteDateTitle:
@@ -1505,7 +1505,7 @@ function collectPrefs(s: {
   pinnedRefVisible: boolean
   pinnedRefWidth: number
   panelWidths: PanelWidths
-  pinnedRefMode: 'edit' | 'preview'
+  pinnedRefMode: 'edit' | 'live' | 'preview'
   quickNoteDateTitle: boolean
   quickNoteTitlePrefix: string | null
   wordWrap: boolean
@@ -1976,7 +1976,7 @@ interface Store {
   pinnedRefVisible: boolean
   pinnedRefWidth: number
   panelWidths: PanelWidths
-  pinnedRefMode: 'edit' | 'preview'
+  pinnedRefMode: 'edit' | 'live' | 'preview'
   /** Runtime-only: which tab is active in the right pane (not persisted). */
   rightPaneTab: 'reference' | 'terminal'
 
@@ -2323,7 +2323,7 @@ interface Store {
   togglePinnedRefVisible: () => void
   setPinnedRefWidth: (px: number) => void
   setPanelWidth: (panel: RightPanelId, px: number) => void
-  setPinnedRefMode: (mode: 'edit' | 'preview') => void
+  setPinnedRefMode: (mode: 'edit' | 'live' | 'preview') => void
   setRightPaneTab: (tab: 'reference' | 'terminal') => void
 
   setQuickNoteDateTitle: (on: boolean) => void

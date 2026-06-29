@@ -47,7 +47,7 @@ import { classifyLocalAssetHref, type LocalAssetKind } from '../lib/local-assets
 import { focusEditorNormalMode } from '../lib/editor-focus'
 import { LazyPreview as Preview } from './LazyPreview'
 import { TerminalPanel } from './TerminalPanel'
-import { DocumentTextIcon, EyeIcon, PencilIcon, PinIcon, TerminalIcon } from './icons'
+import { DocumentTextIcon, PinIcon, TerminalIcon } from './icons'
 
 const PINNED_REF_PANE_ID = 'pinned-ref'
 export const pinnedRefPaneId = PINNED_REF_PANE_ID
@@ -211,7 +211,7 @@ export function PinnedReferencePane(): JSX.Element | null {
           headingFolding(),
           syntaxHighlighting(paperHighlight),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-          livePreviewCompartment.of(s0.livePreview ? livePreviewPlugin : []),
+          livePreviewCompartment.of(s0.pinnedRefMode === 'live' ? livePreviewPlugin : []),
           lineNumbersCompartment.of(lineNumberExtension(s0.lineNumberMode)),
           tooltips({ parent: document.body }),
           autocompletion({
@@ -287,8 +287,8 @@ export function PinnedReferencePane(): JSX.Element | null {
     const view = viewRef.current
     const comp = livePreviewCompartmentRef.current
     if (!view || !comp) return
-    view.dispatch({ effects: comp.reconfigure(livePreview ? livePreviewPlugin : []) })
-  }, [livePreview])
+    view.dispatch({ effects: comp.reconfigure(pinnedRefMode === 'live' ? livePreviewPlugin : []) })
+  }, [pinnedRefMode])
   useEffect(() => {
     const view = viewRef.current
     const comp = lineNumbersCompartmentRef.current
@@ -375,7 +375,7 @@ export function PinnedReferencePane(): JSX.Element | null {
     })
   }, [assetUrl, useAssetIframe])
 
-  const showEditor = pinnedRefMode === 'edit'
+  const showEditor = pinnedRefMode !== 'preview'
   const hidden = zenMode || !pinnedRefVisible || (rightPaneTab === 'reference' && !pinnedRefPath)
 
   return (
@@ -439,29 +439,27 @@ export function PinnedReferencePane(): JSX.Element | null {
             )}
             <div className="flex shrink-0 items-center gap-1">
               {!isAsset && rightPaneTab === 'reference' && (
-                <div className="flex items-center rounded-md bg-paper-200/70 p-0.5">
-                  <button
-                    type="button"
-                    title="Edit"
-                    onClick={() => setPinnedRefMode('edit')}
-                    className={[
-                      'flex h-6 w-6 items-center justify-center rounded transition-colors',
-                      pinnedRefMode === 'edit' ? 'bg-paper-50 text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800'
-                    ].join(' ')}
-                  >
-                    <PencilIcon width={13} height={13} />
-                  </button>
-                  <button
-                    type="button"
-                    title="Preview"
-                    onClick={() => setPinnedRefMode('preview')}
-                    className={[
-                      'flex h-6 w-6 items-center justify-center rounded transition-colors',
-                      pinnedRefMode === 'preview' ? 'bg-paper-50 text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800'
-                    ].join(' ')}
-                  >
-                    <EyeIcon width={13} height={13} />
-                  </button>
+                <div className="flex items-center gap-1 rounded-md bg-paper-200/70 p-0.5 text-xs">
+                  {(
+                    [
+                      { m: 'edit', label: 'Edit', title: 'Raw Markdown source' },
+                      { m: 'live', label: 'Live', title: 'Live preview — render inline while editing' },
+                      { m: 'preview', label: 'Preview', title: 'Fully rendered preview' }
+                    ] as const
+                  ).map(({ m, label, title }) => (
+                    <button
+                      key={m}
+                      type="button"
+                      title={title}
+                      onClick={() => setPinnedRefMode(m)}
+                      className={[
+                        'rounded px-1.5 py-0.5 transition-colors',
+                        pinnedRefMode === m ? 'bg-paper-50 text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800'
+                      ].join(' ')}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
               )}
               <div className="flex items-center rounded-md bg-paper-200/70 p-0.5">
