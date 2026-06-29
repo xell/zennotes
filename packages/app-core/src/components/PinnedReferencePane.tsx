@@ -8,7 +8,7 @@
  * edit here propagates to any main-pane view on the same path (and
  * vice versa) via the same sync-effect used by `EditorPane`.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Annotation,
   Compartment,
@@ -48,6 +48,8 @@ import { focusEditorNormalMode } from '../lib/editor-focus'
 import { LazyPreview as Preview } from './LazyPreview'
 import { TerminalPanel } from './TerminalPanel'
 import { DocumentTextIcon, PinIcon, TerminalIcon } from './icons'
+import type { NoteMeta } from '@shared/ipc'
+import { allLeaves } from '../lib/pane-layout'
 
 const PINNED_REF_PANE_ID = 'pinned-ref'
 export const pinnedRefPaneId = PINNED_REF_PANE_ID
@@ -377,7 +379,7 @@ export function PinnedReferencePane(): JSX.Element | null {
   }, [assetUrl, useAssetIframe])
 
   const showEditor = pinnedRefMode !== 'preview'
-  const hidden = zenMode || !pinnedRefVisible || (rightPaneTab === 'reference' && !pinnedRefPath)
+  const hidden = zenMode || !pinnedRefVisible
 
   return (
     <section
@@ -391,56 +393,60 @@ export function PinnedReferencePane(): JSX.Element | null {
         display: hidden ? 'none' : 'flex'
       }}
     >
-      {(pinnedRefPath || rightPaneTab === 'terminal') && (
-        <>
-          {/* Resize handle on the left edge. */}
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            onMouseDown={startResize}
-            className={[
-              'group absolute left-0 top-0 z-20 h-full w-1 cursor-col-resize select-none',
-              resizing ? 'bg-accent/60' : 'hover:bg-accent/40'
-            ].join(' ')}
-          >
-            <div className="absolute -left-1 top-0 h-full w-[9px]" />
-          </div>
+      <>
+        {/* Resize handle on the left edge. */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          onMouseDown={startResize}
+          className={[
+            'group absolute left-0 top-0 z-20 h-full w-1 cursor-col-resize select-none',
+            resizing ? 'bg-accent/60' : 'hover:bg-accent/40'
+          ].join(' ')}
+        >
+          <div className="absolute -left-1 top-0 h-full w-[9px]" />
+        </div>
 
-          <header className="glass-header flex h-10 shrink-0 items-center justify-between gap-2 border-b border-paper-300/70 px-3">
-            {rightPaneTab === 'terminal' ? (
-              <span className="flex min-w-0 flex-1 items-center gap-2 text-sm font-semibold text-ink-900">
-                <TerminalIcon width={14} height={14} className="shrink-0 text-accent" />
-                Terminal
-              </span>
-            ) : (
-              <button
-                type="button"
-                title={isAsset ? `Reveal ${title} in files` : `Reveal ${title} in the sidebar`}
-                onClick={() => {
-                  if (isAsset) {
-                    setView({ kind: 'assets' })
-                    return
-                  }
-                  const parts = pinnedRefPath!.split('/')
-                  const top = parts[0] as 'inbox' | 'quick' | 'archive' | 'trash'
-                  const subpath = parts.slice(1, -1).join('/')
-                  setView({ kind: 'folder', folder: top, subpath })
-                }}
-                className="flex min-w-0 flex-1 items-center gap-2 truncate text-left text-sm font-semibold text-ink-900 hover:text-ink-700"
-              >
-                <PinIcon width={14} height={14} className="shrink-0 text-accent" />
-                <span className="truncate">{title}</span>
-                {!isAsset && isDirty && (
-                  <span
-                    aria-label="Unsaved changes"
-                    className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent/80"
-                  />
-                )}
-              </button>
-            )}
-            <div className="flex shrink-0 items-center gap-1">
-              {!isAsset && rightPaneTab === 'reference' && (
-                <div className="flex items-center gap-1 rounded-md bg-paper-200/70 p-0.5 text-xs">
+        <header className="glass-header flex h-10 shrink-0 items-center justify-between gap-2 border-b border-paper-300/70 px-3">
+          {rightPaneTab === 'terminal' ? (
+            <span className="flex min-w-0 flex-1 items-center gap-2 text-sm font-semibold text-ink-900">
+              <TerminalIcon width={14} height={14} className="shrink-0 text-accent" />
+              Terminal
+            </span>
+          ) : pinnedRefPath ? (
+            <button
+              type="button"
+              title={isAsset ? `Reveal ${title} in files` : `Reveal ${title} in the sidebar`}
+              onClick={() => {
+                if (isAsset) {
+                  setView({ kind: 'assets' })
+                  return
+                }
+                const parts = pinnedRefPath!.split('/')
+                const top = parts[0] as 'inbox' | 'quick' | 'archive' | 'trash'
+                const subpath = parts.slice(1, -1).join('/')
+                setView({ kind: 'folder', folder: top, subpath })
+              }}
+              className="flex min-w-0 flex-1 items-center gap-2 truncate text-left text-sm font-semibold text-ink-900 hover:text-ink-700"
+            >
+              <PinIcon width={14} height={14} className="shrink-0 text-accent" />
+              <span className="truncate">{title}</span>
+              {!isAsset && isDirty && (
+                <span
+                  aria-label="Unsaved changes"
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent/80"
+                />
+              )}
+            </button>
+          ) : (
+            <span className="flex min-w-0 flex-1 items-center gap-2 text-sm text-ink-400">
+              <PinIcon width={14} height={14} className="shrink-0 opacity-40" />
+              No note pinned
+            </span>
+          )}
+          <div className="flex shrink-0 items-center gap-1">
+            {!isAsset && rightPaneTab === 'reference' && !!pinnedRefPath && (
+              <div className="flex items-center gap-1 rounded-md bg-paper-200/70 p-0.5 text-xs">
                   {(
                     [
                       { m: 'edit', label: 'Edit', title: 'Raw Markdown source' },
@@ -494,9 +500,8 @@ export function PinnedReferencePane(): JSX.Element | null {
                 </button>
               </div>
             </div>
-          </header>
-        </>
-      )}
+        </header>
+      </>
 
       {/* Terminal — always mounted so the PTY survives tab switches. */}
       <TerminalPanel visible={rightPaneTab === 'terminal' && pinnedRefVisible} />
@@ -505,6 +510,8 @@ export function PinnedReferencePane(): JSX.Element | null {
         className="relative flex min-h-0 min-w-0 flex-1 flex-col"
         style={{ display: rightPaneTab === 'reference' ? 'flex' : 'none' }}
       >
+        {!pinnedRefPath && <OpenBuffersList />}
+
         {/* Note editor / preview — only mounted when the pin is a note.
             Unmount when switching to an asset so CM view isn't running
             invisibly; this half doesn't need the "preserve state" trick
@@ -600,5 +607,57 @@ export function PinnedReferencePane(): JSX.Element | null {
         )}
       </div>
     </section>
+  )
+}
+
+function OpenBuffersList(): JSX.Element {
+  const paneLayout = useStore((s) => s.paneLayout)
+  const notes = useStore((s) => s.notes)
+  const pinReference = useStore((s) => s.pinReference)
+
+  const openNotes = useMemo(() => {
+    const byPath = new Map((notes as NoteMeta[]).map((n) => [n.path, n]))
+    const seen = new Set<string>()
+    const result: NoteMeta[] = []
+    for (const leaf of allLeaves(paneLayout)) {
+      for (const path of leaf.tabs) {
+        if (!seen.has(path)) {
+          seen.add(path)
+          const note = byPath.get(path)
+          if (note) result.push(note)
+        }
+      }
+    }
+    return result
+  }, [paneLayout, notes])
+
+  if (openNotes.length === 0) {
+    return (
+      <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-ink-400">
+        No notes open. Open a note and use<br />"Pin Active Note as Reference".
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-1 flex-col overflow-y-auto p-3">
+      <p className="mb-2 px-1 text-xs font-medium text-ink-400">Select a note to pin as reference</p>
+      {openNotes.map((note) => {
+        const pathNoExt = note.path.replace(/\.[^.]+$/, '')
+        const lastSlash = pathNoExt.lastIndexOf('/')
+        const folder = lastSlash >= 0 ? pathNoExt.slice(0, lastSlash) : ''
+        return (
+          <button
+            key={note.path}
+            type="button"
+            onClick={() => { void pinReference(note.path) }}
+            className="flex flex-col rounded-lg px-3 py-2 text-left transition-colors hover:bg-paper-200/70 active:bg-paper-300/70"
+          >
+            <span className="text-sm font-medium text-ink-900">{note.title}</span>
+            {folder && <span className="mt-0.5 text-xs text-ink-400">{folder}</span>}
+          </button>
+        )
+      })}
+    </div>
   )
 }
