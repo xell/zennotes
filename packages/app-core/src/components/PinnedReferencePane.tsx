@@ -44,6 +44,7 @@ import { dateShortcutSource } from '../lib/cm-date-shortcuts'
 import { wikilinkSource, wikilinkHeadingSource } from '../lib/cm-wikilinks'
 import { completionNavKeymap } from '../lib/cm-completion-nav'
 import { classifyLocalAssetHref, type LocalAssetKind } from '../lib/local-assets'
+import { focusEditorNormalMode } from '../lib/editor-focus'
 import { LazyPreview as Preview } from './LazyPreview'
 import { TerminalPanel } from './TerminalPanel'
 import { DocumentTextIcon, EyeIcon, PencilIcon, PinIcon, TerminalIcon } from './icons'
@@ -163,6 +164,20 @@ export function PinnedReferencePane(): JSX.Element | null {
   const setRightPaneTab = useStore((s) => s.setRightPaneTab)
 
   const [resizing, setResizing] = useState(false)
+
+  // Track previous visibility to detect open/close transitions.
+  const prevVisibleRef = useRef(pinnedRefVisible)
+  useEffect(() => {
+    const wasVisible = prevVisibleRef.current
+    prevVisibleRef.current = pinnedRefVisible
+    if (!wasVisible && pinnedRefVisible && rightPaneTab === 'terminal') {
+      // Pane just opened with terminal tab active → focus xterm.
+      requestAnimationFrame(() => window.dispatchEvent(new Event('zen:focus-terminal-input')))
+    } else if (wasVisible && !pinnedRefVisible) {
+      // Pane just closed → return focus to the editor.
+      focusEditorNormalMode()
+    }
+  }, [pinnedRefVisible, rightPaneTab])
 
   /* -------- Mount CodeMirror view -------- */
   const setContainerRef = useCallback(
@@ -453,7 +468,10 @@ export function PinnedReferencePane(): JSX.Element | null {
                 <button
                   type="button"
                   title="Terminal"
-                  onClick={() => setRightPaneTab('terminal')}
+                  onClick={() => {
+                    setRightPaneTab('terminal')
+                    requestAnimationFrame(() => window.dispatchEvent(new Event('zen:focus-terminal-input')))
+                  }}
                   className={[
                     'flex h-6 w-6 items-center justify-center rounded transition-colors',
                     rightPaneTab === 'terminal' ? 'bg-paper-50 text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800'
@@ -464,7 +482,10 @@ export function PinnedReferencePane(): JSX.Element | null {
                 <button
                   type="button"
                   title="Reference"
-                  onClick={() => setRightPaneTab('reference')}
+                  onClick={() => {
+                    setRightPaneTab('reference')
+                    requestAnimationFrame(() => viewRef.current?.focus())
+                  }}
                   className={[
                     'flex h-6 w-6 items-center justify-center rounded transition-colors',
                     rightPaneTab === 'reference' ? 'bg-paper-50 text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800'
