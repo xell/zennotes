@@ -37,7 +37,7 @@ import { searchKeymap } from '@codemirror/search'
 import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
 import { useStore } from '../store'
 import type { LineNumberMode } from '../store'
-import { livePreviewPlugin } from '../lib/cm-live-preview'
+import { wysiwygExtensions } from '../lib/cm-wysiwyg-compose'
 import { headingFolding } from '../lib/cm-heading-fold'
 import { slashCommandSource, slashCommandRender } from '../lib/cm-slash-commands'
 import { dateShortcutSource } from '../lib/cm-date-shortcuts'
@@ -129,6 +129,7 @@ export function PinnedReferencePane(): JSX.Element | null {
   const pinnedRefVisible = useStore((s) => s.pinnedRefVisible)
   const pinnedRefWidth = useStore((s) => s.pinnedRefWidth)
   const pinnedRefMode = useStore((s) => s.pinnedRefMode)
+  const renderTablesInLivePreview = useStore((s) => s.renderTablesInLivePreview)
   const vaultRoot = useStore((s) => s.vault?.root ?? null)
   const unpinReferenceGlobal = useStore((s) => s.unpinReference)
   const unpinReferenceForNote = useStore((s) => s.unpinReferenceForNote)
@@ -211,7 +212,7 @@ export function PinnedReferencePane(): JSX.Element | null {
           headingFolding(),
           syntaxHighlighting(paperHighlight),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-          livePreviewCompartment.of(s0.pinnedRefMode === 'live' ? livePreviewPlugin : []),
+          livePreviewCompartment.of(s0.pinnedRefMode === 'live' ? wysiwygExtensions(s0.renderTablesInLivePreview) : []),
           lineNumbersCompartment.of(lineNumberExtension(s0.lineNumberMode)),
           tooltips({ parent: document.body }),
           autocompletion({
@@ -287,8 +288,8 @@ export function PinnedReferencePane(): JSX.Element | null {
     const view = viewRef.current
     const comp = livePreviewCompartmentRef.current
     if (!view || !comp) return
-    view.dispatch({ effects: comp.reconfigure(pinnedRefMode === 'live' ? livePreviewPlugin : []) })
-  }, [pinnedRefMode])
+    view.dispatch({ effects: comp.reconfigure(pinnedRefMode === 'live' ? wysiwygExtensions(renderTablesInLivePreview) : []) })
+  }, [pinnedRefMode, renderTablesInLivePreview])
   useEffect(() => {
     const view = viewRef.current
     const comp = lineNumbersCompartmentRef.current
