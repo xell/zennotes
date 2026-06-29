@@ -3440,9 +3440,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
         {content && calendarOpen && calendarAvailable && !zenMode && (
           <CalendarPanel note={content} />
         )}
-        {content && terminalOpen && !zenMode && (
-          <TerminalPanel />
-        )}
+        <TerminalPanel visible={terminalOpen && !zenMode} />
       </div>
       {content &&
         showEditor &&

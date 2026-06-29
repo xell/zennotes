@@ -105,7 +105,7 @@
     "executableName": "ZenNotes",
     "productName": "ZenNotes",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
-    "afterPack": "build/after-pack.js",
+    "afterPack": "scripts/after-pack.cjs",
     "asar": true,
     "compression": "maximum",
     "npmRebuild": false,
@@ -119,6 +119,11 @@
       "!**/*.map"
     ],
     "extraResources": [
+      {
+        "from": "../../node_modules/node-pty",
+        "to": "node-pty",
+        "filter": ["lib/**", "prebuilds/darwin-arm64/**", "package.json"]
+      },
       {
         "from": "build/icon.png",
         "to": "icon.png"

@@ -9,11 +9,13 @@ import {
   screen,
   session,
   shell,
+  webContents,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
   type WebContents
 } from 'electron'
 import { AsyncLocalStorage } from 'node:async_hooks'
+import type { IPty } from 'node-pty'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { promises as fsp } from 'node:fs'
@@ -411,6 +413,32 @@ const workspaceWindowIds = new Set<number>()
 // Maps Electron BrowserWindow.id → stable session UUID so each window can be
 // individually identified across launches.
 const windowUuids = new Map<number, string>()
+
+// node-pty is not listed as a package.json dependency so electron-builder does
+// not try to pack it (which would fail due to workspace symlinks). Instead:
+//   dev  — loaded from the monorepo node_modules via require('node-pty')
+//   prod — copied to Resources/node-pty/ via extraResources; loaded by path
+function loadNodePty(): typeof import('node-pty') {
+  const p = app.isPackaged
+    ? path.join(process.resourcesPath, 'node-pty')
+    : 'node-pty'
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require(p) as typeof import('node-pty')
+}
+
+// PTY sessions keyed by a random UUID. Each entry records the pty handle and
+// the webContents ID so output can be routed back to the right renderer and
+// all sessions for a closed window can be cleaned up.
+interface PtySession { pty: IPty; webContentsId: number }
+const ptySessions = new Map<string, PtySession>()
+
+function killPtySessionsForWebContents(wcId: number): void {
+  for (const [id, session] of ptySessions) {
+    if (session.webContentsId !== wcId) continue
+    try { session.pty.kill() } catch { /* already dead */ }
+    ptySessions.delete(id)
+  }
+}
 
 function isWorkspaceWindow(win: BrowserWindow): boolean {
   return workspaceWindowIds.has(win.id)
@@ -999,12 +1027,14 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
   win.on('maximize', scheduleWindowStatePersist)
   win.on('unmaximize', scheduleWindowStatePersist)
   win.on('close', flushWindowStatePersist)
+  const winWebContentsId = win.webContents.id
   win.on('closed', () => {
     if (persistWindowStateTimer) clearTimeout(persistWindowStateTimer)
     workspaceWindowIds.delete(win.id)
     windowVaults.clearWindow(win.id)
     readyWindowIds.delete(win.id)
     pendingWindowNoteOpens.delete(win.id)
+    killPtySessionsForWebContents(winWebContentsId)
     const closedUuid = windowUuids.get(win.id)
     windowUuids.delete(win.id)
     if (closedUuid) {
@@ -2873,6 +2903,47 @@ function registerIpc(): void {
   handle(IPC.CONFIG_REVEAL, async () => {
     const file = await ensureConfigFile()
     shell.showItemInFolder(file)
+  })
+
+  // ── Terminal / PTY ──────────────────────────────────────────────────────────
+  handle(IPC.TERMINAL_CREATE, async (event, opts: { cwd: string; cols: number; rows: number }) => {
+    assertTrustedIpcEvent(event)
+    const shell = process.env.SHELL ?? '/bin/zsh'
+    const id = randomUUID()
+    const pty = loadNodePty().spawn(shell, [], {
+      name: 'xterm-256color',
+      cols: opts.cols,
+      rows: opts.rows,
+      cwd: opts.cwd,
+      env: { ...process.env, TERM: 'xterm-256color' } as Record<string, string>
+    })
+    const wcId = event.sender.id
+    ptySessions.set(id, { pty, webContentsId: wcId })
+    pty.onData((data) => {
+      const wc = webContents.fromId(wcId)
+      if (wc && !wc.isDestroyed()) wc.send(IPC.TERMINAL_DATA, id, data)
+    })
+    pty.onExit(({ exitCode }) => {
+      ptySessions.delete(id)
+      const wc = webContents.fromId(wcId)
+      if (wc && !wc.isDestroyed()) wc.send(IPC.TERMINAL_EXIT, id, exitCode)
+    })
+    return id
+  })
+  ipcMain.on(IPC.TERMINAL_INPUT, (event, id: string, data: string) => {
+    if (!isTrustedIpcSender(event.sender)) return
+    ptySessions.get(id)?.pty.write(data)
+  })
+  ipcMain.on(IPC.TERMINAL_RESIZE, (event, id: string, cols: number, rows: number) => {
+    if (!isTrustedIpcSender(event.sender)) return
+    ptySessions.get(id)?.pty.resize(cols, rows)
+  })
+  ipcMain.on(IPC.TERMINAL_DISPOSE, (event, id: string) => {
+    if (!isTrustedIpcSender(event.sender)) return
+    const session = ptySessions.get(id)
+    if (!session) return
+    try { session.pty.kill() } catch { /* already dead */ }
+    ptySessions.delete(id)
   })
 }
 

@@ -275,6 +275,22 @@ export interface ZenBridge {
   /** Subscribe to external edits of the config file (e.g. a synced dotfile or
    *  a hand-edit). The callback receives the new portable config. */
   onConfigChange(cb: (next: AppConfigPortable) => void): () => void
+  /** Embedded terminal backed by node-pty. Each method is a no-op on web. */
+  terminal: {
+    /** Spawn a shell session in `cwd` sized to `cols × rows`. Returns the
+     *  session ID used in all subsequent calls. */
+    create(opts: { cwd: string; cols: number; rows: number }): Promise<string>
+    /** Send keyboard input to the shell. */
+    input(sessionId: string, data: string): void
+    /** Notify the PTY of a terminal resize. */
+    resize(sessionId: string, cols: number, rows: number): void
+    /** Kill the shell session. */
+    dispose(sessionId: string): void
+    /** Subscribe to output bytes from the shell. Returns an unsubscribe fn. */
+    onData(cb: (sessionId: string, data: string) => void): () => void
+    /** Subscribe to shell-exit events. Returns an unsubscribe fn. */
+    onExit(cb: (sessionId: string, exitCode: number) => void): () => void
+  }
 }
 
 let installedBridge: ZenBridge | null = null

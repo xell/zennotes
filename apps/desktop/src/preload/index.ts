@@ -522,6 +522,26 @@ const api: ZenBridge = {
     const listener = (_: unknown, next: AppConfigPortable): void => cb(next)
     ipcRenderer.on(IPC.CONFIG_ON_CHANGE, listener)
     return () => ipcRenderer.removeListener(IPC.CONFIG_ON_CHANGE, listener)
+  },
+  terminal: {
+    create: (opts: { cwd: string; cols: number; rows: number }): Promise<string> =>
+      ipcRenderer.invoke(IPC.TERMINAL_CREATE, opts),
+    input: (sessionId: string, data: string): void =>
+      ipcRenderer.send(IPC.TERMINAL_INPUT, sessionId, data),
+    resize: (sessionId: string, cols: number, rows: number): void =>
+      ipcRenderer.send(IPC.TERMINAL_RESIZE, sessionId, cols, rows),
+    dispose: (sessionId: string): void =>
+      ipcRenderer.send(IPC.TERMINAL_DISPOSE, sessionId),
+    onData: (cb: (sessionId: string, data: string) => void): (() => void) => {
+      const listener = (_: unknown, id: string, data: string): void => cb(id, data)
+      ipcRenderer.on(IPC.TERMINAL_DATA, listener)
+      return () => ipcRenderer.removeListener(IPC.TERMINAL_DATA, listener)
+    },
+    onExit: (cb: (sessionId: string, exitCode: number) => void): (() => void) => {
+      const listener = (_: unknown, id: string, code: number): void => cb(id, code)
+      ipcRenderer.on(IPC.TERMINAL_EXIT, listener)
+      return () => ipcRenderer.removeListener(IPC.TERMINAL_EXIT, listener)
+    }
   }
 }
 

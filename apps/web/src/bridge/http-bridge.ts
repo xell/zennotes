@@ -1570,6 +1570,14 @@ export const httpBridge: ZenBridge = {
   // On web, the renderer falls back to localStorage when getConfigSync is null.
   getConfigSync: () => null,
   getWindowId: () => null,
+  terminal: {
+    create: async () => '',
+    input: () => {},
+    resize: () => {},
+    dispose: () => {},
+    onData: () => () => {},
+    onExit: () => () => {}
+  },
   setConfig: async () => {},
   getConfigPath: async () => null,
   revealConfigFile: async () => {},
