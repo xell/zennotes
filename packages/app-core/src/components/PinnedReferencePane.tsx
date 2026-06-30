@@ -165,6 +165,18 @@ export function PinnedReferencePane(): JSX.Element | null {
   const setRightPaneTab = useStore((s) => s.setRightPaneTab)
 
   const [resizing, setResizing] = useState(false)
+  const [terminalFocused, setTerminalFocused] = useState(false)
+
+  useEffect(() => {
+    const onFocus = (): void => setTerminalFocused(true)
+    const onBlur = (): void => setTerminalFocused(false)
+    window.addEventListener('zen:terminal-focused', onFocus)
+    window.addEventListener('zen:terminal-blurred', onBlur)
+    return () => {
+      window.removeEventListener('zen:terminal-focused', onFocus)
+      window.removeEventListener('zen:terminal-blurred', onBlur)
+    }
+  }, [])
 
   // Track previous visibility to detect open/close transitions.
   const prevVisibleRef = useRef(pinnedRefVisible)
@@ -408,9 +420,9 @@ export function PinnedReferencePane(): JSX.Element | null {
 
           <header className="glass-header flex h-10 shrink-0 items-center justify-between gap-2 border-b border-paper-300/70 px-3">
             {rightPaneTab === 'terminal' ? (
-              <span className="flex min-w-0 flex-1 items-center gap-2 text-sm font-semibold text-ink-900">
-                <TerminalIcon width={14} height={14} className="shrink-0 text-accent" />
-                Terminal
+              <span className={['flex min-w-0 flex-1 items-center gap-2 text-sm font-semibold transition-colors', terminalFocused ? 'text-accent' : 'text-ink-900'].join(' ')}>
+                <TerminalIcon width={14} height={14} className="shrink-0" />
+                <span className={['rounded-full px-2 py-0.5 transition-colors', terminalFocused ? 'bg-accent/10' : ''].join(' ')}>Terminal</span>
               </span>
             ) : (
               <button
