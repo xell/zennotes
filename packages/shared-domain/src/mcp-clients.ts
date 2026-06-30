@@ -62,9 +62,9 @@ export const MCP_CLIENTS: McpClientDescriptor[] = [
     id: 'opencode',
     label: 'OpenCode',
     description:
-      'An open-source AI coding agent by Anomaly. Writes a managed local MCP entry into the global ~/.config/opencode/opencode.json.',
+      'An open-source AI coding agent. Writes a managed local MCP entry into the global ~/.config/opencode/opencode.json.',
     format: 'opencode',
-    serverKey: 'MCP_ZENNOTES'
+    serverKey: MCP_SERVER_KEY
   }
 ]
 
