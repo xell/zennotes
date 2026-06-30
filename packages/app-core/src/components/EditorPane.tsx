@@ -1738,11 +1738,10 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       clearTimeout(deferredLivePreviewTimerRef.current)
       deferredLivePreviewTimerRef.current = null
     }
-    // Preserve selection on in-place body changes (peer pane edits,
+    // Preserve cursor line on in-place body changes (peer pane edits,
     // external file watcher); jump to the start when switching tabs.
     const sel = view.state.selection.main
-    const clampedAnchor = Math.min(sel.anchor, nextBody.length)
-    const clampedHead = Math.min(sel.head, nextBody.length)
+    const savedLine = !pathChanged ? view.state.doc.lineAt(sel.head).number : 1
     const markdownCompartment = markdownCompartmentRef.current
     const markdownSyntaxCompartment = markdownSyntaxCompartmentRef.current
     const livePreviewCompartment = livePreviewCompartmentRef.current
@@ -1775,6 +1774,18 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
         effects.push(livePreviewCompartment.reconfigure(wysiwygExtensions(useStore.getState().renderTablesInLivePreview)))
       }
     }
+    // Compute target cursor position in the incoming body by walking to the
+    // saved line number (clamped to however many lines the new doc has).
+    const targetPos = (() => {
+      if (pathChanged) return 0
+      let line = 1
+      let i = 0
+      while (i < nextBody.length && line < savedLine) {
+        if (nextBody[i] === '\n') line++
+        i++
+      }
+      return i
+    })()
     const dispatchStartedAt = performance.now()
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: nextBody },
@@ -1786,8 +1797,11 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
         // and the resulting change saves it over the current note (#247).
         Transaction.addToHistory.of(false)
       ],
-      effects: effects.length > 0 ? effects : undefined,
-      selection: pathChanged ? { anchor: 0 } : { anchor: clampedAnchor, head: clampedHead }
+      effects: [
+        ...(effects.length > 0 ? effects : []),
+        EditorView.scrollIntoView(targetPos, { y: pathChanged ? 'start' : 'center' })
+      ],
+      selection: { anchor: targetPos }
     })
     if (pathChanged) {
       // Switching notes: also drop the previous note's undo history so undo
