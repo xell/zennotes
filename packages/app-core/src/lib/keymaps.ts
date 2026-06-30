@@ -28,6 +28,7 @@ export type KeymapId =
   | "global.modeEdit"
   | "global.modeSplit"
   | "global.modePreview"
+  | "global.modeDiff"
   | "global.toggleZenMode"
   | "global.closeActiveTab"
   | "global.toggleWordWrap"
@@ -287,6 +288,15 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Switch to preview mode",
     description: "Show only the rendered preview for the active note.",
     defaultBinding: "Mod+6",
+  },
+  {
+    id: "global.modeDiff",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Switch to diff mode",
+    description: "Show the git diff view against the index for the active note (git vaults only).",
+    defaultBinding: "Mod+7",
   },
   {
     id: "global.toggleZenMode",

@@ -714,6 +714,11 @@ function App(): JSX.Element {
         requestPaneMode('preview')
         return
       }
+      if (matchesShortcut(e, overrides, 'global.modeDiff')) {
+        e.preventDefault()
+        requestPaneMode('diff')
+        return
+      }
       // ⌘. — toggle Zen mode
       if (matchesShortcut(e, overrides, 'global.toggleZenMode')) {
         e.preventDefault()

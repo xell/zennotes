@@ -251,6 +251,7 @@ const MODE_OPTIONS: Array<{
     mode: 'diff',
     label: 'Diff',
     tooltipLabel: 'Diff view (git index)',
+    keymapId: 'global.modeDiff',
     gitOnly: true
   }
 ]
@@ -776,6 +777,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const [tabStripOverflowing, setTabStripOverflowing] = useState(false)
   const [diffStatus, setDiffStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [diffOriginal, setDiffOriginal] = useState<string | null>(null)
+  const [diffRefreshKey, setDiffRefreshKey] = useState(0)
 
   const viewRef = useRef<EditorView | null>(null)
   const importPastedImagesRef = useRef<
@@ -905,6 +907,12 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   }, [])
 
   const applyPaneMode = useCallback((nextMode: PaneMode) => {
+    if (nextMode === 'diff' && mode === 'diff') {
+      // Already in diff mode — bump the refresh key to re-run the diff effect,
+      // which resets the compartment and re-collapses all expanded sections.
+      setDiffRefreshKey((k) => k + 1)
+      return
+    }
     setModesByPath((current) => paneModesWithPathMode(current, activeTab, nextMode))
     setActivePane(paneId)
     setFocusedPanel('editor')
@@ -915,7 +923,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       }
       focusEditorNormalMode()
     })
-  }, [activeTab, paneId, setActivePane, setFocusedPanel])
+  }, [activeTab, mode, paneId, setActivePane, setFocusedPanel])
 
   useEffect(() => {
     const compartment = diffCompartmentRef.current
@@ -929,6 +937,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       return
     }
     let cancelled = false
+    // Clear any existing diff immediately so the old (possibly expanded) state
+    // is not visible while we re-fetch — especially important on refresh.
+    view.dispatch({ effects: compartment.reconfigure([]) })
     setDiffStatus('loading')
     setDiffOriginal(null)
     void window.zen.gitShowIndex(activeTab).then((original) => {
@@ -946,7 +957,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       })
     })
     return () => { cancelled = true }
-  }, [mode, activeTab])
+  }, [mode, activeTab, diffRefreshKey])
 
   // `zen:toggle-outline` — routed only to the active pane, same pattern
   // as the connections toggle.
