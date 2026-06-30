@@ -4147,25 +4147,139 @@ textarea,
   display: none;
 }
 
-/* unified diff view — @codemirror/merge */
-.cm-editor .cm-deletedChunk {
-  background-color: rgb(var(--z-err) / 0.08);
+/* unified diff view — @codemirror/merge
+   ──────────────────────────────────────
+   Opacity variables so light/dark modes share one rule-set. Dark themes
+   use the same --z-err / --z-accent hue but higher alphas to stay visible
+   on dark backgrounds. The variables cascade from :root so they always
+   reflect whichever theme is active. */
+:root {
+  --diff-del-bg:     rgb(var(--z-err)    / 0.14);
+  --diff-del-text:   rgb(var(--z-err)    / 0.40);
+  --diff-del-gutter: rgb(var(--z-err)    / 0.28);
+  --diff-ins-bg:     rgb(var(--z-accent) / 0.12);
+  --diff-ins-text:   rgb(var(--z-accent) / 0.34);
+  --diff-ins-gutter: rgb(var(--z-accent) / 0.24);
+  --diff-col-bg:     rgb(var(--z-fg-1)   / 0.06);
+  --diff-col-fg:     rgb(var(--z-fg-1)   / 0.50);
 }
-.cm-editor .cm-insertedChunk {
-  background-color: rgb(var(--z-accent) / 0.08);
+
+:root[data-theme="apple-dark"],
+:root[data-theme="catppuccin-frappe"],
+:root[data-theme="catppuccin-macchiato"],
+:root[data-theme="catppuccin-mocha"],
+:root[data-theme="github-dark"],
+:root[data-theme="github-dark-dimmed"],
+:root[data-theme="github-dark-high-contrast"],
+:root[data-theme="github-dark-colorblind"],
+:root[data-theme="github-dark-tritanopia"],
+:root[data-theme="solarized-dark"],
+:root[data-theme="one-dark"],
+:root[data-theme="nord-dark"],
+:root[data-theme="tokyo-night-storm"],
+:root[data-theme="kanagawa-wave"],
+:root[data-theme="kanagawa-dragon"],
+:root[data-theme="black-metal"] {
+  --diff-del-bg:     rgb(var(--z-err)    / 0.26);
+  --diff-del-text:   rgb(var(--z-err)    / 0.56);
+  --diff-del-gutter: rgb(var(--z-err)    / 0.42);
+  --diff-ins-bg:     rgb(var(--z-accent) / 0.20);
+  --diff-ins-text:   rgb(var(--z-accent) / 0.48);
+  --diff-ins-gutter: rgb(var(--z-accent) / 0.34);
+  --diff-col-bg:     rgb(var(--z-fg-1)   / 0.13);
+  --diff-col-fg:     rgb(var(--z-fg-1)   / 0.65);
+}
+
+/* Deleted lines and inline spans */
+.cm-editor .cm-deletedChunk,
+.cm-editor .cm-deletedLine {
+  background-color: var(--diff-del-bg);
 }
 .cm-editor .cm-deletedText {
-  background-color: rgb(var(--z-err) / 0.25);
+  background-color: var(--diff-del-text);
   border-radius: 2px;
 }
-.cm-editor .cm-insertedText {
-  background-color: rgb(var(--z-accent) / 0.22);
+.cm-editor .cm-deletedLineGutter {
+  background-color: var(--diff-del-gutter);
+}
+
+/* Inserted / changed lines and inline spans */
+.cm-editor .cm-insertedLine,
+.cm-editor .cm-changedLine,
+.cm-editor .cm-inlineChangedLine {
+  background-color: var(--diff-ins-bg);
+}
+.cm-editor .cm-changedText {
+  background-color: var(--diff-ins-text);
   border-radius: 2px;
 }
-.cm-editor .cm-changedLine {
-  background-color: rgb(var(--z-accent) / 0.06);
+.cm-editor .cm-changedLineGutter,
+.cm-editor .cm-inlineChangedLineGutter {
+  background-color: var(--diff-ins-gutter);
 }
-.cm-editor .cm-deletedChunk .cm-deletedChunk-gutter {
-  background-color: rgb(var(--z-err) / 0.25);
-  min-width: 4px;
+
+/* Collapsed unchanged-lines section: solid color, no gradient */
+.cm-editor .cm-collapsedLines {
+  background-image: none !important;
+  background-color: var(--diff-col-bg) !important;
+  color: var(--diff-col-fg);
+}
+
+/* Accept / reject chunk buttons — circular icons at the right margin.
+   The widget is a block element placed between lines; float: right keeps it
+   in the flow (preserving spacing) and tucks it into the right padding area. */
+.cm-editor .cm-chunkButtons {
+  float: right;
+  width: fit-content;
+  margin: 3px 6px 3px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 10;
+}
+/* The library renders <button name="accept"> and <button name="reject">
+   with no cm-button class, so target by element + name attribute. */
+.cm-editor .cm-chunkButtons button {
+  /* Hide the "Accept" / "Reject" text */
+  font-size: 0 !important;
+  /* Circular shape */
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  border-radius: 50% !important;
+  padding: 0 !important;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none !important;
+  box-shadow: none !important;
+  transition: opacity 0.14s;
+}
+/* Symbol via ::before (inherits color from below) */
+.cm-editor .cm-chunkButtons button::before {
+  display: block;
+  font-size: 11px;
+  line-height: 1;
+}
+/* ✓ accept — soft green ring */
+.cm-editor .cm-chunkButtons button[name="accept"] {
+  border: 1.5px solid rgb(72 175 100 / 0.62) !important;
+  background-color: rgb(72 175 100 / 0.10) !important;
+  color: rgb(50 152 78) !important;
+}
+.cm-editor .cm-chunkButtons button[name="accept"]::before {
+  content: "✓";
+}
+/* ✕ reject — soft red ring */
+.cm-editor .cm-chunkButtons button[name="reject"] {
+  border: 1.5px solid rgb(205 82 82 / 0.62) !important;
+  background-color: rgb(205 82 82 / 0.08) !important;
+  color: rgb(185 58 58) !important;
+}
+.cm-editor .cm-chunkButtons button[name="reject"]::before {
+  content: "✕";
+}
+.cm-editor .cm-chunkButtons button:hover {
+  opacity: 0.68;
 }
