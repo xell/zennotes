@@ -3173,9 +3173,10 @@ export function Sidebar(): JSX.Element {
             />
           )}
 
-          {/* Tags flow with the content, right after the notes tree. */}
+          {/* Tags pinned to the bottom of the tree, directly above System
+              (mt-auto absorbs the free space above them). */}
           {tags.length > 0 && (
-            <div className="pt-4">
+            <div className="mt-auto pt-4">
               <button
                 type="button"
                 onClick={() => setTagsCollapsed(!tagsCollapsed)}
@@ -3243,8 +3244,9 @@ export function Sidebar(): JSX.Element {
             </div>
             )}
 
-          {/* System (Archive / Trash / Assets) pinned to the bottom. */}
-          <div className="mt-auto pt-4">
+          {/* System (Archive / Trash / Assets) sits just below Tags. When there
+              are no tags above it, it carries the bottom-anchoring itself. */}
+          <div className={tags.length > 0 ? "pt-4" : "mt-auto pt-4"}>
             <SidebarSectionHeading label="System" />
               <SystemRow
                 icon={resolveFolderIconOption("archive", "", vaultSettings.folderIcons).icon}
