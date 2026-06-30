@@ -8,7 +8,7 @@
  * edit here propagates to any main-pane view on the same path (and
  * vice versa) via the same sync-effect used by `EditorPane`.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   Annotation,
   Compartment,
@@ -47,7 +47,7 @@ import { classifyLocalAssetHref, type LocalAssetKind } from '../lib/local-assets
 import { focusEditorNormalMode } from '../lib/editor-focus'
 import { LazyPreview as Preview } from './LazyPreview'
 import { TerminalPanel } from './TerminalPanel'
-import { DocumentTextIcon, PinIcon, TerminalIcon } from './icons'
+import { DocumentTextIcon, EyeIcon, ListIcon, PencilIcon, PinIcon, SplitColumnsIcon, TerminalIcon } from './icons'
 import type { NoteMeta } from '@shared/ipc'
 import { allLeaves } from '../lib/pane-layout'
 
@@ -167,6 +167,12 @@ export function PinnedReferencePane(): JSX.Element | null {
   const setRightPaneTab = useStore((s) => s.setRightPaneTab)
 
   const [resizing, setResizing] = useState(false)
+  const [showPicker, setShowPicker] = useState(false)
+
+  // Dismiss the picker as soon as a note is successfully pinned.
+  useEffect(() => {
+    if (pinnedRefPath) setShowPicker(false)
+  }, [pinnedRefPath])
 
   // Track previous visibility to detect open/close transitions.
   const prevVisibleRef = useRef(pinnedRefVisible)
@@ -446,29 +452,21 @@ export function PinnedReferencePane(): JSX.Element | null {
           )}
           <div className="flex shrink-0 items-center gap-1">
             {!isAsset && rightPaneTab === 'reference' && !!pinnedRefPath && (
-              <div className="flex items-center gap-1 rounded-md bg-paper-200/70 p-0.5 text-xs">
-                  {(
-                    [
-                      { m: 'edit', label: 'Edit', title: 'Raw Markdown source' },
-                      { m: 'live', label: 'Live', title: 'Live preview — render inline while editing' },
-                      { m: 'preview', label: 'Preview', title: 'Fully rendered preview' }
-                    ] as const
-                  ).map(({ m, label, title }) => (
-                    <button
-                      key={m}
-                      type="button"
-                      title={title}
-                      onClick={() => setPinnedRefMode(m)}
-                      className={[
-                        'rounded px-1.5 py-0.5 transition-colors',
-                        pinnedRefMode === m ? 'bg-paper-50 text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800'
-                      ].join(' ')}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <>
+                <button
+                  type="button"
+                  title="Change pinned note"
+                  onClick={() => setShowPicker((v) => !v)}
+                  className={[
+                    'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
+                    showPicker ? 'bg-paper-200 text-ink-900' : 'text-ink-500 hover:bg-paper-200 hover:text-ink-900'
+                  ].join(' ')}
+                >
+                  <ListIcon width={13} height={13} />
+                </button>
+                <RefModeDropdown mode={pinnedRefMode} onChange={setPinnedRefMode} />
+              </>
+            )}
               <div className="flex items-center rounded-md bg-paper-200/70 p-0.5">
                 <button
                   type="button"
@@ -510,13 +508,13 @@ export function PinnedReferencePane(): JSX.Element | null {
         className="relative flex min-h-0 min-w-0 flex-1 flex-col"
         style={{ display: rightPaneTab === 'reference' ? 'flex' : 'none' }}
       >
-        {!pinnedRefPath && <OpenBuffersList />}
+        {(!pinnedRefPath || showPicker) && <OpenBuffersList />}
 
         {/* Note editor / preview — only mounted when the pin is a note.
             Unmount when switching to an asset so CM view isn't running
             invisibly; this half doesn't need the "preserve state" trick
             because note content is already persisted through the store. */}
-        {pinnedRefPath && !isAsset && (
+        {pinnedRefPath && !showPicker && !isAsset && (
           <>
             <div
               className="relative min-h-0 min-w-0 flex-1"
@@ -535,7 +533,7 @@ export function PinnedReferencePane(): JSX.Element | null {
           </>
         )}
 
-        {pinnedRefPath && isAsset && assetUrl && assetKind === 'image' && (
+        {pinnedRefPath && !showPicker && isAsset && assetUrl && assetKind === 'image' && (
           <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-auto bg-black/5 p-4">
             <img
               src={assetUrl}
@@ -545,7 +543,7 @@ export function PinnedReferencePane(): JSX.Element | null {
           </div>
         )}
 
-        {pinnedRefPath && isAsset && assetUrl && assetKind === 'video' && (
+        {pinnedRefPath && !showPicker && isAsset && assetUrl && assetKind === 'video' && (
           <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-black">
             <video
               src={assetUrl}
@@ -555,7 +553,7 @@ export function PinnedReferencePane(): JSX.Element | null {
           </div>
         )}
 
-        {pinnedRefPath && isAsset && assetUrl && assetKind === 'audio' && (
+        {pinnedRefPath && !showPicker && isAsset && assetUrl && assetKind === 'audio' && (
           <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-paper-100/40 p-6">
             <div className="w-full max-w-md rounded-xl border border-paper-300/70 bg-paper-50/80 p-4 shadow-sm">
               <div className="mb-3 truncate text-sm font-medium text-ink-900">{title}</div>
@@ -590,7 +588,7 @@ export function PinnedReferencePane(): JSX.Element | null {
           </div>
         )}
 
-        {pinnedRefPath && isAsset && !assetUrl && (
+        {pinnedRefPath && !showPicker && isAsset && !assetUrl && (
           <div className="flex flex-1 items-center justify-center text-sm text-ink-400">
             Couldn't resolve asset path.
           </div>
@@ -607,6 +605,107 @@ export function PinnedReferencePane(): JSX.Element | null {
         )}
       </div>
     </section>
+  )
+}
+
+type PinnedRefMode = 'edit' | 'live' | 'preview'
+
+const REF_MODE_OPTIONS: Array<{
+  mode: PinnedRefMode
+  label: string
+  icon: () => JSX.Element
+}> = [
+  { mode: 'edit', label: 'Edit — raw Markdown source', icon: () => <PencilIcon /> },
+  { mode: 'live', label: 'Live — render inline while editing', icon: () => <SplitColumnsIcon /> },
+  { mode: 'preview', label: 'Preview — fully rendered', icon: () => <EyeIcon /> }
+]
+
+function useHoverDropdown(openDelay = 150, closeDelay = 100) {
+  const [open, setOpen] = useState(false)
+  const openTimer = useRef<ReturnType<typeof setTimeout>>()
+  const closeTimer = useRef<ReturnType<typeof setTimeout>>()
+  const onEnter = () => {
+    clearTimeout(closeTimer.current)
+    openTimer.current = setTimeout(() => setOpen(true), openDelay)
+  }
+  const onLeave = () => {
+    clearTimeout(openTimer.current)
+    closeTimer.current = setTimeout(() => setOpen(false), closeDelay)
+  }
+  return { open, onEnter, onLeave }
+}
+
+function DropdownPanel({
+  open,
+  onEnter,
+  onLeave,
+  children
+}: {
+  open: boolean
+  onEnter: () => void
+  onLeave: () => void
+  children: ReactNode
+}): JSX.Element {
+  return (
+    <div
+      className={[
+        'absolute right-0 top-full z-30 pt-1 translate-x-[3px] transition-all duration-100 origin-top',
+        open ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-95 pointer-events-none'
+      ].join(' ')}
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
+    >
+      <div className="flex flex-col gap-px rounded-md border border-paper-300 bg-paper-50 p-0.5 shadow-panel">
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function RefModeDropdown({
+  mode,
+  onChange
+}: {
+  mode: PinnedRefMode
+  onChange: (m: PinnedRefMode) => void
+}): JSX.Element {
+  const { open, onEnter, onLeave } = useHoverDropdown()
+  const current = REF_MODE_OPTIONS.find((o) => o.mode === mode)!
+
+  return (
+    <div className="relative" onMouseEnter={onEnter} onMouseLeave={onLeave}>
+      <button
+        type="button"
+        title={current.label}
+        aria-label={current.label}
+        className={[
+          'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
+          open ? 'bg-paper-200 text-ink-900' : 'text-ink-500 hover:bg-paper-200 hover:text-ink-900'
+        ].join(' ')}
+      >
+        {current.icon()}
+      </button>
+      <DropdownPanel open={open} onEnter={onEnter} onLeave={onLeave}>
+        {REF_MODE_OPTIONS.map((opt) => (
+          <button
+            key={opt.mode}
+            type="button"
+            onClick={() => onChange(opt.mode)}
+            aria-label={opt.label}
+            aria-pressed={mode === opt.mode}
+            className={[
+              'group/item relative flex h-7 w-7 items-center justify-center rounded transition-colors',
+              mode === opt.mode ? 'bg-paper-200 text-ink-900' : 'text-ink-500 hover:bg-paper-200 hover:text-ink-900'
+            ].join(' ')}
+          >
+            <span className="pointer-events-none">{opt.icon()}</span>
+            <span className="pointer-events-none absolute right-full mr-2 top-1/2 -translate-y-1/2 z-40 hidden whitespace-nowrap rounded-md border border-paper-300 bg-paper-50 px-2 py-1 text-xs font-medium text-ink-800 shadow-panel group-hover/item:block">
+              {opt.label}
+            </span>
+          </button>
+        ))}
+      </DropdownPanel>
+    </div>
   )
 }
 
