@@ -682,6 +682,38 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       }
     },
     {
+      id: 'view.editor.zoom.in',
+      title: 'Editor Zoom In',
+      category: 'View',
+      shortcut: shortcut('global.editorZoomIn'),
+      keywords: 'bigger larger font size editor text increase',
+      run: () => {
+        const s = getState()
+        s.setEditorZoomDelta(s.editorZoomDelta + 1)
+      }
+    },
+    {
+      id: 'view.editor.zoom.out',
+      title: 'Editor Zoom Out',
+      category: 'View',
+      shortcut: shortcut('global.editorZoomOut'),
+      keywords: 'smaller decrease font size editor text reduce',
+      run: () => {
+        const s = getState()
+        s.setEditorZoomDelta(s.editorZoomDelta - 1)
+      }
+    },
+    {
+      id: 'view.editor.zoom.reset',
+      title: 'Editor Reset Zoom',
+      category: 'View',
+      shortcut: shortcut('global.editorZoomReset'),
+      keywords: 'actual default normal font size editor text reset',
+      run: () => {
+        getState().setEditorZoomDelta(0)
+      }
+    },
+    {
       id: 'app.check-updates',
       title: 'Check for Updates…',
       category: 'App',

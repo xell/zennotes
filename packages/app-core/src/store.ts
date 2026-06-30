@@ -1947,6 +1947,7 @@ interface Store {
   themeFamily: ThemeFamily
   themeMode: ThemeMode
   editorFontSize: number
+  editorZoomDelta: number
   editorLineHeight: number
   previewMaxWidth: number
   lineNumberMode: LineNumberMode
@@ -2273,6 +2274,7 @@ interface Store {
   setSettingsOpen: (open: boolean) => void
   setTheme: (next: { id: string; family: ThemeFamily; mode: ThemeMode }) => void
   setEditorFontSize: (px: number) => void
+  setEditorZoomDelta: (delta: number) => void
   setEditorLineHeight: (mult: number) => void
   setPreviewMaxWidth: (px: number) => void
   setLineNumberMode: (mode: LineNumberMode) => void
@@ -3383,6 +3385,7 @@ export const useStore = create<Store>((set, get) => {
   themeFamily: loadPrefs().themeFamily,
   themeMode: loadPrefs().themeMode,
   editorFontSize: loadPrefs().editorFontSize,
+  editorZoomDelta: 0,
   editorLineHeight: loadPrefs().editorLineHeight,
   previewMaxWidth: loadPrefs().previewMaxWidth,
   lineNumberMode: loadPrefs().lineNumberMode,
@@ -5145,6 +5148,9 @@ export const useStore = create<Store>((set, get) => {
   setEditorFontSize: (px) => {
     set({ editorFontSize: px })
     savePrefs(collectPrefs(get()))
+  },
+  setEditorZoomDelta: (delta) => {
+    set({ editorZoomDelta: delta })
   },
   setEditorLineHeight: (mult) => {
     set({ editorLineHeight: mult })

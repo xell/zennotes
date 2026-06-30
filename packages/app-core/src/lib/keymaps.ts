@@ -35,6 +35,9 @@ export type KeymapId =
   | "global.zoomIn"
   | "global.zoomOut"
   | "global.zoomReset"
+  | "global.editorZoomIn"
+  | "global.editorZoomOut"
+  | "global.editorZoomReset"
   | "global.historyBack"
   | "global.historyForward"
   | "vim.leaderPrefix"
@@ -350,6 +353,33 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Reset zoom",
     description: "Restore the app zoom factor to its default size.",
     defaultBinding: "Mod+0",
+  },
+  {
+    id: "global.editorZoomIn",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Editor zoom in",
+    description: "Increase the note editor font size.",
+    defaultBinding: "",
+  },
+  {
+    id: "global.editorZoomOut",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Editor zoom out",
+    description: "Decrease the note editor font size.",
+    defaultBinding: "",
+  },
+  {
+    id: "global.editorZoomReset",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Editor zoom reset",
+    description: "Restore the note editor font size to its default.",
+    defaultBinding: "",
   },
   {
     id: "global.historyBack",
