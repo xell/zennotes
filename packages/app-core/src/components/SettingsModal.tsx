@@ -376,6 +376,8 @@ export function SettingsModal(): JSX.Element {
   const setTerminalFontSize = useStore((s) => s.setTerminalFontSize)
   const wordWrap = useStore((s) => s.wordWrap)
   const setWordWrap = useStore((s) => s.setWordWrap)
+  const diffInlineDiffs = useStore((s) => s.diffInlineDiffs)
+  const setDiffInlineDiffs = useStore((s) => s.setDiffInlineDiffs)
   const previewSmoothScroll = useStore((s) => s.previewSmoothScroll)
   const setPreviewSmoothScroll = useStore((s) => s.setPreviewSmoothScroll)
   const editorMaxWidth = useStore((s) => s.editorMaxWidth)
@@ -1148,6 +1150,12 @@ export function SettingsModal(): JSX.Element {
           title: 'Quick capture hotkey',
           description: 'System-wide shortcut to open the floating capture window.',
           keywords: ['quick capture', 'hotkey', 'shortcut']
+        },
+        {
+          id: 'diff-inline-diffs',
+          title: 'Inline diff highlighting',
+          description: 'Show character-level changes inline within a changed line, or show whole deleted/inserted lines.',
+          keywords: ['diff', 'merge', 'inline', 'line-level', 'git']
         }
       ],
       subTabs: [
@@ -1462,6 +1470,27 @@ export function SettingsModal(): JSX.Element {
             description="Floating capture window for thoughts you want in the vault without leaving whatever you're doing."
           >
             <QuickCaptureHotkeyRow settingId="quick-capture-hotkey" />
+          </Section>
+        </div>
+          )
+        },
+        {
+          id: 'diff-merge',
+          title: 'Diff/Merge',
+          searchIds: ['diff-inline-diffs'],
+          content: (
+        <div className="space-y-6">
+          <Section
+            title="Diff view"
+            description={`Controls how the diff view (${getKeymapDisplay(keymapOverrides, 'global.modeDiff')}) displays changes against the git index.`}
+          >
+            <ToggleRow
+              label="Inline diff highlighting"
+              description="When on, character-level changes are highlighted inline within a changed line. When off, the whole line is shown as deleted then re-inserted (line-level diff). Changes apply immediately to any open diff view."
+              value={diffInlineDiffs}
+              settingId="diff-inline-diffs"
+              onChange={setDiffInlineDiffs}
+            />
           </Section>
         </div>
           )

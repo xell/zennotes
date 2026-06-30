@@ -38,6 +38,7 @@ export const PORTABLE_PREF_KEYS = [
   // editor
   'livePreview',
   'renderTablesInLivePreview',
+  'hideActiveLineMarkup',
   'markdownSnippets',
   'hideBuiltinTemplates',
   'tabsEnabled',
@@ -49,6 +50,7 @@ export const PORTABLE_PREF_KEYS = [
   'lineNumberMode',
   'lineNumberPosition',
   'wordWrap',
+  'diffInlineDiffs',
   'previewSmoothScroll',
   'pdfEmbedInEditMode',
   // appearance
@@ -68,6 +70,7 @@ export const PORTABLE_PREF_KEYS = [
   'noteSortOrder',
   'groupByKind',
   'autoReveal',
+  'pinnedRefMode',
   'quickNoteDateTitle',
   'quickNoteTitlePrefix',
   'autoCalendarPanel',
@@ -75,7 +78,13 @@ export const PORTABLE_PREF_KEYS = [
   'calendarShowWeekNumbers',
   'tasksViewMode',
   'kanbanGroupBy',
-  'kanbanColumnTitles'
+  'kanbanColumnTitles',
+  // terminal
+  'terminalLightTheme',
+  'terminalDarkTheme',
+  'terminalScrollbarOnHover',
+  'terminalFontFamily',
+  'terminalFontSize'
 ] as const
 
 export type PortablePrefKey = (typeof PORTABLE_PREF_KEYS)[number]
@@ -119,13 +128,14 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   whichKeyHints: true,
   whichKeyHintMode: 'timed',
   whichKeyHintTimeoutMs: 900,
-  vimKeymap: '',
+  vimKeymap: 'nmap k gk\nnmap j gj\nnnoremap - $\nvnoremap - $',
   keymapOverrides: {},
   vaultTextSearchBackend: 'auto',
   ripgrepBinaryPath: null,
   fzfBinaryPath: null,
   livePreview: true,
   renderTablesInLivePreview: true,
+  hideActiveLineMarkup: false,
   markdownSnippets: true,
   hideBuiltinTemplates: false,
   tabsEnabled: true,
@@ -137,6 +147,7 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   lineNumberMode: 'off',
   lineNumberPosition: 'text',
   wordWrap: true,
+  diffInlineDiffs: true,
   previewSmoothScroll: true,
   pdfEmbedInEditMode: 'compact',
   themeId: 'dark-hard',
@@ -153,6 +164,7 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   noteSortOrder: 'none',
   groupByKind: true,
   autoReveal: false,
+  pinnedRefMode: 'edit',
   quickNoteDateTitle: false,
   quickNoteTitlePrefix: 'Quick Note',
   autoCalendarPanel: true,
@@ -160,5 +172,10 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   calendarShowWeekNumbers: true,
   tasksViewMode: 'list',
   kanbanGroupBy: 'status',
-  kanbanColumnTitles: {}
+  kanbanColumnTitles: {},
+  terminalLightTheme: 'github-light',
+  terminalDarkTheme: 'github-dark',
+  terminalScrollbarOnHover: true,
+  terminalFontFamily: '',
+  terminalFontSize: 0
 }

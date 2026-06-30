@@ -733,6 +733,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const vaultSettings = useStore((s) => s.vaultSettings)
   const autoCalendarPanel = useStore((s) => s.autoCalendarPanel)
   const isGitRepo = useStore((s) => s.isGitRepo)
+  const diffInlineDiffs = useStore((s) => s.diffInlineDiffs)
 
   const [modesByPath, setModesByPath] = useState<PaneModesByPath>({})
   const mode = paneModeForPath(modesByPath, activeTab)
@@ -952,12 +953,12 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       setDiffStatus('ready')
       view.dispatch({
         effects: compartment.reconfigure(
-          unifiedMergeView({ original, allowInlineDiffs: true, collapseUnchanged: { margin: 3, minSize: 4 } })
+          unifiedMergeView({ original, allowInlineDiffs: diffInlineDiffs, collapseUnchanged: { margin: 3, minSize: 4 } })
         )
       })
     })
     return () => { cancelled = true }
-  }, [mode, activeTab, diffRefreshKey])
+  }, [mode, activeTab, diffRefreshKey, diffInlineDiffs])
 
   // `zen:toggle-outline` — routed only to the active pane, same pattern
   // as the connections toggle.

@@ -443,6 +443,10 @@ interface Prefs {
   /** When true, long lines wrap inside the editor. When false they
    *  scroll horizontally — same as a coding editor's "Word Wrap". */
   wordWrap: boolean
+  /** When true, the diff view highlights character-level changes inline
+   *  within a changed line. When false, the whole line is shown as deleted
+   *  then re-inserted (line-level diff). */
+  diffInlineDiffs: boolean
   /** Ctrl+D / Ctrl+U half-page scroll in preview mode. When true the
    *  jumps animate; when false they snap instantly. Vim users often
    *  prefer the instant flavor because it keeps the position
@@ -590,6 +594,7 @@ export const DEFAULT_PREFS: Prefs = {
   quickNoteDateTitle: false,
   quickNoteTitlePrefix: 'Quick Note',
   wordWrap: true,
+  diffInlineDiffs: true,
   previewSmoothScroll: true,
   editorMaxWidth: 920,
   pdfEmbedInEditMode: 'compact',
@@ -793,6 +798,8 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
         : DEFAULT_PREFS.quickNoteTitlePrefix,
     wordWrap:
       typeof p.wordWrap === 'boolean' ? p.wordWrap : DEFAULT_PREFS.wordWrap,
+    diffInlineDiffs:
+      typeof p.diffInlineDiffs === 'boolean' ? p.diffInlineDiffs : DEFAULT_PREFS.diffInlineDiffs,
     previewSmoothScroll:
       typeof p.previewSmoothScroll === 'boolean'
         ? p.previewSmoothScroll
@@ -1509,6 +1516,7 @@ function collectPrefs(s: {
   quickNoteDateTitle: boolean
   quickNoteTitlePrefix: string | null
   wordWrap: boolean
+  diffInlineDiffs: boolean
   previewSmoothScroll: boolean
   editorMaxWidth: number
   pdfEmbedInEditMode: 'compact' | 'full'
@@ -1580,6 +1588,7 @@ function collectPrefs(s: {
     quickNoteDateTitle: s.quickNoteDateTitle,
     quickNoteTitlePrefix: s.quickNoteTitlePrefix,
     wordWrap: s.wordWrap,
+    diffInlineDiffs: s.diffInlineDiffs,
     previewSmoothScroll: s.previewSmoothScroll,
     editorMaxWidth: s.editorMaxWidth,
     pdfEmbedInEditMode: s.pdfEmbedInEditMode,
@@ -1990,6 +1999,10 @@ interface Store {
   /** Whether long lines wrap or scroll horizontally in the editor. */
   wordWrap: boolean
 
+  /** When true, the diff view highlights character-level changes inline.
+   *  When false, whole lines are shown as deleted/inserted (line-level). */
+  diffInlineDiffs: boolean
+
   /** Animate Ctrl+D / Ctrl+U half-page jumps in preview mode. Off
    *  gives an instant snap, which Vim muscle memory prefers. */
   previewSmoothScroll: boolean
@@ -2359,6 +2372,7 @@ interface Store {
   ) => Promise<void>
   saveActiveNoteAsTemplate: () => Promise<void>
   setWordWrap: (on: boolean) => void
+  setDiffInlineDiffs: (on: boolean) => void
   setPreviewSmoothScroll: (on: boolean) => void
   setEditorMaxWidth: (px: number) => void
   setPdfEmbedInEditMode: (mode: 'compact' | 'full') => void
@@ -3412,6 +3426,7 @@ export const useStore = create<Store>((set, get) => {
   quickNoteDateTitle: loadPrefs().quickNoteDateTitle,
   quickNoteTitlePrefix: loadPrefs().quickNoteTitlePrefix,
   wordWrap: loadPrefs().wordWrap,
+  diffInlineDiffs: loadPrefs().diffInlineDiffs,
   previewSmoothScroll: loadPrefs().previewSmoothScroll,
   editorMaxWidth: loadPrefs().editorMaxWidth,
   pdfEmbedInEditMode: loadPrefs().pdfEmbedInEditMode,
@@ -5802,6 +5817,11 @@ export const useStore = create<Store>((set, get) => {
 
   setWordWrap: (on) => {
     set({ wordWrap: on })
+    savePrefs(collectPrefs(get()))
+  },
+
+  setDiffInlineDiffs: (on) => {
+    set({ diffInlineDiffs: on })
     savePrefs(collectPrefs(get()))
   },
 

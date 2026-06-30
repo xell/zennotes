@@ -39,7 +39,7 @@ interface ScalarFieldMap {
 }
 
 // Order sections are emitted in. Keeps the file stable across rewrites.
-const SECTION_ORDER = ['vim', 'search', 'editor', 'appearance', 'typography', 'view'] as const
+const SECTION_ORDER = ['vim', 'search', 'editor', 'appearance', 'typography', 'view', 'terminal'] as const
 
 // Scalar (string / number / boolean) portable prefs → [section].key (snake_case).
 const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
@@ -102,6 +102,11 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
     tomlKey: 'render_tables',
     comment: 'render tables as widgets in live preview; off keeps them as plain text'
   },
+  hideActiveLineMarkup: {
+    section: 'editor',
+    tomlKey: 'hide_active_line_markup',
+    comment: 'hide markdown syntax even on the caret line in live preview'
+  },
   markdownSnippets: {
     section: 'editor',
     tomlKey: 'markdown_snippets',
@@ -148,6 +153,11 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
     section: 'editor',
     tomlKey: 'word_wrap',
     comment: 'wrap long lines vs. scroll horizontally'
+  },
+  diffInlineDiffs: {
+    section: 'editor',
+    tomlKey: 'diff_inline_diffs',
+    comment: 'highlight character-level changes inline in diff view; false = line-level only'
   },
   previewSmoothScroll: {
     section: 'editor',
@@ -217,6 +227,11 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
     tomlKey: 'auto_reveal',
     comment: 'auto-expand the sidebar to the active note'
   },
+  pinnedRefMode: {
+    section: 'view',
+    tomlKey: 'pinned_ref_mode',
+    comment: 'edit | live | preview — default view mode for the pinned reference pane'
+  },
   quickNoteDateTitle: {
     section: 'view',
     tomlKey: 'quick_note_date_title',
@@ -247,6 +262,32 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
     section: 'view',
     tomlKey: 'kanban_group_by',
     comment: 'status | priority | folder'
+  },
+  // terminal
+  terminalLightTheme: {
+    section: 'terminal',
+    tomlKey: 'light_theme',
+    comment: 'xterm.js theme name in light mode; empty = derive from app theme'
+  },
+  terminalDarkTheme: {
+    section: 'terminal',
+    tomlKey: 'dark_theme',
+    comment: 'xterm.js theme name in dark mode; empty = derive from app theme'
+  },
+  terminalScrollbarOnHover: {
+    section: 'terminal',
+    tomlKey: 'scrollbar_on_hover',
+    comment: 'show the terminal scrollbar only while hovering; false = always hidden'
+  },
+  terminalFontFamily: {
+    section: 'terminal',
+    tomlKey: 'font_family',
+    comment: 'terminal font family; empty = built-in default'
+  },
+  terminalFontSize: {
+    section: 'terminal',
+    tomlKey: 'font_size',
+    comment: 'terminal font size (px); 0 = built-in default (13px)'
   }
 }
 
