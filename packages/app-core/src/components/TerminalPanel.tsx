@@ -30,12 +30,16 @@ function cssVarTheme(): ITheme {
   }
 }
 
+function resolveIsDark(): boolean {
+  const css = getComputedStyle(document.documentElement)
+  const parts = css.getPropertyValue('--z-bg').trim().split(' ').map(Number)
+  if (parts.length !== 3) return window.matchMedia('(prefers-color-scheme: dark)').matches
+  const lum = (parts[0] * 0.299 + parts[1] * 0.587 + parts[2] * 0.114) / 255
+  return lum < 0.5
+}
+
 function buildXtermTheme(lightName: string, darkName: string): ITheme {
-  const isDark =
-    document.documentElement.getAttribute('data-theme') === 'dark' ||
-    (document.documentElement.getAttribute('data-theme') !== 'light' &&
-      window.matchMedia('(prefers-color-scheme: dark)').matches)
-  const name = isDark ? darkName : lightName
+  const name = resolveIsDark() ? darkName : lightName
   return TERMINAL_THEMES[name] ?? cssVarTheme()
 }
 
