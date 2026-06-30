@@ -1867,6 +1867,7 @@ export function isQuickNotesViewActive(state: {
 
 interface Store {
   vault: VaultInfo | null
+  isGitRepo: boolean
   workspaceMode: WorkspaceMode
   remoteWorkspaceInfo: RemoteWorkspaceInfo | null
   remoteWorkspaceProfiles: RemoteWorkspaceProfile[]
@@ -2091,6 +2092,7 @@ interface Store {
   activeCommentId: string | null
 
   setVault: (v: VaultInfo | null) => void
+  setIsGitRepo: (v: boolean) => void
   setVaultSettings: (next: VaultSettings) => Promise<void>
   /**
    * Toggle a favorite (a note path or a `folder:subpath` key) and persist it.
@@ -3318,6 +3320,7 @@ export const useStore = create<Store>((set, get) => {
 
   return {
   vault: null,
+  isGitRepo: false,
   workspaceMode: 'local',
   remoteWorkspaceInfo: null,
   remoteWorkspaceProfiles: [],
@@ -3458,8 +3461,9 @@ export const useStore = create<Store>((set, get) => {
       if (vaultChanged) {
         clearNoteContentReadCaches()
       }
-      return vaultChanged ? { vault: v, assetUndoStack: [] } : { vault: v }
+      return vaultChanged ? { vault: v, isGitRepo: false, assetUndoStack: [] } : { vault: v }
     }),
+  setIsGitRepo: (v) => set({ isGitRepo: v }),
   setVaultSettings: async (next) => {
     try {
       const settingsToSave = withDateNotePatternHistory(get().vaultSettings, next)

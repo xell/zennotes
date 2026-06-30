@@ -36,6 +36,7 @@ import {
   lineNumbers,
   tooltips
 } from '@codemirror/view'
+import { unifiedMergeView } from '@codemirror/merge'
 import { Vim, getCM, vim } from '@replit/codemirror-vim'
 import type { AssetMeta, ImportedAsset, NoteComment, NoteFolder } from '@shared/ipc'
 import {
@@ -162,6 +163,7 @@ import {
   CalendarIcon,
   CheckSquareIcon,
   CloseIcon,
+  DiffIcon,
   EyeIcon,
   SplitColumnsIcon,
   PaperclipIcon,
@@ -234,7 +236,8 @@ const MODE_OPTIONS: Array<{
   mode: PaneMode
   label: string
   tooltipLabel: string
-  keymapId: KeymapId
+  keymapId?: KeymapId
+  gitOnly?: boolean
 }> = [
   { mode: 'edit', label: 'Edit', tooltipLabel: 'Editor mode', keymapId: 'global.modeEdit' },
   { mode: 'split', label: 'Split', tooltipLabel: 'Split mode', keymapId: 'global.modeSplit' },
@@ -243,6 +246,12 @@ const MODE_OPTIONS: Array<{
     label: 'Preview',
     tooltipLabel: 'Preview mode',
     keymapId: 'global.modePreview'
+  },
+  {
+    mode: 'diff',
+    label: 'Diff',
+    tooltipLabel: 'Diff view (git index)',
+    gitOnly: true
   }
 ]
 
@@ -722,6 +731,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const folderLabels = resolveSystemFolderLabels(systemFolderLabels)
   const vaultSettings = useStore((s) => s.vaultSettings)
   const autoCalendarPanel = useStore((s) => s.autoCalendarPanel)
+  const isGitRepo = useStore((s) => s.isGitRepo)
 
   const [modesByPath, setModesByPath] = useState<PaneModesByPath>({})
   const mode = paneModeForPath(modesByPath, activeTab)
@@ -764,6 +774,8 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const [assetDropActive, setAssetDropActive] = useState(false)
   const [imageDropIndicatorTop, setImageDropIndicatorTop] = useState<number | null>(null)
   const [tabStripOverflowing, setTabStripOverflowing] = useState(false)
+  const [diffStatus, setDiffStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [diffOriginal, setDiffOriginal] = useState<string | null>(null)
 
   const viewRef = useRef<EditorView | null>(null)
   const importPastedImagesRef = useRef<
@@ -789,6 +801,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const livePreviewCompartmentRef = useRef<Compartment | null>(null)
   const lineNumbersCompartmentRef = useRef<Compartment | null>(null)
   const wordWrapCompartmentRef = useRef<Compartment | null>(null)
+  const diffCompartmentRef = useRef<Compartment | null>(null)
   // history() lives in a compartment so we can reset undo history on a note
   // switch — otherwise Cmd+Z crosses notes and overwrites the current one (#247).
   const historyCompartmentRef = useRef<Compartment | null>(null)
@@ -904,6 +917,37 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     })
   }, [activeTab, paneId, setActivePane, setFocusedPanel])
 
+  useEffect(() => {
+    const compartment = diffCompartmentRef.current
+    const view = viewRef.current
+    if (mode !== 'diff' || !activeTab || !compartment || !view) {
+      if (compartment && view && mode !== 'diff') {
+        view.dispatch({ effects: compartment.reconfigure([]) })
+        setDiffStatus('idle')
+        setDiffOriginal(null)
+      }
+      return
+    }
+    let cancelled = false
+    setDiffStatus('loading')
+    setDiffOriginal(null)
+    void window.zen.gitShowIndex(activeTab).then((original) => {
+      if (cancelled) return
+      if (original === null) {
+        setDiffStatus('error')
+        return
+      }
+      setDiffOriginal(original)
+      setDiffStatus('ready')
+      view.dispatch({
+        effects: compartment.reconfigure(
+          unifiedMergeView({ original, allowInlineDiffs: true, collapseUnchanged: { margin: 3, minSize: 4 } })
+        )
+      })
+    })
+    return () => { cancelled = true }
+  }, [mode, activeTab])
+
   // `zen:toggle-outline` — routed only to the active pane, same pattern
   // as the connections toggle.
   useEffect(() => {
@@ -983,7 +1027,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     if (!isActive) return
     const handler = (event: Event): void => {
       const nextMode = (event as CustomEvent<{ mode?: PaneMode }>).detail?.mode
-      if (nextMode !== 'edit' && nextMode !== 'split' && nextMode !== 'preview') return
+      if (nextMode !== 'edit' && nextMode !== 'split' && nextMode !== 'preview' && nextMode !== 'diff') return
       applyPaneMode(nextMode)
     }
     window.addEventListener(ZEN_SET_PANE_MODE_EVENT, handler)
@@ -1425,6 +1469,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       const lineNumbersCompartment = new Compartment()
       const wordWrapCompartment = new Compartment()
       const historyCompartment = new Compartment()
+      const diffCompartment = new Compartment()
       vimCompartmentRef.current = vimCompartment
       editorKeymapCompartmentRef.current = editorKeymapCompartment
       markdownCompartmentRef.current = markdownCompartment
@@ -1433,6 +1478,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       lineNumbersCompartmentRef.current = lineNumbersCompartment
       wordWrapCompartmentRef.current = wordWrapCompartment
       historyCompartmentRef.current = historyCompartment
+      diffCompartmentRef.current = diffCompartment
       const s0 = useStore.getState()
       const initialPath = findLeaf(s0.paneLayout, paneId)?.activeTab ?? null
       const initialContent = initialPath ? s0.noteContents[initialPath] ?? null : null
@@ -1454,6 +1500,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
           }),
           vimCompartment.of(s0.vimMode ? vim() : []),
           historyCompartment.of(history()),
+          diffCompartment.of([]),
           drawSelection(),
           highlightActiveLine(),
           taskJumpHighlightField,
@@ -2851,7 +2898,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
 
     return (
       <div className="flex items-center gap-1.5 text-ink-500">
-        {!isDrawing && <ModeDropdown mode={mode} onChange={applyPaneMode} />}
+        {!isDrawing && <ModeDropdown mode={mode} onChange={applyPaneMode} isGitRepo={isGitRepo} />}
         <ToolsDropdown tools={tools} />
       </div>
     )
@@ -2878,7 +2925,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   ])
 
   const showEditor = !!content && mode !== 'preview'
-  const showPreview = !!content && mode !== 'edit'
+  const showPreview = !!content && (mode === 'split' || mode === 'preview')
   const splitMode = mode === 'split'
   const hasTabs = !zenMode && tabsEnabled && tabs.length > 0
   const tabStripMeasureKey = useMemo(
@@ -3362,6 +3409,16 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
                       Preparing editor…
                     </div>
                   )}
+                  {mode === 'diff' && diffStatus === 'loading' && (
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-paper-50/80 text-sm text-ink-400">
+                      Loading diff…
+                    </div>
+                  )}
+                  {mode === 'diff' && diffStatus === 'error' && (
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-paper-50/80 text-sm text-ink-400">
+                      No index version — stage or commit this note to see a diff.
+                    </div>
+                  )}
                 </div>
               {showPreview && (
                 <div
@@ -3744,12 +3801,14 @@ type ToolItem = {
   title: string
   onClick: () => void
   active?: boolean
+  disabled?: boolean
 }
 
 const MODE_ICONS: Record<PaneMode, () => JSX.Element> = {
   edit: () => <PencilIcon />,
   split: () => <SplitColumnsIcon />,
-  preview: () => <EyeIcon />
+  preview: () => <EyeIcon />,
+  diff: () => <DiffIcon />
 }
 
 function useHoverDropdown(openDelay = 150, closeDelay = 100) {
@@ -3771,7 +3830,8 @@ function DropdownItem({
   icon,
   title,
   onClick,
-  active = false
+  active = false,
+  disabled = false
 }: ToolItem): JSX.Element {
   return (
     <button
@@ -3779,9 +3839,14 @@ function DropdownItem({
       onClick={onClick}
       aria-label={title}
       aria-pressed={active}
+      disabled={disabled}
       className={[
         'group/item relative flex h-7 w-7 items-center justify-center rounded transition-colors',
-        active ? 'bg-paper-200 text-ink-900' : 'text-ink-500 hover:bg-paper-200 hover:text-ink-900'
+        disabled
+          ? 'cursor-not-allowed opacity-35'
+          : active
+            ? 'bg-paper-200 text-ink-900'
+            : 'text-ink-500 hover:bg-paper-200 hover:text-ink-900'
       ].join(' ')}
     >
       <span className="pointer-events-none">{icon}</span>
@@ -3821,10 +3886,12 @@ function DropdownPanel({
 
 function ModeDropdown({
   mode,
-  onChange
+  onChange,
+  isGitRepo
 }: {
   mode: PaneMode
   onChange: (m: PaneMode) => void
+  isGitRepo: boolean
 }): JSX.Element {
   const { open, onEnter, onLeave } = useHoverDropdown()
   const keymapOverrides = useStore((s) => s.keymapOverrides)
@@ -3846,14 +3913,21 @@ function ModeDropdown({
       </button>
       <DropdownPanel open={open} onEnter={onEnter} onLeave={onLeave}>
         {MODE_OPTIONS.map((option) => {
-          const shortcut = getKeymapDisplay(keymapOverrides, option.keymapId)
+          const disabled = option.gitOnly === true && !isGitRepo
+          const shortcut = option.keymapId ? getKeymapDisplay(keymapOverrides, option.keymapId) : null
+          const title = shortcut
+            ? `${option.tooltipLabel} (${shortcut})`
+            : disabled
+              ? `${option.tooltipLabel} (vault is not a git repo)`
+              : option.tooltipLabel
           return (
             <DropdownItem
               key={option.mode}
               icon={<>{MODE_ICONS[option.mode]()}</>}
-              title={`${option.tooltipLabel} (${shortcut})`}
-              onClick={() => onChange(option.mode)}
+              title={title}
+              onClick={() => !disabled && onChange(option.mode)}
               active={mode === option.mode}
+              disabled={disabled}
             />
           )
         })}
@@ -3944,13 +4018,14 @@ function ToggleGroup({
   return (
     <div className="flex items-center gap-1 rounded-md bg-paper-200/70 p-0.5 text-xs">
       {MODE_OPTIONS.map((option) => {
-        const shortcut = getKeymapDisplay(keymapOverrides, option.keymapId)
+        const shortcut = option.keymapId ? getKeymapDisplay(keymapOverrides, option.keymapId) : null
+        const label = shortcut ? `${option.tooltipLabel} (${shortcut})` : option.tooltipLabel
         return (
           <button
             key={option.mode}
             onClick={() => onChange(option.mode)}
-            title={`${option.tooltipLabel} (${shortcut})`}
-            aria-label={`${option.tooltipLabel} (${shortcut})`}
+            title={label}
+            aria-label={label}
             className={[
               'rounded px-2 py-1 transition-colors',
               mode === option.mode

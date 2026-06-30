@@ -2875,6 +2875,31 @@ function registerIpc(): void {
   handle(IPC.RAYCAST_GET_STATUS, async () => await getRaycastExtensionStatus())
   handle(IPC.RAYCAST_INSTALL, async () => await installRaycastExtension())
 
+  handle(IPC.GIT_IS_REPO, async () => {
+    if (!currentVault) return false
+    const root = path.resolve(currentVault.root)
+    try {
+      await execFileAsync('git', ['rev-parse', '--git-dir'], { cwd: root, timeout: 3000 })
+      return true
+    } catch {
+      return false
+    }
+  })
+
+  handle(IPC.GIT_SHOW_INDEX, async (_e, vaultRelativePath: string) => {
+    if (!currentVault) return null
+    const root = path.resolve(currentVault.root)
+    try {
+      const { stdout } = await execFileAsync('git', ['show', `:0:${vaultRelativePath}`], {
+        cwd: root,
+        timeout: 5000
+      })
+      return stdout
+    } catch {
+      return null
+    }
+  })
+
   // Synchronous getter so the preload can hydrate the renderer's prefs store
   // at startup without an async round-trip. Registered directly (not via the
   // `on` helper) because it must set `event.returnValue` and doesn't need the

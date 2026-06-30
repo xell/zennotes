@@ -449,3 +449,13 @@ export const TerminalIcon = (p: IconProps): JSX.Element => (
     <line x1="12" y1="15" x2="17" y2="15" />
   </I>
 )
+
+export const DiffIcon = (p: IconProps): JSX.Element => (
+  <I {...p}>
+    <line x1="9" y1="8" x2="20" y2="8" />
+    <line x1="4" y1="8" x2="7" y2="8" />
+    <line x1="9" y1="16" x2="20" y2="16" />
+    <line x1="4" y1="16" x2="7" y2="16" />
+    <line x1="5.5" y1="13.5" x2="5.5" y2="18.5" />
+  </I>
+)

@@ -4146,3 +4146,26 @@ textarea,
 .terminal-scrollbar-on-hover .xterm-viewport::-webkit-scrollbar {
   display: none;
 }
+
+/* unified diff view — @codemirror/merge */
+.cm-editor .cm-deletedChunk {
+  background-color: rgb(var(--z-err) / 0.08);
+}
+.cm-editor .cm-insertedChunk {
+  background-color: rgb(var(--z-accent) / 0.08);
+}
+.cm-editor .cm-deletedText {
+  background-color: rgb(var(--z-err) / 0.25);
+  border-radius: 2px;
+}
+.cm-editor .cm-insertedText {
+  background-color: rgb(var(--z-accent) / 0.22);
+  border-radius: 2px;
+}
+.cm-editor .cm-changedLine {
+  background-color: rgb(var(--z-accent) / 0.06);
+}
+.cm-editor .cm-deletedChunk .cm-deletedChunk-gutter {
+  background-color: rgb(var(--z-err) / 0.25);
+  min-width: 4px;
+}

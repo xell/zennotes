@@ -133,7 +133,9 @@ export const IPC = {
   CONFIG_SET: 'config:set',
   CONFIG_GET_PATH: 'config:get-path',
   CONFIG_REVEAL: 'config:reveal',
-  CONFIG_ON_CHANGE: 'config:on-change'
+  CONFIG_ON_CHANGE: 'config:on-change',
+  GIT_IS_REPO: 'git:is-repo',
+  GIT_SHOW_INDEX: 'git:show-index'
 } as const
 
 export interface TikzRenderResponse {

@@ -523,6 +523,10 @@ const api: ZenBridge = {
     ipcRenderer.on(IPC.CONFIG_ON_CHANGE, listener)
     return () => ipcRenderer.removeListener(IPC.CONFIG_ON_CHANGE, listener)
   },
+  gitIsRepo: (): Promise<boolean> => ipcRenderer.invoke(IPC.GIT_IS_REPO),
+  gitShowIndex: (vaultRelativePath: string): Promise<string | null> =>
+    ipcRenderer.invoke(IPC.GIT_SHOW_INDEX, vaultRelativePath),
+
   terminal: {
     create: (opts: { cwd: string; cols: number; rows: number }): Promise<string> =>
       ipcRenderer.invoke(IPC.TERMINAL_CREATE, opts),

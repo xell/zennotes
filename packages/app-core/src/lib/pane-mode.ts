@@ -1,4 +1,4 @@
-export type PaneMode = 'edit' | 'preview' | 'split'
+export type PaneMode = 'edit' | 'preview' | 'split' | 'diff'
 
 export const ZEN_SET_PANE_MODE_EVENT = 'zen:set-pane-mode'
 export const DEFAULT_PANE_MODE: PaneMode = 'edit'

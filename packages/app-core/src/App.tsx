@@ -233,6 +233,7 @@ function App(): JSX.Element {
   const searchPaletteWarmupCleanupRef = useRef<(() => void) | null>(null)
   const pendingOpenNoteRequestsRef = useRef<string[]>([])
   const vault = useStore((s) => s.vault)
+  const setIsGitRepo = useStore((s) => s.setIsGitRepo)
   const init = useStore((s) => s.init)
   const workspaceRestored = useStore((s) => s.workspaceRestored)
   const searchOpen = useStore((s) => s.searchOpen)
@@ -303,6 +304,14 @@ function App(): JSX.Element {
       setSettingsOpen(true)
     })
   }, [setSettingsOpen])
+
+  useEffect(() => {
+    if (!vault) {
+      setIsGitRepo(false)
+      return
+    }
+    void window.zen.gitIsRepo().then(setIsGitRepo)
+  }, [vault, setIsGitRepo])
 
   useEffect(() => {
     return window.zen.onOpenNoteRequested((relPath) => {

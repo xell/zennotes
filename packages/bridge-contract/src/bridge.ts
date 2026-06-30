@@ -291,6 +291,12 @@ export interface ZenBridge {
     /** Subscribe to shell-exit events. Returns an unsubscribe fn. */
     onExit(cb: (sessionId: string, exitCode: number) => void): () => void
   }
+
+  /** Returns true when the currently open vault root is inside a Git repository. */
+  gitIsRepo(): Promise<boolean>
+  /** Returns the index (staged) content for a vault-relative path, or null when
+   *  the file is untracked or the vault is not a git repository. */
+  gitShowIndex(vaultRelativePath: string): Promise<string | null>
 }
 
 let installedBridge: ZenBridge | null = null
