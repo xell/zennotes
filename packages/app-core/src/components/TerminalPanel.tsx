@@ -133,6 +133,11 @@ export function TerminalPanel({ visible }: Props): JSX.Element {
     }
     window.addEventListener('zen:focus-terminal-input', focusHandler)
 
+    const termFocusListener = (): void => { window.dispatchEvent(new Event('zen:terminal-focused')) }
+    const termBlurListener = (): void => { window.dispatchEvent(new Event('zen:terminal-blurred')) }
+    term.textarea?.addEventListener('focus', termFocusListener)
+    term.textarea?.addEventListener('blur', termBlurListener)
+
     const ro = new ResizeObserver(() => {
       if (!visibleRef.current) return
       requestAnimationFrame(() => {
@@ -153,6 +158,8 @@ export function TerminalPanel({ visible }: Props): JSX.Element {
       observer.disconnect()
       ro.disconnect()
       window.removeEventListener('zen:focus-terminal-input', focusHandler)
+      term.textarea?.removeEventListener('focus', termFocusListener)
+      term.textarea?.removeEventListener('blur', termBlurListener)
       unsubData()
       unsubExit()
       if (sessionRef.current) {
