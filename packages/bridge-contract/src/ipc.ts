@@ -132,7 +132,11 @@ export const IPC = {
   OVERRIDES_REVEAL: 'overrides:reveal',
   OVERRIDES_DELETE: 'overrides:delete',
   OVERRIDES_ON_CHANGE: 'overrides:on-change',
-  DEVTOOLS_TOGGLE: 'devtools:toggle'
+  DEVTOOLS_TOGGLE: 'devtools:toggle',
+  // Per-vault workspace state (open tabs, layout, cursor) persisted to
+  // <vault>/.zennotes/workspace.json so it syncs with the vault. (#292)
+  WORKSPACE_STATE_READ: 'workspace-state:read',
+  WORKSPACE_STATE_WRITE: 'workspace-state:write'
 } as const
 
 export interface TikzRenderResponse {
@@ -325,10 +329,31 @@ export interface WeeklyNotesSettings {
   templateId?: string
 }
 
+/**
+ * Per-vault overrides for "how this vault looks" — sort order, grouping, the
+ * tasks view, etc. Each key falls back to the matching global preference
+ * (config.toml) when unset, so a fresh vault inherits the global default and a
+ * customized one keeps its own look. Stored in `<vault>/.zennotes/vault.json`
+ * so it travels with the vault. Values are kept loose here (the IPC boundary)
+ * and validated in the renderer's normalizer. (#292)
+ */
+export interface VaultViewSettings {
+  noteSortOrder?: string
+  groupByKind?: boolean
+  tasksViewMode?: string
+  kanbanGroupBy?: string
+  kanbanColumnTitles?: Record<string, string>
+  autoReveal?: boolean
+  systemFolderLabels?: Record<string, unknown>
+  unifiedSidebar?: boolean
+}
+
 export interface VaultSettings {
   primaryNotesLocation: PrimaryNotesLocation
   dailyNotes: DailyNotesSettings
   weeklyNotes: WeeklyNotesSettings
+  /** Per-vault view overrides (#292); absent/empty means "inherit global". */
+  view?: VaultViewSettings
   folderIcons: Record<string, FolderIconId>
   /** Per-folder accent color, keyed by `folder:subpath` (same key as folderIcons). */
   folderColors: Record<string, FolderColorId>

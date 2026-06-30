@@ -113,6 +113,11 @@ export interface ZenBridge {
   browseServerDirectories(path?: string): Promise<DirectoryBrowseResult>
   getVaultSettings(): Promise<VaultSettings>
   setVaultSettings(next: VaultSettings): Promise<VaultSettings>
+  /** Read the current vault's `.zennotes/workspace.json` (open tabs, layout,
+   *  cursor) as a raw JSON string, or null when absent. Syncs with the vault. (#292) */
+  readWorkspaceState(): Promise<string | null>
+  /** Write the current vault's `.zennotes/workspace.json` (raw JSON string). (#292) */
+  writeWorkspaceState(json: string): Promise<void>
   /** True when the vault is in `inbox` mode but its root holds notes that only
    *  `root` mode would surface (drives the "Switch to Vault root" banner). */
   rootContentHiddenByInboxMode(): Promise<boolean>

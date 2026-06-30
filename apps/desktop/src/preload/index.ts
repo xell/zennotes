@@ -265,6 +265,10 @@ const api: ZenBridge = {
   getVaultSettings: (): Promise<VaultSettings> => ipcRenderer.invoke(IPC.VAULT_GET_SETTINGS),
   setVaultSettings: (next: VaultSettings): Promise<VaultSettings> =>
     ipcRenderer.invoke(IPC.VAULT_SET_SETTINGS, next),
+  readWorkspaceState: (): Promise<string | null> =>
+    ipcRenderer.invoke(IPC.WORKSPACE_STATE_READ),
+  writeWorkspaceState: (json: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.WORKSPACE_STATE_WRITE, json),
   rootContentHiddenByInboxMode: (): Promise<boolean> =>
     ipcRenderer.invoke(IPC.VAULT_ROOT_CONTENT_HIDDEN),
 

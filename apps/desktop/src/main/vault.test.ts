@@ -789,3 +789,26 @@ describe('archive / trash round-trips', () => {
     await expect(readFile(path.join(root, 'projects', 'Plan.md'), 'utf8')).resolves.toBe('# Plan\n')
   })
 })
+
+describe('per-vault view settings round-trip (#292)', () => {
+  it('persists the view block and drops unknown keys through set/get', async () => {
+    const root = await makeTempDir('zennotes-vault-view-')
+    await ensureVaultLayout(root)
+    const base = await getVaultSettings(root)
+    await setVaultSettings(root, {
+      ...base,
+      view: { noteSortOrder: 'name-asc', groupByKind: false, tasksViewMode: 'kanban', bogus: 'x' }
+    } as Awaited<ReturnType<typeof getVaultSettings>>)
+    const saved = await getVaultSettings(root)
+    expect(saved.view?.noteSortOrder).toBe('name-asc')
+    expect(saved.view?.groupByKind).toBe(false)
+    expect(saved.view?.tasksViewMode).toBe('kanban')
+    expect((saved.view as Record<string, unknown> | undefined)?.bogus).toBeUndefined()
+  })
+
+  it('omits the view block when there are no overrides', async () => {
+    const root = await makeTempDir('zennotes-vault-noview-')
+    await ensureVaultLayout(root)
+    expect((await getVaultSettings(root)).view).toBeUndefined()
+  })
+})

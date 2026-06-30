@@ -860,3 +860,70 @@ describe('database deletion', () => {
     expect(findLeaf(useStore.getState().paneLayout, paneId)?.tabs ?? []).not.toContain(tabPath)
   })
 })
+
+describe('viewPrefsFromVault (#292 — per-vault view overlay)', () => {
+  type ViewArg = Parameters<Awaited<ReturnType<typeof loadStore>>['viewPrefsFromVault']>[0]
+
+  it('overlays valid view overrides onto the prefs patch', async () => {
+    installZen()
+    const { viewPrefsFromVault } = await loadStore()
+    const patch = viewPrefsFromVault({
+      view: {
+        noteSortOrder: 'name-asc',
+        groupByKind: false,
+        tasksViewMode: 'kanban',
+        kanbanGroupBy: 'priority',
+        autoReveal: true,
+        unifiedSidebar: true
+      }
+    } as unknown as ViewArg)
+    expect(patch.noteSortOrder).toBe('name-asc')
+    expect(patch.groupByKind).toBe(false)
+    expect(patch.tasksViewMode).toBe('kanban')
+    expect(patch.kanbanGroupBy).toBe('priority')
+    expect(patch.autoReveal).toBe(true)
+    expect(patch.unifiedSidebar).toBe(true)
+  })
+
+  it('drops invalid enum values (they stay out of the patch → keep the global)', async () => {
+    installZen()
+    const { viewPrefsFromVault } = await loadStore()
+    const patch = viewPrefsFromVault({
+      view: { noteSortOrder: 'totally-invalid', tasksViewMode: 'nope' }
+    } as unknown as ViewArg)
+    expect('noteSortOrder' in patch).toBe(false)
+    expect('tasksViewMode' in patch).toBe(false)
+  })
+
+  it('returns an empty patch when there is no view block', async () => {
+    installZen()
+    const { viewPrefsFromVault } = await loadStore()
+    expect(viewPrefsFromVault({} as unknown as ViewArg)).toEqual({})
+    expect(viewPrefsFromVault(null)).toEqual({})
+  })
+})
+
+describe('viewSettingsScope (#292 — global vs per-vault)', () => {
+  it('overlays the vault view when switching to per-vault, not when switching to global', async () => {
+    installZen()
+    const { useStore } = await loadStore()
+    // A vault override that differs from the live (global) prefs.
+    useStore.setState({
+      vaultSettings: {
+        ...useStore.getState().vaultSettings,
+        view: { groupByKind: false, noteSortOrder: 'name-asc' }
+      },
+      groupByKind: true,
+      noteSortOrder: 'none',
+      viewSettingsScope: 'global'
+    })
+    // Global scope leaves the live (global) prefs alone.
+    useStore.getState().setViewSettingsScope('global')
+    expect(useStore.getState().groupByKind).toBe(true)
+    expect(useStore.getState().noteSortOrder).toBe('none')
+    // Per-vault scope overlays the vault's saved view immediately (no reopen).
+    useStore.getState().setViewSettingsScope('vault')
+    expect(useStore.getState().groupByKind).toBe(false)
+    expect(useStore.getState().noteSortOrder).toBe('name-asc')
+  })
+})

@@ -490,6 +490,8 @@ export function SettingsModal(): JSX.Element {
   const setPreviewMaxWidth = useStore((s) => s.setPreviewMaxWidth)
   const lineNumberMode = useStore((s) => s.lineNumberMode)
   const setLineNumberMode = useStore((s) => s.setLineNumberMode)
+  const viewSettingsScope = useStore((s) => s.viewSettingsScope)
+  const setViewSettingsScope = useStore((s) => s.setViewSettingsScope)
   const lineNumberPosition = useStore((s) => s.lineNumberPosition)
   const setLineNumberPosition = useStore((s) => s.setLineNumberPosition)
   const interfaceFont = useStore((s) => s.interfaceFont)
@@ -724,25 +726,12 @@ export function SettingsModal(): JSX.Element {
   }, [themeFamily, effectiveMode])
 
   const pickFamily = (family: ThemeFamily): void => {
-    // When family changes, keep the mode the same and pick the canonical
-    // first variant in that family (medium for gruvbox, default for
-    // catppuccin/github).
-    const preferred: Partial<Record<ThemeFamily, { light: string; dark: string }>> = {
-      apple: { light: 'apple-light', dark: 'apple-dark' },
-      gruvbox: { light: 'light-medium', dark: 'dark-medium' },
-      catppuccin: { light: 'catppuccin-latte', dark: 'catppuccin-mocha' },
-      github: { light: 'github-light', dark: 'github-dark' },
-      solarized: { light: 'solarized-light', dark: 'solarized-dark' },
-      one: { light: 'one-light', dark: 'one-dark' },
-      nord: { light: 'nord-light', dark: 'nord-dark' },
-      'tokyo-night': { light: 'tokyo-night-day', dark: 'tokyo-night-storm' },
-      kanagawa: { light: 'kanagawa-lotus', dark: 'kanagawa-wave' },
-      'black-metal': { light: 'black-metal-day', dark: 'black-metal' }
-    }
-    // Custom themes have their own picker section, so this only runs for built-ins.
-    const pref = preferred[family]
-    if (!pref) return
-    setTheme({ id: pref[effectiveMode], family, mode: themeMode })
+    // Custom themes have their own picker section.
+    if (family === 'custom') return
+    // `resolveAuto` is the single source of truth for a family's default variant
+    // (it also carries the current variant across modes), so every built-in
+    // family resolves here automatically — no separate map to keep in sync.
+    setTheme({ id: resolveAuto(family, effectiveMode === 'dark', themeId), family, mode: themeMode })
   }
 
   const pickMode = (mode: ThemeMode): void => {
@@ -2071,6 +2060,12 @@ export function SettingsModal(): JSX.Element {
           keywords: ['primary notes', 'inbox', 'vault root']
         },
         {
+          id: 'view-settings-scope',
+          title: 'View settings',
+          description: 'Apply note-list & view preferences (sort, grouping, the Tasks view) the same everywhere, or independently per vault.',
+          keywords: ['view', 'per vault', 'global', 'sort', 'group', 'scope', 'tasks view']
+        },
+        {
           id: 'enable-daily-notes',
           title: 'Enable daily notes',
           description: 'Adds a dedicated daily-notes workflow without changing ordinary note creation.',
@@ -2410,6 +2405,22 @@ export function SettingsModal(): JSX.Element {
                   primaryNotesLocation
                 })
               }
+            />
+          </Section>
+          <Section
+            title="View settings"
+            description="Whether note-list & view preferences are shared across all vaults or kept per vault."
+          >
+            <SegmentedRow
+              label="Apply view settings"
+              description="`Global` uses one set of view preferences (sort order, grouping, the Tasks view, kanban columns, …) everywhere. `Per vault` lets each vault keep its own, saved in its `.zennotes/`."
+              value={viewSettingsScope}
+              settingId="view-settings-scope"
+              options={[
+                { value: 'global', label: 'Global' },
+                { value: 'vault', label: 'Per vault' }
+              ]}
+              onChange={(next) => setViewSettingsScope(next as 'global' | 'vault')}
             />
           </Section>
 

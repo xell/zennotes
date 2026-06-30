@@ -58,4 +58,22 @@ describe('built-in theme registry ↔ CSS', () => {
     expect(resolveAuto('rose-pine', true)).toBe('rose-pine-main')
     expect(resolveAuto('rose-pine', false)).toBe('rose-pine-dawn')
   })
+
+  // The Settings family picker resolves a clicked family via resolveAuto. A
+  // family with no explicit case falls through to GitHub's default (a real id
+  // but the WRONG family), so clicking it would silently apply the wrong theme.
+  // Assert resolveAuto returns a variant OF THE REQUESTED family for each one.
+  it('resolveAuto returns a variant of the requested family (both modes)', () => {
+    const families = [...new Set(builtins.map((t) => t.family))]
+    for (const family of families) {
+      for (const dark of [true, false]) {
+        const id = resolveAuto(family, dark)
+        const resolved = THEMES.find((t) => t.id === id)
+        expect(
+          resolved?.family,
+          `resolveAuto('${family}', ${dark}) → "${id}" (family ${resolved?.family})`
+        ).toBe(family)
+      }
+    }
+  })
 })

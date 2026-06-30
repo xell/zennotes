@@ -300,6 +300,16 @@ function setVaultSettings(next: VaultSettings): Promise<VaultSettings> {
   })
 }
 
+// Workspace state lives in the desktop vault's .zennotes/ on disk (#292); the
+// web build has no local vault filesystem, so these are no-ops.
+function readWorkspaceState(): Promise<string | null> {
+  return Promise.resolve(null)
+}
+
+function writeWorkspaceState(_json: string): Promise<void> {
+  return Promise.resolve()
+}
+
 function rootContentHiddenByInboxMode(): Promise<boolean> {
   // Desktop-local concern; the web/server build never hides root content this way.
   return Promise.resolve(false)
@@ -1430,6 +1440,8 @@ export const httpBridge: ZenBridge = {
   browseServerDirectories,
   getVaultSettings,
   setVaultSettings,
+  readWorkspaceState,
+  writeWorkspaceState,
   rootContentHiddenByInboxMode,
 
   listNotes,

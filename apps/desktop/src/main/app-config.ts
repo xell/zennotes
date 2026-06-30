@@ -207,6 +207,11 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
       'none | manual | updated-desc | updated-asc | created-desc | created-asc | name-asc | name-desc'
   },
   groupByKind: { section: 'view', tomlKey: 'group_by_kind', comment: 'group notes by kind in the list' },
+  viewSettingsScope: {
+    section: 'view',
+    tomlKey: 'view_settings_scope',
+    comment: 'apply note/list view settings globally or per vault (global | vault)'
+  },
   autoReveal: {
     section: 'view',
     tomlKey: 'auto_reveal',

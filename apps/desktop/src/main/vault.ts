@@ -24,6 +24,7 @@ import {
   type FolderColorId,
   type PrimaryNotesLocation,
   type VaultSettings,
+  type VaultViewSettings,
   FolderEntry,
   ImportedAsset,
   ImportedAssetKind,
@@ -758,7 +759,18 @@ function cloneVaultSettings(settings: VaultSettings): VaultSettings {
     },
     folderIcons: { ...settings.folderIcons },
     folderColors: { ...settings.folderColors },
-    favorites: [...settings.favorites]
+    favorites: [...settings.favorites],
+    ...(settings.view ? { view: cloneVaultViewSettings(settings.view) } : {})
+  }
+}
+
+/** Deep-clone the per-vault view overrides (#292) — plain data, but the nested
+ *  records need their own copies so callers can't mutate the stored object. */
+function cloneVaultViewSettings(view: VaultViewSettings): VaultViewSettings {
+  return {
+    ...view,
+    ...(view.kanbanColumnTitles ? { kanbanColumnTitles: { ...view.kanbanColumnTitles } } : {}),
+    ...(view.systemFolderLabels ? { systemFolderLabels: { ...view.systemFolderLabels } } : {})
   }
 }
 
@@ -897,6 +909,7 @@ function normalizeVaultSettings(
     folderIcons?: Record<string, unknown> | null
     folderColors?: Record<string, unknown> | null
     favorites?: unknown
+    view?: unknown
   }
   const folderIcons: Record<string, FolderIconId> = {}
   if (candidate.folderIcons && typeof candidate.folderIcons === 'object') {
@@ -935,8 +948,31 @@ function normalizeVaultSettings(
     },
     folderIcons,
     folderColors: normalizeFolderColors(candidate.folderColors),
-    favorites: normalizeFavorites(candidate.favorites)
+    favorites: normalizeFavorites(candidate.favorites),
+    view: normalizeVaultViewSettings(candidate.view)
   }
+}
+
+/** Carry the per-vault view overrides (#292) through the round-trip, keeping
+ *  only known keys. The renderer validates the values strictly; here we just
+ *  preserve a clean object (or undefined when there are no overrides). */
+function normalizeVaultViewSettings(raw: unknown): VaultViewSettings | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const c = raw as Record<string, unknown>
+  const view: VaultViewSettings = {}
+  if (typeof c.noteSortOrder === 'string') view.noteSortOrder = c.noteSortOrder
+  if (typeof c.groupByKind === 'boolean') view.groupByKind = c.groupByKind
+  if (typeof c.tasksViewMode === 'string') view.tasksViewMode = c.tasksViewMode
+  if (typeof c.kanbanGroupBy === 'string') view.kanbanGroupBy = c.kanbanGroupBy
+  if (c.kanbanColumnTitles && typeof c.kanbanColumnTitles === 'object') {
+    view.kanbanColumnTitles = c.kanbanColumnTitles as Record<string, string>
+  }
+  if (typeof c.autoReveal === 'boolean') view.autoReveal = c.autoReveal
+  if (c.systemFolderLabels && typeof c.systemFolderLabels === 'object') {
+    view.systemFolderLabels = c.systemFolderLabels as Record<string, unknown>
+  }
+  if (typeof c.unifiedSidebar === 'boolean') view.unifiedSidebar = c.unifiedSidebar
+  return Object.keys(view).length > 0 ? view : undefined
 }
 
 function normalizeFavorites(value: unknown): string[] {

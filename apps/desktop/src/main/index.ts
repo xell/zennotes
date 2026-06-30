@@ -2071,6 +2071,29 @@ function registerIpc(): void {
     return await setVaultSettings(v.root, next)
   })
 
+  // Per-vault workspace state (#292): open tabs, pane layout, sidebar, cursors.
+  // Stored as <vault>/.zennotes/workspace.json so it travels with the vault.
+  // Local vaults only — remote workspaces manage their session server-side.
+  handle(IPC.WORKSPACE_STATE_READ, async (): Promise<string | null> => {
+    if (isRemoteWorkspaceActive()) return null
+    const v = requireVault()
+    try {
+      return await fsp.readFile(path.join(v.root, '.zennotes', 'workspace.json'), 'utf8')
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw err
+    }
+  })
+
+  handle(IPC.WORKSPACE_STATE_WRITE, async (_e, json: string): Promise<void> => {
+    if (isRemoteWorkspaceActive()) return
+    if (typeof json !== 'string') return
+    const v = requireVault()
+    const dir = path.join(v.root, '.zennotes')
+    await fsp.mkdir(dir, { recursive: true })
+    await fsp.writeFile(path.join(dir, 'workspace.json'), json, 'utf8')
+  })
+
   handle(IPC.VAULT_ROOT_CONTENT_HIDDEN, async () => {
     // Local-vault only: a remote workspace manages its own layout server-side.
     if (isRemoteWorkspaceActive()) return false

@@ -17,6 +17,7 @@ import type {
   RemoteWorkspaceProfileInput,
   ServerCapabilities,
   VaultSettings,
+  VaultViewSettings,
   VaultTextSearchBackendPreference,
   VaultChangeEvent,
   VaultInfo,
@@ -171,6 +172,9 @@ export type CommandPaletteInitialMode = 'main' | 'vault'
 
 const PREFS_KEY = 'zen:prefs:v2'
 const WORKSPACE_KEY = 'zen:workspace:v1'
+/** Debounce for mirroring the workspace snapshot to the synced vault file —
+ *  localStorage updates immediately; the file lags to bound sync churn. (#292) */
+const WORKSPACE_FILE_DEBOUNCE_MS = 1500
 const VALID_FAMILIES: ThemeFamily[] = [
   'apple',
   'gruvbox',
@@ -378,6 +382,9 @@ interface Prefs {
   previewMaxWidth: number   // px — max reading width for preview surfaces
   lineNumberMode: LineNumberMode
   lineNumberPosition: LineNumberPosition
+  /** Whether note-list/view prefs (sort, grouping, tasks view, …) apply the
+   *  same everywhere ('global') or independently per vault ('vault'). (#292) */
+  viewSettingsScope: 'global' | 'vault'
   /** Font used by the whole app chrome (sidebar, menus, title bar). */
   interfaceFont: string | null
   /** Font used inside the editor + preview content. */
@@ -508,6 +515,66 @@ function normalizeKanbanColumnTitles(raw: unknown): Record<string, string> {
   return out
 }
 
+/**
+ * Build the store patch that overlays a vault's per-vault view overrides (#292)
+ * onto the 8 view prefs. Unset/invalid keys are omitted, so the live (global)
+ * value is kept for them. Applied on every vault open.
+ */
+export function viewPrefsFromVault(settings: VaultSettings | null | undefined): Partial<Store> {
+  const v = settings?.view
+  if (!v || typeof v !== 'object') return {}
+  const patch: Partial<Store> = {}
+  if (typeof v.noteSortOrder === 'string' && VALID_SORTS.includes(v.noteSortOrder as NoteSortOrder)) {
+    patch.noteSortOrder = v.noteSortOrder as NoteSortOrder
+  }
+  if (typeof v.groupByKind === 'boolean') patch.groupByKind = v.groupByKind
+  if (
+    typeof v.tasksViewMode === 'string' &&
+    VALID_TASKS_VIEW_MODES.includes(v.tasksViewMode as TasksViewMode)
+  ) {
+    patch.tasksViewMode = v.tasksViewMode as TasksViewMode
+  }
+  if (
+    typeof v.kanbanGroupBy === 'string' &&
+    VALID_KANBAN_GROUP_BYS.includes(v.kanbanGroupBy as KanbanGroupBy)
+  ) {
+    patch.kanbanGroupBy = v.kanbanGroupBy as KanbanGroupBy
+  }
+  if (v.kanbanColumnTitles && typeof v.kanbanColumnTitles === 'object') {
+    patch.kanbanColumnTitles = normalizeKanbanColumnTitles(v.kanbanColumnTitles)
+  }
+  if (typeof v.autoReveal === 'boolean') patch.autoReveal = v.autoReveal
+  if (v.systemFolderLabels && typeof v.systemFolderLabels === 'object') {
+    patch.systemFolderLabels = normalizeSystemFolderLabels(v.systemFolderLabels)
+  }
+  if (typeof v.unifiedSidebar === 'boolean') patch.unifiedSidebar = v.unifiedSidebar
+  return patch
+}
+
+let viewPersistTimer: ReturnType<typeof setTimeout> | null = null
+let pendingViewPatch: VaultViewSettings = {}
+
+/** Persist a view-pref change to the CURRENT vault's `vault.json` `view` block
+ *  (debounced + coalesced) so the choice is per-vault. The global pref keeps
+ *  being written too (it's the floating default for vaults with no override). (#292) */
+function persistVaultViewOverride(patch: VaultViewSettings): void {
+  // Only persist per-vault when the user opted into per-vault scope; in 'global'
+  // scope the 8 setters keep writing the global config only. (#292)
+  if (useStore.getState().viewSettingsScope !== 'vault') return
+  pendingViewPatch = { ...pendingViewPatch, ...patch }
+  if (viewPersistTimer) clearTimeout(viewPersistTimer)
+  viewPersistTimer = setTimeout(() => {
+    viewPersistTimer = null
+    const toApply = pendingViewPatch
+    pendingViewPatch = {}
+    const current = useStore.getState().vaultSettings
+    void useStore.getState().setVaultSettings({
+      ...current,
+      view: { ...(current.view ?? {}), ...toApply }
+    })
+  }, 400)
+}
+
 export const DEFAULT_PREFS: Prefs = {
   vimMode: true,
   vimInsertEscape: '',
@@ -535,6 +602,7 @@ export const DEFAULT_PREFS: Prefs = {
   previewMaxWidth: 920,
   lineNumberMode: 'off',
   lineNumberPosition: 'text',
+  viewSettingsScope: 'global',
   // Leave all font slots on the built-in "Default" path. That lets the
   // shipped CSS fallbacks choose sensible system fonts on each machine
   // instead of forcing a specific family that may not exist.
@@ -664,6 +732,7 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
       p.lineNumberMode && VALID_LINE_NUMBER_MODES.includes(p.lineNumberMode)
         ? p.lineNumberMode
         : DEFAULT_PREFS.lineNumberMode,
+    viewSettingsScope: p.viewSettingsScope === 'vault' ? 'vault' : 'global',
     lineNumberPosition:
       p.lineNumberPosition && VALID_LINE_NUMBER_POSITIONS.includes(p.lineNumberPosition)
         ? p.lineNumberPosition
@@ -1382,6 +1451,7 @@ function collectPrefs(s: {
   previewMaxWidth: number
   lineNumberMode: LineNumberMode
   lineNumberPosition: LineNumberPosition
+  viewSettingsScope: 'global' | 'vault'
   interfaceFont: string | null
   textFont: string | null
   monoFont: string | null
@@ -1444,6 +1514,7 @@ function collectPrefs(s: {
     editorLineHeight: s.editorLineHeight,
     previewMaxWidth: s.previewMaxWidth,
     lineNumberMode: s.lineNumberMode,
+    viewSettingsScope: s.viewSettingsScope,
     lineNumberPosition: s.lineNumberPosition,
     interfaceFont: s.interfaceFont,
     textFont: s.textFont,
@@ -1503,6 +1574,10 @@ interface WorkspaceSnapshot {
   sidebarOpen: boolean
   noteListOpen: boolean
   selectedTags: string[]
+  /** Epoch ms of the last write — drives newest-wins when the synced file and
+   *  the local cache disagree (e.g. after working in this vault on another
+   *  machine). (#292) */
+  savedAt?: number
 }
 
 interface ZenRestoreState {
@@ -1522,7 +1597,7 @@ function loadWorkspaceSnapshots(): Record<string, unknown> {
   }
 }
 
-function saveWorkspaceSnapshot(root: string, snapshot: WorkspaceSnapshot): void {
+function writeWorkspaceSnapshotToCache(root: string, snapshot: unknown): void {
   try {
     const allSnapshots = loadWorkspaceSnapshots()
     allSnapshots[root] = snapshot
@@ -1532,8 +1607,55 @@ function saveWorkspaceSnapshot(root: string, snapshot: WorkspaceSnapshot): void 
   }
 }
 
+let workspaceFileWriteTimer: ReturnType<typeof setTimeout> | null = null
+
+function saveWorkspaceSnapshot(root: string, snapshot: WorkspaceSnapshot): void {
+  const stamped: WorkspaceSnapshot = { ...snapshot, savedAt: Date.now() }
+  // localStorage stays the fast, synchronous local cache.
+  writeWorkspaceSnapshotToCache(root, stamped)
+  // Mirror to <vault>/.zennotes/workspace.json (debounced) so the workspace
+  // syncs with the vault across machines. The IPC targets the CURRENT window's
+  // vault, so drop the write if the vault changed during the debounce. (#292)
+  if (workspaceFileWriteTimer) clearTimeout(workspaceFileWriteTimer)
+  workspaceFileWriteTimer = setTimeout(() => {
+    workspaceFileWriteTimer = null
+    if (useStore.getState().vault?.root !== root) return
+    try {
+      void window.zen?.writeWorkspaceState?.(JSON.stringify(stamped))
+    } catch {
+      /* ignore */
+    }
+  }, WORKSPACE_FILE_DEBOUNCE_MS)
+}
+
 function loadWorkspaceSnapshot(root: string): unknown {
   return loadWorkspaceSnapshots()[root] ?? null
+}
+
+/** Pick the freshest workspace snapshot between the local cache and the synced
+ *  file (newest-wins by `savedAt`), refreshing the cache when the file wins. The
+ *  file IPC targets the current window's vault, which matches `root` at restore
+ *  time. (#292) */
+async function loadBestWorkspaceSnapshot(root: string): Promise<unknown> {
+  const local = loadWorkspaceSnapshot(root) as { savedAt?: unknown } | null
+  let fileSnap: { savedAt?: unknown } | null = null
+  try {
+    const raw = await window.zen?.readWorkspaceState?.()
+    if (raw) {
+      const parsed = JSON.parse(raw) as unknown
+      if (parsed && typeof parsed === 'object') fileSnap = parsed as { savedAt?: unknown }
+    }
+  } catch {
+    /* ignore — fall back to the local cache */
+  }
+  if (!fileSnap) return local
+  const fileAt = typeof fileSnap.savedAt === 'number' ? fileSnap.savedAt : 0
+  const localAt = local && typeof local.savedAt === 'number' ? local.savedAt : -1
+  if (fileAt >= localAt) {
+    writeWorkspaceSnapshotToCache(root, fileSnap)
+    return fileSnap
+  }
+  return local
 }
 
 function normalizeWorkspaceView(raw: unknown): View {
@@ -1819,6 +1941,7 @@ interface Store {
   previewMaxWidth: number
   lineNumberMode: LineNumberMode
   lineNumberPosition: LineNumberPosition
+  viewSettingsScope: 'global' | 'vault'
   interfaceFont: string | null
   textFont: string | null
   monoFont: string | null
@@ -2147,6 +2270,7 @@ interface Store {
   setEditorLineHeight: (mult: number) => void
   setPreviewMaxWidth: (px: number) => void
   setLineNumberMode: (mode: LineNumberMode) => void
+  setViewSettingsScope: (scope: 'global' | 'vault') => void
   setLineNumberPosition: (position: LineNumberPosition) => void
   setInterfaceFont: (family: string | null) => void
   setTextFont: (family: string | null) => void
@@ -3082,7 +3206,15 @@ export const useStore = create<Store>((set, get) => {
 
   const restoreWorkspaceForVault = async (vault: VaultInfo): Promise<void> => {
     const startedAt = performance.now()
-    const rawSnapshot = loadWorkspaceSnapshot(vault.root)
+    // Overlay this vault's per-vault view overrides onto the live prefs — only
+    // in per-vault scope; in 'global' scope the global prefs win. (#292)
+    if (get().viewSettingsScope === 'vault') {
+      const viewOverlay = viewPrefsFromVault(get().vaultSettings)
+      if (Object.keys(viewOverlay).length > 0) set(viewOverlay)
+    }
+    // Prefer the synced .zennotes/workspace.json when it's newer than the local
+    // cache, so opening a vault on another machine restores its workspace. (#292)
+    const rawSnapshot = await loadBestWorkspaceSnapshot(vault.root)
     if (!rawSnapshot || typeof rawSnapshot !== 'object') {
       set({
         collapsedFolders: computeStartupCollapsedFolders(
@@ -3240,6 +3372,7 @@ export const useStore = create<Store>((set, get) => {
   editorLineHeight: loadPrefs().editorLineHeight,
   previewMaxWidth: loadPrefs().previewMaxWidth,
   lineNumberMode: loadPrefs().lineNumberMode,
+  viewSettingsScope: loadPrefs().viewSettingsScope,
   lineNumberPosition: loadPrefs().lineNumberPosition,
   interfaceFont: loadPrefs().interfaceFont,
   textFont: loadPrefs().textFont,
@@ -3989,10 +4122,12 @@ export const useStore = create<Store>((set, get) => {
   setTasksViewMode: (mode) => {
     set({ tasksViewMode: mode, taskCursorIndex: 0 })
     savePrefs(collectPrefs(get()))
+    persistVaultViewOverride({ tasksViewMode: mode })
   },
   setKanbanGroupBy: (group) => {
     set({ kanbanGroupBy: group })
     savePrefs(collectPrefs(get()))
+    persistVaultViewOverride({ kanbanGroupBy: group })
   },
   setKanbanColumnTitle: (group, columnId, title) => {
     const key = `${group}:${columnId}`
@@ -4002,6 +4137,7 @@ export const useStore = create<Store>((set, get) => {
     else delete nextTitles[key]
     set({ kanbanColumnTitles: nextTitles })
     savePrefs(collectPrefs(get()))
+    persistVaultViewOverride({ kanbanColumnTitles: nextTitles })
   },
   setTasksCalendarSelectedDate: (iso) => set({ tasksCalendarSelectedDate: iso }),
   setTasksCalendarMonthAnchor: (iso) => set({ tasksCalendarMonthAnchor: iso }),
@@ -4295,7 +4431,13 @@ export const useStore = create<Store>((set, get) => {
         ? window.zen
             .getVaultSettings()
             .then((settings) => {
-              set({ vaultSettings: normalizeVaultSettings(settings) })
+              const normalized = normalizeVaultSettings(settings)
+              // Re-overlay view overrides if vault.json changed externally — only
+              // in per-vault scope. (#292)
+              set({
+                vaultSettings: normalized,
+                ...(get().viewSettingsScope === 'vault' ? viewPrefsFromVault(normalized) : {})
+              })
             })
             .catch((err) => {
               console.error('refresh vault settings failed', err)
@@ -5029,6 +5171,14 @@ export const useStore = create<Store>((set, get) => {
     set({ lineNumberMode: mode })
     savePrefs(collectPrefs(get()))
   },
+  setViewSettingsScope: (scope) => {
+    set({ viewSettingsScope: scope })
+    savePrefs(collectPrefs(get()))
+    // Switching to per-vault: overlay this vault's saved view immediately so the
+    // change takes effect without a reopen. Switching to global keeps the live
+    // (global) values as-is. (#292)
+    if (scope === 'vault') set(viewPrefsFromVault(get().vaultSettings))
+  },
   setLineNumberPosition: (position) => {
     set({ lineNumberPosition: position })
     savePrefs(collectPrefs(get()))
@@ -5055,6 +5205,7 @@ export const useStore = create<Store>((set, get) => {
           ) as SystemFolderLabels
     }))
     savePrefs(collectPrefs(get()))
+    persistVaultViewOverride({ systemFolderLabels: get().systemFolderLabels })
   },
   setSidebarWidth: (px) => {
     const clamped = Math.min(520, Math.max(160, Math.round(px)))
@@ -5069,6 +5220,7 @@ export const useStore = create<Store>((set, get) => {
   setNoteSortOrder: (order) => {
     set({ noteSortOrder: order })
     savePrefs(collectPrefs(get()))
+    persistVaultViewOverride({ noteSortOrder: order })
   },
   reorderNoteManually: (draggedPath, targetPath, position) => {
     const dir = parentDirOf(draggedPath)
@@ -5131,14 +5283,17 @@ export const useStore = create<Store>((set, get) => {
   setGroupByKind: (on) => {
     set({ groupByKind: on })
     savePrefs(collectPrefs(get()))
+    persistVaultViewOverride({ groupByKind: on })
   },
   setAutoReveal: (on) => {
     set({ autoReveal: on })
     savePrefs(collectPrefs(get()))
+    persistVaultViewOverride({ autoReveal: on })
   },
   setUnifiedSidebar: () => {
     set({ unifiedSidebar: true })
     savePrefs(collectPrefs(get()))
+    persistVaultViewOverride({ unifiedSidebar: true })
   },
   setDarkSidebar: (on) => {
     set({ darkSidebar: on })
