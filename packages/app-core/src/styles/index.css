@@ -4147,82 +4147,14 @@ textarea,
   display: none;
 }
 
-/* unified diff view — @codemirror/merge
-   ──────────────────────────────────────
-   Opacity variables so light/dark modes share one rule-set. Dark themes
-   use the same --z-err / --z-accent hue but higher alphas to stay visible
-   on dark backgrounds. The variables cascade from :root so they always
-   reflect whichever theme is active. */
-:root {
-  --diff-del-bg:     rgb(var(--z-err)    / 0.14);
-  --diff-del-text:   rgb(var(--z-err)    / 0.40);
-  --diff-del-gutter: rgb(var(--z-err)    / 0.28);
-  --diff-ins-bg:     rgb(var(--z-accent) / 0.12);
-  --diff-ins-text:   rgb(var(--z-accent) / 0.34);
-  --diff-ins-gutter: rgb(var(--z-accent) / 0.24);
-  --diff-col-bg:     rgb(var(--z-fg-1)   / 0.06);
-  --diff-col-fg:     rgb(var(--z-fg-1)   / 0.50);
-}
+/* unified diff view — @codemirror/merge */
 
-:root[data-theme="apple-dark"],
-:root[data-theme="catppuccin-frappe"],
-:root[data-theme="catppuccin-macchiato"],
-:root[data-theme="catppuccin-mocha"],
-:root[data-theme="github-dark"],
-:root[data-theme="github-dark-dimmed"],
-:root[data-theme="github-dark-high-contrast"],
-:root[data-theme="github-dark-colorblind"],
-:root[data-theme="github-dark-tritanopia"],
-:root[data-theme="solarized-dark"],
-:root[data-theme="one-dark"],
-:root[data-theme="nord-dark"],
-:root[data-theme="tokyo-night-storm"],
-:root[data-theme="kanagawa-wave"],
-:root[data-theme="kanagawa-dragon"],
-:root[data-theme="black-metal"] {
-  --diff-del-bg:     rgb(var(--z-err)    / 0.26);
-  --diff-del-text:   rgb(var(--z-err)    / 0.56);
-  --diff-del-gutter: rgb(var(--z-err)    / 0.42);
-  --diff-ins-bg:     rgb(var(--z-accent) / 0.20);
-  --diff-ins-text:   rgb(var(--z-accent) / 0.48);
-  --diff-ins-gutter: rgb(var(--z-accent) / 0.34);
-  --diff-col-bg:     rgb(var(--z-fg-1)   / 0.13);
-  --diff-col-fg:     rgb(var(--z-fg-1)   / 0.65);
-}
-
-/* Deleted lines and inline spans */
-.cm-editor .cm-deletedChunk,
-.cm-editor .cm-deletedLine {
-  background-color: var(--diff-del-bg);
-}
-.cm-editor .cm-deletedText {
-  background-color: var(--diff-del-text);
-  border-radius: 2px;
-}
-.cm-editor .cm-deletedLineGutter {
-  background-color: var(--diff-del-gutter);
-}
-
-/* Inserted / changed lines and inline spans */
-.cm-editor .cm-insertedLine,
-.cm-editor .cm-changedLine,
-.cm-editor .cm-inlineChangedLine {
-  background-color: var(--diff-ins-bg);
-}
-.cm-editor .cm-changedText {
-  background-color: var(--diff-ins-text);
-  border-radius: 2px;
-}
-.cm-editor .cm-changedLineGutter,
-.cm-editor .cm-inlineChangedLineGutter {
-  background-color: var(--diff-ins-gutter);
-}
-
-/* Collapsed unchanged-lines section: solid color, no gradient */
+/* Collapsed unchanged-lines section: replace the library gradient with a
+   flat solid tint so it matches the app's no-gradient visual language. */
 .cm-editor .cm-collapsedLines {
   background-image: none !important;
-  background-color: var(--diff-col-bg) !important;
-  color: var(--diff-col-fg);
+  background-color: rgb(var(--z-fg-1) / 0.06) !important;
+  color: rgb(var(--z-fg-1) / 0.50);
 }
 
 /* Accept / reject chunk buttons — circular icons at the right margin.
