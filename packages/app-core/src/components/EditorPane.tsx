@@ -1462,6 +1462,25 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
         richMarkdownDeferredRef.current = false
         setSelectionCommentAction(null)
         const existingView = viewRef.current
+        // Capture the outgoing tab's selection here, synchronously, before
+        // destroying the view. The scroll-memory effect's cleanup (below)
+        // also tries to capture it, but when this container unmounts because
+        // the pane switched to a virtual tab (Assets Manager, asset viewer),
+        // React nulls this ref during the mutation phase — before that
+        // effect's layout-phase cleanup runs — so by the time it reads
+        // viewRef.current the view is already gone and the selection is
+        // silently lost (#), snapping the cursor to the top on return.
+        const capturePath = viewPathRef.current
+        if (existingView && capturePath) {
+          const prev = recallTabScroll(capturePath)
+          const selection = existingView.state.selection.main
+          rememberTabScroll(capturePath, {
+            editor: existingView.scrollDOM.scrollTop,
+            preview: previewScrollRef.current?.scrollTop ?? prev?.preview ?? 0,
+            editorSelectionAnchor: selection.anchor,
+            editorSelectionHead: selection.head
+          })
+        }
         if (
           existingView &&
           useStore.getState().editorViewRef === existingView
