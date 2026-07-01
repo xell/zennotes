@@ -316,10 +316,30 @@ class LocalImageWidget extends WidgetType {
 
     const bottomControls = document.createElement('div')
     bottomControls.className = 'local-image-embed-controls local-image-embed-controls-bottom'
+    const locateButton = document.createElement('button')
+    locateButton.type = 'button'
+    locateButton.className = 'local-image-embed-action local-image-embed-action-locate'
+    locateButton.textContent = '⌕'
+    locateButton.title = 'Locate in Assets Manager'
+    locateButton.setAttribute('aria-label', 'Locate in Assets Manager')
+    locateButton.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const state = useStore.getState()
+      const root = state.vault?.root
+      const notePath = state.activeNote?.path
+      const assetPath = root && notePath
+        ? resolveAssetVaultRelativePath(root, notePath, this.href)
+        : null
+      if (assetPath) {
+        void state.locateAssetInManager(assetPath)
+      }
+    })
+    bottomControls.append(locateButton)
     const openButton = document.createElement('button')
     openButton.type = 'button'
     openButton.className = 'local-image-embed-action local-image-embed-action-open'
-    openButton.textContent = '+'
+    openButton.textContent = '↗'
     openButton.title = 'Open image'
     openButton.setAttribute('aria-label', 'Open image')
     openButton.addEventListener('click', (event) => {

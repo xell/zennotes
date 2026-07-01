@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AssetMeta } from '@shared/ipc'
 import { useStore } from '../store'
 import { assetTabPath } from '../lib/asset-tabs'
@@ -53,10 +53,15 @@ export function AssetsView(): JSX.Element {
   const openNoteAndLocateText = useStore((s) => s.openNoteAndLocateText)
   const deleteAsset = useStore((s) => s.deleteAsset)
   const renameAssetAndRewriteReferences = useStore((s) => s.renameAssetAndRewriteReferences)
+  const pendingAssetLocate = useStore((s) => s.pendingAssetLocate)
+  const clearPendingAssetLocate = useStore((s) => s.clearPendingAssetLocate)
   const notes = useStore((s) => s.notes)
   const vaultRoot = useStore((s) => s.vault?.root ?? null)
   const [filter, setFilter] = useState('')
   const [menu, setMenu] = useState<{ x: number; y: number; asset: AssetMeta } | null>(null)
+  const [locateHighlightPath, setLocateHighlightPath] = useState<string | null>(null)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const locateHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const assets = useMemo(() => {
     const q = filter.trim().toLowerCase()
@@ -86,6 +91,41 @@ export function AssetsView(): JSX.Element {
   }, [notes, vaultRoot, assetFiles])
 
   const notesByPath = useMemo(() => new Map(notes.map((n) => [n.path, n])), [notes])
+
+  // Consume a pending "locate this asset" request (from an image embed's
+  // locate button): clear a filter that would hide it, then once it's in
+  // the rendered list, scroll it into view and flash-highlight the row.
+  useEffect(() => {
+    if (!pendingAssetLocate) return
+    if (!assets.some((a) => a.path === pendingAssetLocate)) {
+      if (filter) {
+        setFilter('')
+        return
+      }
+      clearPendingAssetLocate()
+      return
+    }
+    const raf = requestAnimationFrame(() => {
+      const row = scrollRef.current?.querySelector<HTMLElement>(
+        `[data-asset-path="${CSS.escape(pendingAssetLocate)}"]`
+      )
+      row?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      setLocateHighlightPath(pendingAssetLocate)
+      if (locateHighlightTimerRef.current) clearTimeout(locateHighlightTimerRef.current)
+      locateHighlightTimerRef.current = setTimeout(() => {
+        setLocateHighlightPath(null)
+        locateHighlightTimerRef.current = null
+      }, 1400)
+      clearPendingAssetLocate()
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [pendingAssetLocate, assets, filter, clearPendingAssetLocate])
+
+  useEffect(() => {
+    return () => {
+      if (locateHighlightTimerRef.current) clearTimeout(locateHighlightTimerRef.current)
+    }
+  }, [])
 
   const copyEmbed = (asset: AssetMeta): void => {
     void navigator.clipboard?.writeText(`![[${asset.name}]]`)
@@ -191,7 +231,7 @@ export function AssetsView(): JSX.Element {
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
         {assets.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-ink-400">
             {assetFiles.length === 0 ? 'No assets yet.' : 'No assets match your filter.'}
@@ -226,7 +266,12 @@ export function AssetsView(): JSX.Element {
                         e.preventDefault()
                         setMenu({ x: e.clientX, y: e.clientY, asset })
                       }}
-                      className={`${ASSET_ROW_GRID} group cursor-pointer px-3 py-1.5 outline-none hover:bg-paper-200/40 focus-visible:bg-paper-200/40`}
+                      data-asset-path={asset.path}
+                      className={[
+                        ASSET_ROW_GRID,
+                        'group cursor-pointer px-3 py-1.5 outline-none hover:bg-paper-200/40 focus-visible:bg-paper-200/40',
+                        locateHighlightPath === asset.path ? 'asset-row-locate-highlight' : ''
+                      ].join(' ')}
                       title={asset.path}
                     >
                       <div className="flex min-w-0 items-center gap-2.5">

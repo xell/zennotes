@@ -1758,6 +1758,19 @@ textarea,
       0 0 0 4px rgb(var(--z-accent) / 0.12);
   }
 }
+.asset-row-locate-highlight {
+  border-radius: 8px;
+  animation: cm-task-jump-highlight 1400ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .asset-row-locate-highlight {
+    animation: none;
+    background: rgb(var(--z-accent) / 0.24);
+    box-shadow:
+      inset 3px 0 0 rgb(var(--z-accent) / 0.86),
+      0 0 0 4px rgb(var(--z-accent) / 0.12);
+  }
+}
 .cm-editor .cm-gutters {
   flex-shrink: 0;
   border: 0;
@@ -2605,6 +2618,7 @@ textarea,
   position: absolute;
   inset-inline: 0;
   display: flex;
+  gap: 0.4rem;
   pointer-events: none;
   opacity: 0;
   transition: opacity 120ms ease;
@@ -2666,7 +2680,8 @@ textarea,
   outline-offset: 2px;
 }
 
-:is(.prose-zen, .cm-editor) .local-image-embed-action-open {
+:is(.prose-zen, .cm-editor) .local-image-embed-action-open,
+:is(.prose-zen, .cm-editor) .local-image-embed-action-locate {
   border-radius: 999px;
   min-width: 2.1rem;
   font-size: 1rem;

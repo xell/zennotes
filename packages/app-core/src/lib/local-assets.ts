@@ -171,13 +171,13 @@ function isStandaloneImageParagraph(img: HTMLImageElement): HTMLParagraphElement
   return text === '' ? paragraph : null
 }
 
-function buildImageAction(label: string, variant: 'edit' | 'open'): HTMLButtonElement {
+function buildImageAction(label: string, variant: 'edit' | 'open' | 'locate'): HTMLButtonElement {
   const button = document.createElement('button')
   button.type = 'button'
   button.className = `local-image-embed-action local-image-embed-action-${variant}`
   button.setAttribute('aria-label', label)
   button.title = label
-  button.textContent = variant === 'edit' ? '</>' : '+'
+  button.textContent = variant === 'edit' ? '</>' : variant === 'locate' ? '⌕' : '↗'
   return button
 }
 
@@ -186,7 +186,8 @@ function buildImageEmbed(
   rawHref: string,
   resolvedUrl: string,
   onRequestEdit?: (() => void) | null,
-  onOpenAsset?: (() => void) | null
+  onOpenAsset?: (() => void) | null,
+  onLocateAsset?: (() => void) | null
 ): HTMLElement {
   const figure = document.createElement('figure')
   figure.className = 'local-image-embed not-prose'
@@ -209,6 +210,15 @@ function buildImageEmbed(
 
   const controlsBottom = document.createElement('div')
   controlsBottom.className = 'local-image-embed-controls local-image-embed-controls-bottom'
+  if (onLocateAsset) {
+    const locateButton = buildImageAction('Locate in Assets Manager', 'locate')
+    locateButton.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      onLocateAsset()
+    })
+    controlsBottom.append(locateButton)
+  }
   const openButton = buildImageAction('Open image', 'open')
   openButton.addEventListener('click', (e) => {
     e.preventDefault()
@@ -361,6 +371,7 @@ export function enhanceLocalAssetNodes(
     pinnedAssetPath?: string | null
     onActivatePinnedRef?: (() => void) | null
     onOpenAsset?: ((assetPath: string) => void) | null
+    onLocateAsset?: ((assetPath: string) => void) | null
   }
 ): void {
   const {
@@ -369,7 +380,8 @@ export function enhanceLocalAssetNodes(
     onRequestEdit,
     pinnedAssetPath,
     onActivatePinnedRef,
-    onOpenAsset
+    onOpenAsset,
+    onLocateAsset
   } = options
   if (!vaultRoot || !notePath) return
 
@@ -391,7 +403,8 @@ export function enhanceLocalAssetNodes(
         raw,
         resolved,
         onRequestEdit,
-        assetVaultRel && onOpenAsset ? () => onOpenAsset(assetVaultRel) : null
+        assetVaultRel && onOpenAsset ? () => onOpenAsset(assetVaultRel) : null,
+        assetVaultRel && onLocateAsset ? () => onLocateAsset(assetVaultRel) : null
       )
     )
   })

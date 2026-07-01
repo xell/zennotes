@@ -385,6 +385,7 @@ export const Preview = memo(function Preview({
   const effectiveMode = usePreviewDiagramThemeMode();
   const selectNote = useStore((s) => s.selectNote);
   const openNoteInTab = useStore((s) => s.openNoteInTab);
+  const locateAssetInManager = useStore((s) => s.locateAssetInManager);
   const setView = useStore((s) => s.setView);
   const updateActiveBody = useStore((s) => s.updateActiveBody);
   const persistActive = useStore((s) => s.persistActive);
@@ -457,6 +458,7 @@ export const Preview = memo(function Preview({
   const togglePinnedRefVisibleRef = useRef(togglePinnedRefVisible);
   const selectNoteRef = useRef(selectNote);
   const openNoteInTabRef = useRef(openNoteInTab);
+  const locateAssetInManagerRef = useRef(locateAssetInManager);
   const updateActiveBodyRef = useRef(updateActiveBody);
   const persistActiveRef = useRef(persistActive);
 
@@ -493,6 +495,9 @@ export const Preview = memo(function Preview({
   useEffect(() => {
     openNoteInTabRef.current = openNoteInTab;
   }, [openNoteInTab]);
+  useEffect(() => {
+    locateAssetInManagerRef.current = locateAssetInManager;
+  }, [locateAssetInManager]);
   useEffect(() => {
     updateActiveBodyRef.current = updateActiveBody;
   }, [updateActiveBody]);
@@ -755,6 +760,9 @@ export const Preview = memo(function Preview({
       },
       onOpenAsset: (path) => {
         void openNoteInTabRef.current(assetTabPath(path));
+      },
+      onLocateAsset: (path) => {
+        void locateAssetInManagerRef.current(path);
       },
     });
 

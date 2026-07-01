@@ -2219,6 +2219,13 @@ interface Store {
   /** Open the built-in Archive tab in the active pane. */
   openArchiveView: () => Promise<void>
   openAssetsView: () => Promise<void>
+  /** Vault-relative asset path the Assets Manager should scroll to and
+   *  briefly highlight once it's open — set by locateAssetInManager,
+   *  consumed and cleared by AssetsView. */
+  pendingAssetLocate: string | null
+  /** Open the Assets Manager and scroll/highlight the row for `assetPath`. */
+  locateAssetInManager: (assetPath: string) => Promise<void>
+  clearPendingAssetLocate: () => void
   /** Open the built-in Trash tab in the active pane. */
   openTrashView: () => Promise<void>
   /** Read a CSV database (CSV + sidecar) into `databases` if not already loaded. */
@@ -3448,6 +3455,7 @@ export const useStore = create<Store>((set, get) => {
   assetFiles: [],
   assetUndoStack: [],
   hasAssetsDir: false,
+  pendingAssetLocate: null,
   view: { kind: 'folder', folder: 'inbox', subpath: '' },
   selectedPath: null,
   activeNote: null,
@@ -3753,6 +3761,13 @@ export const useStore = create<Store>((set, get) => {
     ;(document.activeElement as HTMLElement | null)?.blur?.()
     set({ focusedPanel: 'editor' })
   },
+
+  locateAssetInManager: async (assetPath) => {
+    await get().openAssetsView()
+    set({ pendingAssetLocate: assetPath })
+  },
+  clearPendingAssetLocate: () => set({ pendingAssetLocate: null }),
+
   loadDatabase: async (csvPath) => {
     if (get().databasesLoading[csvPath]) return
     set((s) => ({ databasesLoading: { ...s.databasesLoading, [csvPath]: true } }))
