@@ -266,6 +266,7 @@ function App(): JSX.Element {
   const themeFamily = useStore((s) => s.themeFamily)
   const themeMode = useStore((s) => s.themeMode)
   const editorFontSize = useStore((s) => s.editorFontSize)
+  const editorZoomDelta = useStore((s) => s.editorZoomDelta)
   const editorLineHeight = useStore((s) => s.editorLineHeight)
   const previewMaxWidth = useStore((s) => s.previewMaxWidth)
   const editorMaxWidth = useStore((s) => s.editorMaxWidth)
@@ -432,7 +433,8 @@ function App(): JSX.Element {
   // unset gracefully uses the platform default.
   useEffect(() => {
     const html = document.documentElement
-    html.style.setProperty('--z-editor-font-size', `${editorFontSize}px`)
+    const effectiveFontSize = Math.min(32, Math.max(12, editorFontSize + editorZoomDelta))
+    html.style.setProperty('--z-editor-font-size', `${effectiveFontSize}px`)
     html.style.setProperty('--z-editor-line-height', String(editorLineHeight))
     html.style.setProperty('--z-preview-max-width', `${previewMaxWidth}px`)
     html.style.setProperty('--z-editor-max-width', `${editorMaxWidth}px`)
@@ -458,7 +460,7 @@ function App(): JSX.Element {
       monoFont,
       '"SF Mono", "SFMono-Regular", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace'
     )
-  }, [editorFontSize, editorLineHeight, previewMaxWidth, editorMaxWidth, contentAlign, lineNumberPosition, interfaceFont, textFont, monoFont])
+  }, [editorFontSize, editorZoomDelta, editorLineHeight, previewMaxWidth, editorMaxWidth, contentAlign, lineNumberPosition, interfaceFont, textFont, monoFont])
 
   // The app now always runs fully opaque.
   useEffect(() => {
@@ -543,6 +545,21 @@ function App(): JSX.Element {
       if (matchesShortcut(e, overrides, 'global.zoomReset')) {
         e.preventDefault()
         void window.zen.resetAppZoom()
+        return
+      }
+      if (matchesShortcut(e, overrides, 'global.editorZoomIn')) {
+        e.preventDefault()
+        state.setEditorZoomDelta(state.editorZoomDelta + 1)
+        return
+      }
+      if (matchesShortcut(e, overrides, 'global.editorZoomOut')) {
+        e.preventDefault()
+        state.setEditorZoomDelta(state.editorZoomDelta - 1)
+        return
+      }
+      if (matchesShortcut(e, overrides, 'global.editorZoomReset')) {
+        e.preventDefault()
+        state.setEditorZoomDelta(0)
         return
       }
       if (matchesShortcut(e, overrides, 'global.historyBack')) {

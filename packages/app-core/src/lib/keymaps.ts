@@ -36,6 +36,9 @@ export type KeymapId =
   | "global.zoomIn"
   | "global.zoomOut"
   | "global.zoomReset"
+  | "global.editorZoomIn"
+  | "global.editorZoomOut"
+  | "global.editorZoomReset"
   | "global.historyBack"
   | "global.historyForward"
   | "vim.leaderPrefix"
@@ -360,6 +363,33 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Reset zoom",
     description: "Restore the app zoom factor to its default size.",
     defaultBinding: "Mod+0",
+  },
+  {
+    id: "global.editorZoomIn",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Editor zoom in",
+    description: "Increase the note editor font size.",
+    defaultBinding: "",
+  },
+  {
+    id: "global.editorZoomOut",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Editor zoom out",
+    description: "Decrease the note editor font size.",
+    defaultBinding: "",
+  },
+  {
+    id: "global.editorZoomReset",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Editor zoom reset",
+    description: "Restore the note editor font size to its default.",
+    defaultBinding: "",
   },
   {
     id: "global.historyBack",
@@ -1086,7 +1116,7 @@ export function getKeymapBinding(
   id: KeymapId,
 ): string {
   const override = overrides?.[id];
-  return override || getDefaultKeymapBinding(id);
+  return override !== undefined ? override : getDefaultKeymapBinding(id);
 }
 
 export function getSequenceTokens(
@@ -1348,6 +1378,11 @@ export function normalizeKeymapOverrides(input: unknown): KeymapOverrides {
   for (const definition of KEYMAP_DEFINITIONS) {
     const raw = (input as Record<string, unknown>)[definition.id];
     if (typeof raw !== "string") continue;
+    if (raw === "") {
+      // Explicit unbound: preserve only when the default is not already empty.
+      if (definition.defaultBinding !== "") overrides[definition.id] = "";
+      continue;
+    }
     const normalized = normalizeKeymapBinding(definition.id, raw);
     if (normalized && normalized !== definition.defaultBinding) {
       overrides[definition.id] = normalized;

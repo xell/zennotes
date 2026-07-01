@@ -3504,7 +3504,7 @@ function KeymapRecorderModal({
             <Button
               variant="primary"
               size="sm"
-              disabled={!binding}
+              disabled={binding === currentBinding}
               onClick={() => onSave(binding)}
             >
               Save
