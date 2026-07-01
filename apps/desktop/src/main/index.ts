@@ -601,7 +601,6 @@ function openExternalFileWindow(absPath: string): void {
   win.on('ready-to-show', () => win.show())
 
   installNavigationGuards(win)
-  installZoomControls(win)
   applyZoomFactor(win, currentZoomFactor)
 
   const params = `?externalFile=${encodeURIComponent(resolved)}`
@@ -824,46 +823,6 @@ async function adjustWindowZoom(
   return await setWindowZoom(target, base + delta)
 }
 
-function isZoomShortcut(input: Electron.Input, key: string, code: string): boolean {
-  return input.key === key || input.code === code
-}
-
-function installZoomControls(win: BrowserWindow): void {
-  win.webContents.on('before-input-event', (event, input) => {
-    const mod = input.control || input.meta
-    if (!mod || input.alt) return
-
-    if (
-      isZoomShortcut(input, '0', 'Digit0') ||
-      isZoomShortcut(input, ')', 'Digit0') ||
-      isZoomShortcut(input, '0', 'Numpad0') ||
-      isZoomShortcut(input, 'Insert', 'Numpad0')
-    ) {
-      event.preventDefault()
-      void setWindowZoom(win, DEFAULT_ZOOM_FACTOR)
-      return
-    }
-
-    if (
-      isZoomShortcut(input, '=', 'Equal') ||
-      isZoomShortcut(input, '+', 'Equal') ||
-      isZoomShortcut(input, '+', 'NumpadAdd')
-    ) {
-      event.preventDefault()
-      void adjustWindowZoom(win, ZOOM_STEP)
-      return
-    }
-
-    if (
-      isZoomShortcut(input, '-', 'Minus') ||
-      isZoomShortcut(input, '_', 'Minus') ||
-      isZoomShortcut(input, '-', 'NumpadSubtract')
-    ) {
-      event.preventDefault()
-      void adjustWindowZoom(win, -ZOOM_STEP)
-    }
-  })
-}
 
 function sanitizeWindowState(state: PersistedWindowState | null): PersistedWindowState | null {
   if (!state) return null
@@ -1057,7 +1016,6 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
   })
 
   installNavigationGuards(win)
-  installZoomControls(win)
   applyZoomFactor(win, currentZoomFactor)
 
   if (options.inheritWorkspaceFrom && !options.inheritWorkspaceFrom.isDestroyed()) {
@@ -3021,7 +2979,6 @@ function openFloatingNoteWindow(relPath: string): void {
     )
   })
   installNavigationGuards(win)
-  installZoomControls(win)
   applyZoomFactor(win, currentZoomFactor)
   if (sourceWindow && !sourceWindow.isDestroyed()) {
     inheritWindowWorkspaceSession(sourceWindow, win)
@@ -3112,7 +3069,6 @@ async function ensureQuickCaptureWindow(): Promise<BrowserWindow> {
   // over all spaces / fullscreen — see applyQuickCapturePinned.)
 
   installNavigationGuards(win)
-  installZoomControls(win)
   applyZoomFactor(win, currentZoomFactor)
   if (sourceWindow && !sourceWindow.isDestroyed()) {
     inheritWindowWorkspaceSession(sourceWindow, win)
@@ -3289,21 +3245,18 @@ function installAppMenu(): void {
         { type: 'separator' },
         {
           label: 'Actual Size',
-          accelerator: 'CmdOrCtrl+0',
           click: () => {
             void setWindowZoom(BrowserWindow.getFocusedWindow(), DEFAULT_ZOOM_FACTOR)
           }
         },
         {
           label: 'Zoom In',
-          accelerator: 'CmdOrCtrl+=',
           click: () => {
             void adjustWindowZoom(BrowserWindow.getFocusedWindow(), ZOOM_STEP)
           }
         },
         {
           label: 'Zoom Out',
-          accelerator: 'CmdOrCtrl+-',
           click: () => {
             void adjustWindowZoom(BrowserWindow.getFocusedWindow(), -ZOOM_STEP)
           }
