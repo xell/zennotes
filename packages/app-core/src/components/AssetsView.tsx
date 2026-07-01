@@ -3,6 +3,7 @@ import type { AssetMeta } from '@shared/ipc'
 import { useStore } from '../store'
 import { assetTabPath } from '../lib/asset-tabs'
 import { confirmMoveToTrash } from '../lib/confirm-trash'
+import { confirmApp } from '../lib/confirm-requests'
 import { promptApp } from '../lib/prompt-requests'
 import { naturalCompare } from '../lib/natural-sort'
 import { resolveAssetVaultRelativePath } from '../lib/local-assets'
@@ -51,7 +52,7 @@ export function AssetsView(): JSX.Element {
   const openNoteInTab = useStore((s) => s.openNoteInTab)
   const openNoteAndLocateText = useStore((s) => s.openNoteAndLocateText)
   const deleteAsset = useStore((s) => s.deleteAsset)
-  const refreshAssets = useStore((s) => s.refreshAssets)
+  const renameAssetAndRewriteReferences = useStore((s) => s.renameAssetAndRewriteReferences)
   const notes = useStore((s) => s.notes)
   const vaultRoot = useStore((s) => s.vault?.root ?? null)
   const [filter, setFilter] = useState('')
@@ -102,10 +103,33 @@ export function AssetsView(): JSX.Element {
     })
     if (!next) return
     const clean = next.trim()
-    if (!clean || `${clean}${ext}` === asset.name) return
+    const nextName = `${clean}${ext}`
+    if (!clean || nextName === asset.name) return
+
+    // The exact href string(s) each referencing note used to embed this
+    // asset — resolved here (not inside the store action) because
+    // resolveAssetVaultRelativePath reads live store state and importing it
+    // into store.ts would create a circular import.
+    const usedNotePaths = usage.get(asset.path) ?? []
+    const referenceHrefsByNote = new Map<string, string[]>()
+    for (const notePath of usedNotePaths) {
+      const hrefs = (notesByPath.get(notePath)?.assetEmbeds ?? []).filter(
+        (h) => resolveAssetVaultRelativePath(vaultRoot, notePath, h) === asset.path
+      )
+      if (hrefs.length > 0) referenceHrefsByNote.set(notePath, hrefs)
+    }
+
+    if (usedNotePaths.length > 5) {
+      const confirmed = await confirmApp({
+        title: `Update references in ${usedNotePaths.length} notes?`,
+        description: `Renaming "${asset.name}" to "${nextName}" will rewrite its reference in ${usedNotePaths.length} notes that use it.`,
+        confirmLabel: 'Rename and Update'
+      })
+      if (!confirmed) return
+    }
+
     try {
-      await window.zen.renameAsset(asset.path, `${clean}${ext}`)
-      await refreshAssets()
+      await renameAssetAndRewriteReferences(asset.path, nextName, referenceHrefsByNote)
     } catch (err) {
       window.alert(err instanceof Error ? err.message : String(err))
     }

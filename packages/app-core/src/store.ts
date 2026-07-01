@@ -1390,6 +1390,88 @@ function rewriteNoteJumpHistory(
     : next
 }
 
+// Matches `![[href]]` / `![[href|alias]]` asset embeds.
+const ASSET_WIKILINK_RE = /!\[\[([^\]|]+?)(?:\|[^\]]+)?\]\]/g
+// Matches `![alt](href)` and `[text](href)` — the optional leading `!`
+// covers image embeds, its absence covers plain attachment links (PDFs,
+// audio, video, generic files). `<href>` wrapping is preserved.
+const ASSET_MDLINK_RE = /(!?)\[[^\]]*\]\(\s*<?([^)>\s]+)>?[^)]*\)/g
+
+/** Swap the final path segment of a decoded href with `newName`,
+ *  preserving any directory prefix exactly as written. */
+function swapAssetHrefBasename(hrefDecoded: string, newName: string): string {
+  const slash = hrefDecoded.lastIndexOf('/')
+  const dir = slash >= 0 ? hrefDecoded.slice(0, slash + 1) : ''
+  return `${dir}${newName}`
+}
+
+/**
+ * Rewrite every `![[href]]` / `![alt](href)` / `[text](href)` in `body` whose
+ * (decoded) href is in `targetHrefs` — the exact reference strings this note
+ * used to embed the asset being renamed — pointing it at `newName` instead.
+ * Preserves directory prefixes, alias/title/`<>` wrapping, and leaves fenced /
+ * inline code untouched. Mirrors `rewriteWikilinksForRename`'s approach for
+ * note renames, adapted for the two asset-link syntaxes.
+ */
+function rewriteAssetReferencesInBody(
+  body: string,
+  targetHrefs: readonly string[],
+  newName: string
+): { body: string; changed: number } {
+  const targets = new Set(targetHrefs)
+  if (targets.size === 0) return { body, changed: 0 }
+  let changed = 0
+
+  const fenceRe = /(```[\s\S]*?```|`[^`\n]*`)/g
+  const parts: string[] = []
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = fenceRe.exec(body)) !== null) {
+    parts.push(body.slice(last, m.index))
+    parts.push(m[0])
+    last = fenceRe.lastIndex
+  }
+  parts.push(body.slice(last))
+
+  for (let i = 0; i < parts.length; i += 2) {
+    let segment = parts[i]
+
+    segment = segment.replace(ASSET_WIKILINK_RE, (full: string, target: string) => {
+      const trimmed = target.trim()
+      if (!targets.has(trimmed)) return full
+      const next = swapAssetHrefBasename(trimmed, newName)
+      if (next === trimmed) return full
+      changed++
+      return full.replace(trimmed, next)
+    })
+
+    segment = segment.replace(
+      ASSET_MDLINK_RE,
+      (full: string, _bang: string, rawHref: string) => {
+        let decoded = rawHref
+        try {
+          decoded = decodeURIComponent(rawHref)
+        } catch {
+          /* keep raw */
+        }
+        if (!targets.has(decoded)) return full
+        const nextDecoded = swapAssetHrefBasename(decoded, newName)
+        if (nextDecoded === decoded) return full
+        // encodeURI (not encodeURIComponent) so `/` directory separators
+        // survive re-encoding — only characters unsafe in a bare link
+        // destination (spaces, etc.) get escaped.
+        const nextRaw = encodeURI(nextDecoded)
+        changed++
+        return full.replace(rawHref, nextRaw)
+      }
+    )
+
+    parts[i] = segment
+  }
+
+  return { body: parts.join(''), changed }
+}
+
 /**
  * Rewrite every occurrence of `#oldTag` across all non-trash notes.
  * When `newTag` is null the hashtag is stripped (delete semantics);
@@ -2225,6 +2307,17 @@ interface Store {
   dismissRootContentBanner: () => void
   refreshAssets: () => Promise<void>
   deleteAsset: (relPath: string) => Promise<void>
+  /** Rename an asset on disk, then rewrite its reference (wikilink or
+   *  relative-path link) in every note that embeds it. `referenceHrefsByNote`
+   *  maps each affected note's path to the exact href string(s) it used to
+   *  embed the asset — the caller resolves these via
+   *  `resolveAssetVaultRelativePath` before calling, since that resolver
+   *  depends on live store state and can't be imported here. */
+  renameAssetAndRewriteReferences: (
+    assetPath: string,
+    nextName: string,
+    referenceHrefsByNote: ReadonlyMap<string, readonly string[]>
+  ) => Promise<void>
   undoLastAssetAction: () => Promise<boolean>
   updateActiveBody: (body: string) => void
   persistActive: () => Promise<void>
@@ -4438,6 +4531,34 @@ export const useStore = create<Store>((set, get) => {
       console.error('delete asset failed', err)
       window.alert(err instanceof Error ? err.message : String(err))
     }
+  },
+
+  renameAssetAndRewriteReferences: async (assetPath, nextName, referenceHrefsByNote) => {
+    const renamed = await window.zen.renameAsset(assetPath, nextName)
+    for (const [notePath, hrefs] of referenceHrefsByNote) {
+      try {
+        const content = await window.zen.readNote(notePath)
+        const { body, changed } = rewriteAssetReferencesInBody(content.body, hrefs, renamed.name)
+        if (changed > 0) await window.zen.writeNote(notePath, body)
+      } catch (err) {
+        console.error('renameAssetAndRewriteReferences: failed on', notePath, err)
+      }
+    }
+
+    // Keep the currently-edited note's in-memory body in sync so the
+    // editor reflects the change without a reload.
+    const activeNote = get().activeNote
+    if (activeNote && referenceHrefsByNote.has(activeNote.path)) {
+      try {
+        const fresh = await window.zen.readNote(activeNote.path)
+        set({ activeNote: fresh })
+      } catch {
+        /* ignore — note may have been moved/deleted */
+      }
+    }
+
+    await get().refreshAssets()
+    await get().refreshNotes()
   },
 
   undoLastAssetAction: async () => {
