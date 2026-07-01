@@ -12,7 +12,13 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Annotation, Compartment, EditorState, type Transaction } from '@codemirror/state'
-import { EditorView, drawSelection, highlightActiveLine, keymap } from '@codemirror/view'
+import {
+  EditorView,
+  drawSelection,
+  highlightActiveLine,
+  keymap,
+  tooltips
+} from '@codemirror/view'
 import { Vim, vim } from '@replit/codemirror-vim'
 import { history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { vimAwareDefaultKeymap } from '../lib/cm-vim-default-keymap'
@@ -21,16 +27,29 @@ import { resolveCodeLanguage } from '../lib/cm-code-languages'
 import { applyVimInsertEscape } from '../lib/vim-insert-escape'
 import { applyVimKeymap } from '../lib/vim-keymap'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
+import {
+  orderedListRenumber,
+  skipOrderedListRenumber
+} from '../lib/cm-ordered-list-renumber'
+import { codeBlockFontPlugin } from '../lib/cm-code-block-font'
 import { vimImeControl } from '../lib/cm-vim-ime'
 import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
 import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
 import { searchKeymap } from '@codemirror/search'
+import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
+import { slashCommandSource, slashCommandRender } from '../lib/cm-slash-commands'
+import { dateShortcutSource } from '../lib/cm-date-shortcuts'
+import { wikilinkSource, wikilinkHeadingSource } from '../lib/cm-wikilinks'
+import { completionNavKeymap } from '../lib/cm-completion-nav'
 import type { ExternalFileContent } from '@shared/ipc'
 import { wysiwygExtensions } from '../lib/cm-wysiwyg-compose'
 import { useStore } from '../store'
 import { headingFolding } from '../lib/cm-heading-fold'
+import { frontmatterStyle } from '../lib/cm-frontmatter'
 import { LazyPreview as Preview } from './LazyPreview'
 import { CloseIcon, InboxIcon } from './icons'
+import { ModeDropdown, NON_DIFF_MODE_OPTIONS } from './ModeDropdown'
+import type { PaneMode } from '../lib/pane-mode'
 import {
   applyTheme,
   lineNumberExtension,
@@ -49,33 +68,28 @@ export function ExternalFileApp(): JSX.Element {
   const prefs = useMemo(() => loadFloatingPrefs(), [])
   const [content, setContent] = useState<ExternalFileContent | null>(null)
   const [dirty, setDirty] = useState(false)
-  // Three explicit modes — Edit (raw source), Live (WYSIWYG live preview),
-  // Preview (rendered HTML). Default to Live when the user keeps live
-  // preview on globally, otherwise raw Edit, so the window opens matching
-  // their usual editing surface.
-  const [mode, setMode] = useState<'edit' | 'live' | 'preview'>(
-    prefs.livePreview ? 'live' : 'edit'
-  )
+  // Same three modes as the main editor's toolbar — Edit / Split / Preview.
+  // No Diff here: this file lives outside any vault, so there's no vault for
+  // gitIsRepo/gitShowIndex to resolve against — it can never apply.
+  const [mode, setMode] = useState<PaneMode>('edit')
+  // Mirrors appliedPrefsRef.current.livePreview as React state (refs don't
+  // trigger re-renders) so the `.cm-wysiwyg` class stays in sync after a
+  // settings refresh — see FloatingNoteApp for the identical pattern.
+  const [livePreviewOn, setLivePreviewOn] = useState(prefs.livePreview)
   const [moving, setMoving] = useState(false)
   const [moveError, setMoveError] = useState<string | null>(null)
   const viewRef = useRef<EditorView | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Source of truth for the body: seeded on load and updated on every
-  // edit. The editor is recreated on each edit/preview toggle, so it must
-  // re-seed from here — `content` is captured stale in setContainerRef.
+  // Source of truth for the body: seeded on load and updated on every edit.
   const bodyRef = useRef<string | null>(null)
-  // Live-preview lives in its own compartment so toggling Edit <-> Live
-  // reconfigures the plugin in place (keeping undo history + cursor)
-  // rather than tearing the editor down.
+  // Live-preview lives in its own compartment so toggling it reconfigures
+  // the plugin in place (keeping undo history + cursor) rather than
+  // tearing the editor down.
   const livePreviewCompartment = useMemo(() => new Compartment(), [])
   // Line numbers + word wrap live in compartments so a settings refresh
   // (Cmd/Ctrl+Shift+,) can re-apply them in place without rebuilding.
   const lineNumbersCompartment = useMemo(() => new Compartment(), [])
   const wordWrapCompartment = useMemo(() => new Compartment(), [])
-  // Mirror the current mode into a ref so the deps-light editor-mount
-  // callback can read it without going stale across remounts.
-  const modeRef = useRef(mode)
-  modeRef.current = mode
   // Latest prefs actually applied to this window. Seeded from the mount
   // snapshot; updated by refreshSettings so editor remounts pick up the
   // refreshed values for the compartments' initial config.
@@ -131,12 +145,17 @@ export function ExternalFileApp(): JSX.Element {
       if (viewRef.current) return
       const state = EditorState.create({
         // Read the live ref, not `content`: this callback's deps omit
-        // `content`, so its closure is stale (null) after load. Using the
-        // ref keeps the current text when the editor remounts on toggles.
+        // `content`, so its closure is stale (null) after load.
         doc: bodyRef.current ?? '',
         extensions: [
           appMarkdownSnippetExtension(),
           vimImeControl(),
+          // Give the editable surface an accessible name so accessibility
+          // clients (screen readers, proofreaders such as Grammarly) identify
+          // it as a text field — mirrors EditorPane.
+          EditorView.contentAttributes.of({
+            'aria-label': 'External file editor'
+          }),
           new Compartment().of(prefs.vimMode ? vim() : []),
           history(),
           drawSelection(),
@@ -146,20 +165,35 @@ export function ExternalFileApp(): JSX.Element {
           ),
           markdown({ base: markdownLanguage, codeLanguages: resolveCodeLanguage, addKeymap: true }),
           markdownListIndentPlugin,
+          frontmatterStyle,
+          orderedListRenumber,
           headingFolding(),
+          codeBlockFontPlugin,
           syntaxHighlighting(paperHighlight),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
           livePreviewCompartment.of(
-            modeRef.current === 'live'
+            appliedPrefsRef.current.livePreview
               ? wysiwygExtensions(useStore.getState().renderTablesInLivePreview)
               : []
           ),
           lineNumbersCompartment.of(lineNumberExtension(appliedPrefsRef.current.lineNumberMode)),
+          tooltips({ parent: document.body }),
+          autocompletion({
+            override: [slashCommandSource, dateShortcutSource, wikilinkSource, wikilinkHeadingSource],
+            addToOptions: [{ render: slashCommandRender.render, position: 0 }],
+            icons: false,
+            optionClass: (completion) =>
+              (completion as { _kind?: string })._kind === 'wikilink'
+                ? 'wikilink-cmd-option'
+                : 'slash-cmd-option'
+          }),
+          completionNavKeymap,
           keymap.of([
             indentWithTab,
             ...vimAwareDefaultKeymap(prefs.vimMode),
             ...historyKeymap,
-            ...searchKeymap
+            ...searchKeymap,
+            ...completionKeymap
           ]),
           EditorView.updateListener.of((upd) => {
             if (!upd.docChanged) return
@@ -178,29 +212,22 @@ export function ExternalFileApp(): JSX.Element {
         ]
       })
       viewRef.current = new EditorView({ state, parent: el })
-      // Focus the editor on mount (and on every edit/preview toggle that
-      // remounts it) so vim motions work immediately, matching the main
-      // editor. Without this the window opens with focus on the body and
-      // no keystrokes reach CodeMirror until the user clicks into the text.
+      // Focus the editor on mount so vim motions work immediately, matching
+      // the main editor. The editor stays mounted across mode toggles (see
+      // the mode-change effect below), so this only fires once per window.
       viewRef.current.focus()
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [persist, livePreviewCompartment, prefs.vimMode]
   )
 
-  // Toggle live preview in place when switching Edit <-> Live so the
-  // editor isn't rebuilt (preserves undo history, cursor, scroll).
+  // The editor stays mounted (hidden via CSS) across Edit/Split/Preview
+  // toggles, so refocus it explicitly on the way back in — mirrors the
+  // main editor's applyPaneMode behavior.
   useEffect(() => {
-    const view = viewRef.current
-    if (!view || mode === 'preview') return
-    view.dispatch({
-      effects: livePreviewCompartment.reconfigure(
-        mode === 'live'
-          ? wysiwygExtensions(useStore.getState().renderTablesInLivePreview)
-          : []
-      )
-    })
-  }, [mode, livePreviewCompartment])
+    if (mode === 'preview') return
+    viewRef.current?.focus()
+  }, [mode])
 
   // Pull the latest settings from the shared prefs blob and apply them to
   // this window without a reload. The main window writes prefs to
@@ -211,16 +238,20 @@ export function ExternalFileApp(): JSX.Element {
   const refreshSettings = useCallback(() => {
     const next = loadFloatingPrefs()
     appliedPrefsRef.current = next
+    setLivePreviewOn(next.livePreview)
     applyTheme(next)
     const view = viewRef.current
     if (!view) return
     view.dispatch({
       effects: [
         lineNumbersCompartment.reconfigure(lineNumberExtension(next.lineNumberMode)),
-        wordWrapCompartment.reconfigure(next.wordWrap ? EditorView.lineWrapping : [])
+        wordWrapCompartment.reconfigure(next.wordWrap ? EditorView.lineWrapping : []),
+        livePreviewCompartment.reconfigure(
+          next.livePreview ? wysiwygExtensions(useStore.getState().renderTablesInLivePreview) : []
+        )
       ]
     })
-  }, [lineNumbersCompartment, wordWrapCompartment])
+  }, [lineNumbersCompartment, livePreviewCompartment, wordWrapCompartment])
 
   // Seed the live CM view the first time content arrives.
   useEffect(() => {
@@ -229,7 +260,7 @@ export function ExternalFileApp(): JSX.Element {
     if (view.state.doc.toString() === content.body) return
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: content.body },
-      annotations: programmatic.of(true)
+      annotations: [programmatic.of(true), skipOrderedListRenumber.of(true)]
     })
   }, [content])
 
@@ -249,8 +280,9 @@ export function ExternalFileApp(): JSX.Element {
 
   // Window-level shortcuts: Cmd/Ctrl+W closes the window, Cmd/Ctrl+4/5/6
   // switch modes to match the main window's Edit/Split/Preview bindings
-  // (no Split here, so 5 maps to the middle Live mode), and
-  // Cmd/Ctrl+Shift+, pulls the latest settings from the main window.
+  // (no Diff here — this file is outside any vault, no git index to diff
+  // against), and Cmd/Ctrl+Shift+, pulls the latest settings from the main
+  // window.
   useEffect(() => {
     const handler = (event: KeyboardEvent): void => {
       const mod = event.metaKey || event.ctrlKey
@@ -274,7 +306,7 @@ export function ExternalFileApp(): JSX.Element {
         setMode('edit')
       } else if (key === '5') {
         event.preventDefault()
-        setMode('live')
+        setMode('split')
       } else if (key === '6') {
         event.preventDefault()
         setMode('preview')
@@ -326,6 +358,10 @@ export function ExternalFileApp(): JSX.Element {
     document.title = title
   }, [title])
 
+  const showEditor = mode !== 'preview'
+  const showPreview = mode === 'split' || mode === 'preview'
+  const splitMode = mode === 'split'
+
   return (
     <div className="flex h-screen w-screen flex-col bg-paper-100 text-ink-900">
       <header
@@ -356,29 +392,7 @@ export function ExternalFileApp(): JSX.Element {
             <InboxIcon width={13} height={13} />
             {moving ? 'Moving…' : 'Move to Vault'}
           </button>
-          <div className="flex items-center gap-1 rounded-md bg-paper-200/70 p-0.5 text-xs">
-            {(
-              [
-                { m: 'edit', label: 'Edit', title: 'Raw Markdown source' },
-                { m: 'live', label: 'Live', title: 'Live preview — render inline while editing' },
-                { m: 'preview', label: 'Preview', title: 'Fully rendered preview' }
-              ] as const
-            ).map(({ m, label, title }) => (
-              <button
-                key={m}
-                onClick={() => setMode(m)}
-                title={title}
-                className={[
-                  'rounded px-1.5 py-0.5 transition-colors',
-                  mode === m
-                    ? 'bg-paper-50 text-ink-900 shadow-sm'
-                    : 'text-ink-500 hover:text-ink-800'
-                ].join(' ')}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <ModeDropdown mode={mode} onChange={setMode} options={NON_DIFF_MODE_OPTIONS} />
           <button
             type="button"
             title="Close window"
@@ -397,15 +411,49 @@ export function ExternalFileApp(): JSX.Element {
       )}
 
       <div className="flex min-h-0 flex-1 flex-col">
-        {mode !== 'preview' ? (
-          <div ref={setContainerRef} className="min-h-0 min-w-0 flex-1" />
-        ) : content ? (
-          <div data-preview-scroll className="min-h-0 min-w-0 flex-1 overflow-y-auto">
-            <Preview markdown={currentBody()} notePath={content.name} />
+        <div
+          className={[
+            'min-h-0 min-w-0 flex-1 overflow-hidden',
+            splitMode ? 'flex flex-row' : 'flex flex-col'
+          ].join(' ')}
+        >
+          <div
+            className={[
+              'relative min-h-0 min-w-0',
+              splitMode
+                ? 'flex flex-[1.05] flex-col border-r border-paper-300/70'
+                : 'flex flex-1 flex-col'
+            ].join(' ')}
+            style={{ display: showEditor ? 'flex' : 'none' }}
+          >
+            <div
+              ref={setContainerRef}
+              className={[
+                'min-h-0 min-w-0 flex-1',
+                // WYSIWYG styling (tables, blockquotes, code-block cards,
+                // etc.) is gated on the same live-preview condition that
+                // loads the wysiwyg plugins — see EditorPane.
+                livePreviewOn ? 'cm-wysiwyg' : ''
+              ].join(' ')}
+            />
           </div>
-        ) : (
-          <div className="flex flex-1 items-center justify-center text-sm text-ink-400">Loading…</div>
-        )}
+          {showPreview &&
+            (content ? (
+              <div
+                data-preview-scroll
+                className={[
+                  'min-h-0 min-w-0 overflow-y-auto',
+                  splitMode ? 'flex flex-1 flex-col' : 'flex-1'
+                ].join(' ')}
+              >
+                <Preview markdown={currentBody()} notePath={content.name} />
+              </div>
+            ) : (
+              <div className="flex flex-1 items-center justify-center text-sm text-ink-400">
+                Loading…
+              </div>
+            ))}
+        </div>
       </div>
     </div>
   )

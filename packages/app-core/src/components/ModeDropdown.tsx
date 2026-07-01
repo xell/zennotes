@@ -49,6 +49,10 @@ export const MODE_OPTIONS: Array<{
   }
 ]
 
+/** The first three modes, excluding Diff — for surfaces with no git-index
+ *  concept at all (e.g. a window showing a file outside any vault, where
+ *  there's no vault for `gitIsRepo`/`gitShowIndex` to resolve against). */
+export const NON_DIFF_MODE_OPTIONS = MODE_OPTIONS.filter((o) => o.mode !== 'diff')
 
 export function useHoverDropdown(openDelay = 150, closeDelay = 100) {
   const [open, setOpen] = useState(false)
