@@ -713,7 +713,8 @@ export const HELP_SETTINGS: HelpSettingsSection[] = [
     items: [
       { label: 'Theme, mode, and variant', detail: 'Pick a theme family — Apple, Gruvbox, Catppuccin, GitHub, Solarized, One, Nord, Tokyo Night, Kanagawa (Wave / Dragon / Lotus), Rosé Pine (Rosé Pine / Moon / Dawn), or the monochrome, true-black (OLED-friendly) Black Metal — plus light or dark mode and the active flavor or contrast where the theme supports it.' },
       { label: 'Dark sidebar', detail: 'Tint the sidebar slightly darker than the canvas so the chrome reads as a distinct surface.' },
-      { label: 'Sidebar arrows', detail: 'Show or hide disclosure arrows for collapsible sidebar folders and sections.' }
+      { label: 'Sidebar arrows', detail: 'Show or hide disclosure arrows for collapsible sidebar folders and sections.' },
+      { label: 'Use theme for PDF export', detail: 'Under Settings → Appearance → PDF export. Off by default, so exported PDFs use a clean light print theme. Turn it on to render the PDF in your current theme instead — colors and dark/light, including custom themes — as a full-bleed page.' }
     ]
   },
   {
@@ -749,6 +750,7 @@ export const HELP_SETTINGS: HelpSettingsSection[] = [
     items: [
       { label: 'Shortcut overrides', detail: 'Remap global app shortcuts, Vim-specific bindings, panel navigation keys, and view actions from one place.' },
       { label: 'Recorded sequences', detail: 'Capture single shortcuts or multi-step sequences such as Leader flows, pane prefixes, `g g`, `g d`, or fold motions without editing raw config files.' },
+      { label: 'Conflict detection', detail: 'When you record a global shortcut that another action already uses, the recorder names the clash and disables Save, so two actions can no longer silently share one key. Any existing clash shows a badge on the affected rows. Vim, navigation, and view keys that deliberately reuse a key by context are left alone.' },
       { label: 'Context-menu bindings', detail: 'The same keymap table controls the context-menu action used in the sidebar, note list, and preview-side active-tab menu, so mouse-free navigation stays configurable.' },
       { label: 'Reset controls', detail: 'Clear an individual override or reset the entire keymap table back to the shipped defaults.' }
     ]
@@ -813,7 +815,7 @@ export const HELP_CLI: HelpCard[] = [
   {
     title: 'Capture is the gateway drug',
     body:
-      'The fastest way to add a note is `zen capture "..."`. Pipe-friendly: `pbpaste | zen capture --tag idea` lifts the clipboard into a tagged note. The first non-empty line becomes the title.'
+      'The fastest way to add a note is `zen capture "..."`. Pipe-friendly: `pbpaste | zen capture --tag idea` lifts the clipboard into a tagged note. The first non-empty line becomes the title. Markdown works too — `zen capture "- [ ] buy milk"` keeps the leading `- [ ]` as a task in the body (so it appears in the Tasks view) while the title reads "buy milk".'
   },
   {
     title: 'Read and search from the terminal',
