@@ -16,7 +16,7 @@ import { PromptHost } from './components/PromptHost'
 import { ConfirmHost } from './components/ConfirmHost'
 import { ServerDirectoryPickerHost } from './components/ServerDirectoryPickerHost'
 import { resolveQuickNoteTitle } from './lib/quick-note-title'
-import { matchesShortcut, matchesSequenceToken } from './lib/keymaps'
+import { isMacPlatform, matchesShortcut, matchesSequenceToken } from './lib/keymaps'
 import { focusPaneOrEdgePanel } from './lib/pane-nav'
 import { requestPaneMode } from './lib/pane-mode'
 import { recordRendererPerf } from './lib/perf'
@@ -576,13 +576,24 @@ function App(): JSX.Element {
         void window.zen.resetAppZoom()
         return
       }
-      if (matchesShortcut(e, overrides, 'global.historyBack')) {
+      // On macOS ⌥←/→ moves by word inside text fields; don't let note-history
+      // nav hijack it while editing — that broke word-motion in insert mode
+      // (#302). History nav still works outside text fields, on other platforms,
+      // and via Vim's Ctrl+O / Ctrl+I.
+      const isMacWordMotion =
+        isMacPlatform() &&
+        e.altKey &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        (e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+        isEditableShortcutTarget(e.target)
+      if (!isMacWordMotion && matchesShortcut(e, overrides, 'global.historyBack')) {
         // Back in note navigation history (works in any mode).
         e.preventDefault()
         void state.jumpToPreviousNote()
         return
       }
-      if (matchesShortcut(e, overrides, 'global.historyForward')) {
+      if (!isMacWordMotion && matchesShortcut(e, overrides, 'global.historyForward')) {
         e.preventDefault()
         void state.jumpToNextNote()
         return
