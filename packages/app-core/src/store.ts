@@ -6224,6 +6224,7 @@ export const useStore = create<Store>((set, get) => {
             noteDirty: dirty,
             activePaneId: paneId,
             loadingNote: false,
+            focusedPanel: 'editor',
             ...activeFieldsFrom(nextLayout, paneId, contents, dirty)
           }
         })
@@ -6231,6 +6232,12 @@ export const useStore = create<Store>((set, get) => {
         console.error('focusTabInPane readNote failed', err)
         set({ loadingNote: false })
       }
+      // Imperatively focus the editor after state settles — same guard as
+      // closeTabInPane: focusedPanel alone won't re-trigger the editor's
+      // focus effect if it was already 'editor' (no dep change), and a
+      // prior sidebar/non-note-tab interaction can otherwise leave real
+      // DOM focus stranded outside the editor after switching tabs.
+      requestAnimationFrame(() => get().editorViewRef?.focus())
       return
     }
 
@@ -6241,9 +6248,11 @@ export const useStore = create<Store>((set, get) => {
       return {
         paneLayout: nextLayout,
         activePaneId: paneId,
+        focusedPanel: 'editor',
         ...activeFieldsFrom(nextLayout, paneId, cur.noteContents, cur.noteDirty)
       }
     })
+    requestAnimationFrame(() => get().editorViewRef?.focus())
   },
 
   openNoteInPane: async (paneId, path, insertIndex) => {
@@ -6278,12 +6287,19 @@ export const useStore = create<Store>((set, get) => {
             noteContents: contents,
             noteDirty: dirty,
             activePaneId: paneId,
+            focusedPanel: 'editor',
             ...activeFieldsFrom(nextLayout, paneId, contents, dirty)
           }
         })
       } catch (err) {
         console.error('openNoteInPane readNote failed', err)
       }
+      // Imperatively focus the editor after state settles — same guard as
+      // closeTabInPane: focusedPanel alone won't re-trigger the editor's
+      // focus effect if it was already 'editor' (no dep change), and a
+      // prior sidebar/non-note-tab interaction can otherwise leave real
+      // DOM focus stranded outside the editor after switching tabs.
+      requestAnimationFrame(() => get().editorViewRef?.focus())
       return
     }
     set((cur) => {
@@ -6293,9 +6309,11 @@ export const useStore = create<Store>((set, get) => {
       return {
         paneLayout: nextLayout,
         activePaneId: paneId,
+        focusedPanel: 'editor',
         ...activeFieldsFrom(nextLayout, paneId, cur.noteContents, cur.noteDirty)
       }
     })
+    requestAnimationFrame(() => get().editorViewRef?.focus())
   },
 
   closeTabInPane: async (paneId, path) => {
