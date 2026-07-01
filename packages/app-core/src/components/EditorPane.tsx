@@ -3637,6 +3637,12 @@ function AssetTabView({
         {canReveal && assetPath && (
           <div className="flex shrink-0 items-center gap-1">
             <IconBtn
+              title="Open as Reference (Global)"
+              onClick={() => useStore.getState().pinAssetReference(assetPath)}
+            >
+              <PinIcon width={14} height={14} />
+            </IconBtn>
+            <IconBtn
               title="Locate in Assets Manager"
               onClick={() => void useStore.getState().locateAssetInManager(assetPath)}
             >

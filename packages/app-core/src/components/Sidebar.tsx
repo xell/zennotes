@@ -95,6 +95,7 @@ import {
 } from "../lib/sidebar-drop-resolver";
 import { resolveSystemFolderLabels } from "../lib/system-folder-labels";
 import { assetTabPath } from "../lib/asset-tabs";
+import { findAssetReferenceHrefs } from "../lib/local-assets";
 import {
   csvPathForFormDir,
   FORM_DIR_SUFFIX,
@@ -453,6 +454,10 @@ export function Sidebar(): JSX.Element {
   const revealAssetsDir = useStore((s) => s.revealAssetsDir);
   const refreshAssets = useStore((s) => s.refreshAssets);
   const deleteAssetAction = useStore((s) => s.deleteAsset);
+  const renameAssetAndRewriteReferences = useStore((s) => s.renameAssetAndRewriteReferences);
+  const moveAssetAndRewriteReferences = useStore((s) => s.moveAssetAndRewriteReferences);
+  const pinAssetReference = useStore((s) => s.pinAssetReference);
+  const pinAssetReferenceForNote = useStore((s) => s.pinAssetReferenceForNote);
   const sidebarWidth = useStore((s) => s.sidebarWidth);
   const setSidebarWidth = useStore((s) => s.setSidebarWidth);
   const noteSortOrder = useStore((s) => s.noteSortOrder);
@@ -2599,8 +2604,22 @@ export function Sidebar(): JSX.Element {
             },
           });
           if (!next || next === asset.name) return;
-          await window.zen.renameAsset(asset.path, next);
-          await refreshAssets();
+
+          const referenceHrefsByNote = findAssetReferenceHrefs(notes, vault?.root, asset.path);
+          if (referenceHrefsByNote.size > 5) {
+            const confirmed = await confirmApp({
+              title: `Update references in ${referenceHrefsByNote.size} notes?`,
+              description: `Renaming "${asset.name}" to "${next}" will rewrite its reference in ${referenceHrefsByNote.size} notes that use it.`,
+              confirmLabel: "Rename and Update",
+            });
+            if (!confirmed) return;
+          }
+
+          try {
+            await renameAssetAndRewriteReferences(asset.path, next, referenceHrefsByNote);
+          } catch (err) {
+            window.alert(err instanceof Error ? err.message : String(err));
+          }
         },
       });
       items.push({
@@ -2623,8 +2642,22 @@ export function Sidebar(): JSX.Element {
             },
           });
           if (target === null || target === currentDir) return;
-          await window.zen.moveAsset(asset.path, target);
-          await refreshAssets();
+
+          const referenceHrefsByNote = findAssetReferenceHrefs(notes, vault?.root, asset.path);
+          if (referenceHrefsByNote.size > 5) {
+            const confirmed = await confirmApp({
+              title: `Update references in ${referenceHrefsByNote.size} notes?`,
+              description: `Moving "${asset.name}" will rewrite its reference in ${referenceHrefsByNote.size} notes that use it.`,
+              confirmLabel: "Move and Update",
+            });
+            if (!confirmed) return;
+          }
+
+          try {
+            await moveAssetAndRewriteReferences(asset.path, target, referenceHrefsByNote);
+          } catch (err) {
+            window.alert(err instanceof Error ? err.message : String(err));
+          }
         },
       });
       items.push({
@@ -2652,6 +2685,22 @@ export function Sidebar(): JSX.Element {
       label: absolutePathLabel,
       onSelect: async () => {
         window.zen.clipboardWriteText(abs);
+      },
+    });
+
+    const currentNotePath = activeNote?.path ?? null;
+    if (currentNotePath) {
+      items.push({
+        label: "Open as Reference (This Note)",
+        onSelect: () => {
+          pinAssetReferenceForNote(currentNotePath, asset.path);
+        },
+      });
+    }
+    items.push({
+      label: "Open as Reference (Global)",
+      onSelect: () => {
+        pinAssetReference(asset.path);
       },
     });
 
@@ -2693,9 +2742,15 @@ export function Sidebar(): JSX.Element {
     canDeleteAssets,
     absolutePathLabel,
     vault,
+    notes,
+    activeNote,
     openNoteInTab,
     refreshAssets,
     deleteAssetAction,
+    renameAssetAndRewriteReferences,
+    moveAssetAndRewriteReferences,
+    pinAssetReference,
+    pinAssetReferenceForNote,
   ]);
 
   const tagMenuItems = useMemo<ContextMenuItem[]>(() => {

@@ -53,6 +53,9 @@ export function AssetsView(): JSX.Element {
   const openNoteAndLocateText = useStore((s) => s.openNoteAndLocateText)
   const deleteAsset = useStore((s) => s.deleteAsset)
   const renameAssetAndRewriteReferences = useStore((s) => s.renameAssetAndRewriteReferences)
+  const pinAssetReference = useStore((s) => s.pinAssetReference)
+  const pinAssetReferenceForNote = useStore((s) => s.pinAssetReferenceForNote)
+  const activeNote = useStore((s) => s.activeNote)
   const pendingAssetLocate = useStore((s) => s.pendingAssetLocate)
   const clearPendingAssetLocate = useStore((s) => s.clearPendingAssetLocate)
   const notes = useStore((s) => s.notes)
@@ -195,6 +198,18 @@ export function AssetsView(): JSX.Element {
           ]
         : []),
       { kind: 'separator' as const },
+      ...(activeNote
+        ? [
+            {
+              label: 'Open as Reference (This Note)',
+              onSelect: () => pinAssetReferenceForNote(activeNote.path, asset.path)
+            }
+          ]
+        : []),
+      {
+        label: 'Open as Reference (Global)',
+        onSelect: () => pinAssetReference(asset.path)
+      },
       { label: 'Reveal in file manager', onSelect: () => void window.zen.revealNote(asset.path) },
       { label: 'Rename…', onSelect: () => void renameAsset(asset) },
       {
