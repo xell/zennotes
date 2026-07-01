@@ -2834,8 +2834,10 @@ function registerIpc(): void {
   handle(IPC.RAYCAST_INSTALL, async () => await installRaycastExtension())
 
   handle(IPC.GIT_IS_REPO, async () => {
-    if (!currentVault) return false
-    const root = path.resolve(currentVault.root)
+    const win = currentIpcWindow()
+    const vault = win ? windowVaults.vaultForWindow(win.id) : currentVault
+    if (!vault) return false
+    const root = path.resolve(vault.root)
     try {
       await execFileAsync('git', ['rev-parse', '--git-dir'], { cwd: root, timeout: 3000 })
       return true
@@ -2845,8 +2847,10 @@ function registerIpc(): void {
   })
 
   handle(IPC.GIT_SHOW_INDEX, async (_e, vaultRelativePath: string) => {
-    if (!currentVault) return null
-    const root = path.resolve(currentVault.root)
+    const win = currentIpcWindow()
+    const vault = win ? windowVaults.vaultForWindow(win.id) : currentVault
+    if (!vault) return null
+    const root = path.resolve(vault.root)
     try {
       const { stdout } = await execFileAsync('git', ['show', `:0:${vaultRelativePath}`], {
         cwd: root,
