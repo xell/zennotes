@@ -1532,10 +1532,14 @@ function extractWikilinks(body: string): string[] {
   return [...seen]
 }
 
-/** Pull unique asset-embed targets out of markdown — both `![[asset]]` (which
- *  extractWikilinks deliberately skips) and `![](path)` image/file embeds. The
- *  raw targets are resolved to assets per-note by the renderer (relative path +
- *  basename fallback), to show which notes use each asset. */
+/** Pull unique asset-reference targets out of markdown — `![[asset]]` embeds
+ *  (which extractWikilinks deliberately skips), `![](path)` image/file
+ *  embeds, and plain `[](path)` attachment links (PDFs, audio, video, generic
+ *  files don't need the `!`). The raw targets are resolved to assets per-note
+ *  by the renderer (relative path + basename fallback), to show which notes
+ *  use each asset — that resolution is also what keeps this from picking up
+ *  ordinary `[Note](Note.md)` note-to-note links: no asset ever has a `.md`
+ *  extension, so such targets simply fail to resolve and are discarded. */
 function extractAssetEmbeds(body: string): string[] {
   const stripped = stripCodeContent(body)
   const seen = new Set<string>()
@@ -1548,7 +1552,7 @@ function extractAssetEmbeds(body: string): string[] {
     }
   }
   if (stripped.includes('](')) {
-    const re = /!\[[^\]]*\]\(\s*<?([^)>\s]+)>?[^)]*\)/g
+    const re = /(?:!?)\[[^\]]*\]\(\s*<?([^)>\s]+)>?[^)]*\)/g
     let m: RegExpExecArray | null
     while ((m = re.exec(stripped)) !== null) {
       const raw = (m[1] ?? '').trim()

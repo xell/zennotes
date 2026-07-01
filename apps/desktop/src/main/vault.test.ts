@@ -663,6 +663,21 @@ describe('listNotes asset embeds (#185 usage)', () => {
     expect(note?.assetEmbeds.sort()).toEqual(['GreenGrass.jpg', 'assets/doc.pdf', 'photo.png'])
     expect(note?.wikilinks).toEqual(['Some Note']) // note links stay separate
   })
+
+  it('captures plain [text](path) attachment links (no bang) alongside ordinary note links', async () => {
+    const root = await makeTempDir('zennotes-asset-embeds-plain-')
+    await ensureVaultLayout(root)
+    await writeFile(
+      path.join(root, 'inbox', 'n.md'),
+      '[report.pdf](assets/report.pdf)\n[Related Note](Related%20Note.md)\n[Google](https://google.com)\n',
+      'utf8'
+    )
+    const notes = await listNotes(root)
+    const note = notes.find((n) => n.path === 'inbox/n.md')
+    // Plain link targets are captured too — the .md note-link candidate is
+    // harmless here since it never resolves to a real asset downstream.
+    expect(note?.assetEmbeds.sort()).toEqual(['Related Note.md', 'assets/report.pdf'])
+  })
 })
 
 describe('archive / trash round-trips', () => {
