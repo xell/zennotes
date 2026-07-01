@@ -2172,6 +2172,10 @@ interface Store {
   rescanTasksForPath: (relPath: string) => Promise<void>
   /** Open the note containing `task` and place the cursor on that line. */
   openTaskAt: (task: VaultTask) => Promise<void>
+  /** Open a note in a new tab and place the cursor at the first occurrence
+   *  of `searchText` in its body (e.g. an asset embed's href). No-ops the
+   *  jump (opens the note anyway) when the text isn't found. */
+  openNoteAndLocateText: (notePath: string, searchText: string) => Promise<void>
   /** Flip a task's checkbox. Reuses `toggleTaskAtIndex` so the file round-
    *  trips exactly — works whether or not the note is currently open. */
   toggleTaskFromList: (task: VaultTask) => Promise<void>
@@ -3933,6 +3937,37 @@ export const useStore = create<Store>((set, get) => {
     set({
       pendingJumpLocation: {
         path: task.sourcePath,
+        editorSelectionAnchor: anchor,
+        editorSelectionHead: anchor,
+        editorScrollTop: 0,
+        previewScrollTop: 0,
+        editorScrollMode: 'center',
+        highlightLine: true
+      },
+      focusedPanel: 'editor'
+    })
+  },
+
+  openNoteAndLocateText: async (notePath, searchText) => {
+    const state = get()
+
+    // Pull body — in-memory first, disk fallback. Same approach as openTaskAt.
+    let body: string | undefined = state.noteContents[notePath]?.body
+    if (!body) {
+      try {
+        const content = await window.zen.readNote(notePath)
+        body = content.body
+      } catch (err) {
+        console.error('openNoteAndLocateText readNote failed', err)
+      }
+    }
+    const anchor = body ? body.indexOf(searchText) : -1
+
+    await get().openNoteInTab(notePath)
+    if (anchor === -1) return
+    set({
+      pendingJumpLocation: {
+        path: notePath,
         editorSelectionAnchor: anchor,
         editorSelectionHead: anchor,
         editorScrollTop: 0,

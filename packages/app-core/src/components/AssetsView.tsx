@@ -49,6 +49,7 @@ function AssetGlyph({ kind }: { kind: AssetMeta['kind'] }): JSX.Element {
 export function AssetsView(): JSX.Element {
   const assetFiles = useStore((s) => s.assetFiles)
   const openNoteInTab = useStore((s) => s.openNoteInTab)
+  const openNoteAndLocateText = useStore((s) => s.openNoteAndLocateText)
   const deleteAsset = useStore((s) => s.deleteAsset)
   const refreshAssets = useStore((s) => s.refreshAssets)
   const notes = useStore((s) => s.notes)
@@ -83,6 +84,8 @@ export function AssetsView(): JSX.Element {
     return map
   }, [notes, vaultRoot, assetFiles])
 
+  const notesByPath = useMemo(() => new Map(notes.map((n) => [n.path, n])), [notes])
+
   const copyEmbed = (asset: AssetMeta): void => {
     void navigator.clipboard?.writeText(`![[${asset.name}]]`)
   }
@@ -108,19 +111,44 @@ export function AssetsView(): JSX.Element {
     }
   }
 
-  const menuItems = (asset: AssetMeta): ContextMenuItem[] => [
-    { label: 'Open', onSelect: () => void openNoteInTab(assetTabPath(asset.path)) },
-    { label: 'Copy embed', onSelect: () => copyEmbed(asset) },
-    { label: 'Reveal in file manager', onSelect: () => void window.zen.revealNote(asset.path) },
-    { label: 'Rename…', onSelect: () => void renameAsset(asset) },
-    {
-      label: 'Move to Trash',
-      danger: true,
-      onSelect: async () => {
-        if (await confirmMoveToTrash(asset.name)) await deleteAsset(asset.path)
+  // The href in `note.assetEmbeds` that resolves to `asset` — used to locate
+  // the cursor at the first occurrence of the actual embed text, rather than
+  // just opening the note. Falls back to the bare filename if no matching
+  // embed href is found (e.g. stale metadata).
+  const openAssetUsage = (asset: AssetMeta, notePath: string): void => {
+    const href = (notesByPath.get(notePath)?.assetEmbeds ?? []).find(
+      (h) => resolveAssetVaultRelativePath(vaultRoot, notePath, h) === asset.path
+    )
+    void openNoteAndLocateText(notePath, href ?? asset.name)
+  }
+
+  const menuItems = (asset: AssetMeta): ContextMenuItem[] => {
+    const usedNotePaths = usage.get(asset.path) ?? []
+    return [
+      { label: 'Open', onSelect: () => void openNoteInTab(assetTabPath(asset.path)) },
+      { label: 'Copy embed', onSelect: () => copyEmbed(asset) },
+      ...(usedNotePaths.length > 0
+        ? [
+            { kind: 'separator' as const },
+            { label: `Used in (${usedNotePaths.length})`, disabled: true },
+            ...usedNotePaths.map((notePath) => ({
+              label: notesByPath.get(notePath)?.title ?? notePath,
+              onSelect: () => openAssetUsage(asset, notePath)
+            }))
+          ]
+        : []),
+      { kind: 'separator' as const },
+      { label: 'Reveal in file manager', onSelect: () => void window.zen.revealNote(asset.path) },
+      { label: 'Rename…', onSelect: () => void renameAsset(asset) },
+      {
+        label: 'Move to Trash',
+        danger: true,
+        onSelect: async () => {
+          if (await confirmMoveToTrash(asset.name)) await deleteAsset(asset.path)
+        }
       }
-    }
-  ]
+    ]
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-paper-100 text-ink-900">
