@@ -132,6 +132,29 @@ export function resolveAssetVaultRelativePath(
   return null
 }
 
+/**
+ * For every note that embeds `assetPath`, the exact href string(s) it used —
+ * resolved via `resolveAssetVaultRelativePath`, so it stays consistent with
+ * how embeds actually render. Used before a rename/move to know which notes'
+ * bodies need their reference rewritten, and to gate the "update N notes?"
+ * confirmation. Callers with a menu-item-per-asset context (Assets Manager,
+ * the Preview pane's asset context menu) both need this same lookup.
+ */
+export function findAssetReferenceHrefs(
+  notes: readonly { path: string; assetEmbeds?: readonly string[] }[],
+  vaultRoot: string | null | undefined,
+  assetPath: string
+): Map<string, string[]> {
+  const map = new Map<string, string[]>()
+  for (const note of notes) {
+    const hrefs = (note.assetEmbeds ?? []).filter(
+      (h) => resolveAssetVaultRelativePath(vaultRoot, note.path, h) === assetPath
+    )
+    if (hrefs.length > 0) map.set(note.path, hrefs)
+  }
+  return map
+}
+
 function localAssetLabel(href: string, fallback: string): string {
   const clean = href.split('#')[0]?.split('?')[0] ?? href
   const parts = clean.split('/').filter(Boolean)
@@ -394,6 +417,7 @@ export function enhanceLocalAssetNodes(
     img.loading = 'lazy'
     img.dataset.localAssetUrl = resolved
     img.dataset.localAssetHref = raw
+    img.dataset.localAssetKind = 'image'
     const paragraph = isStandaloneImageParagraph(img)
     if (!paragraph || paragraph.dataset.assetEmbed === 'true') return
     paragraph.dataset.assetEmbed = 'true'

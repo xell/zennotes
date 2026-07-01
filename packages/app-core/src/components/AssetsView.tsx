@@ -6,7 +6,7 @@ import { confirmMoveToTrash } from '../lib/confirm-trash'
 import { confirmApp } from '../lib/confirm-requests'
 import { promptApp } from '../lib/prompt-requests'
 import { naturalCompare } from '../lib/natural-sort'
-import { resolveAssetVaultRelativePath } from '../lib/local-assets'
+import { findAssetReferenceHrefs, resolveAssetVaultRelativePath } from '../lib/local-assets'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 import { DocumentIcon, ImageIcon, PaperclipIcon, SearchIcon, TrashIcon } from './icons'
 
@@ -150,19 +150,12 @@ export function AssetsView(): JSX.Element {
     // asset — resolved here (not inside the store action) because
     // resolveAssetVaultRelativePath reads live store state and importing it
     // into store.ts would create a circular import.
-    const usedNotePaths = usage.get(asset.path) ?? []
-    const referenceHrefsByNote = new Map<string, string[]>()
-    for (const notePath of usedNotePaths) {
-      const hrefs = (notesByPath.get(notePath)?.assetEmbeds ?? []).filter(
-        (h) => resolveAssetVaultRelativePath(vaultRoot, notePath, h) === asset.path
-      )
-      if (hrefs.length > 0) referenceHrefsByNote.set(notePath, hrefs)
-    }
+    const referenceHrefsByNote = findAssetReferenceHrefs(notes, vaultRoot, asset.path)
 
-    if (usedNotePaths.length > 5) {
+    if (referenceHrefsByNote.size > 5) {
       const confirmed = await confirmApp({
-        title: `Update references in ${usedNotePaths.length} notes?`,
-        description: `Renaming "${asset.name}" to "${nextName}" will rewrite its reference in ${usedNotePaths.length} notes that use it.`,
+        title: `Update references in ${referenceHrefsByNote.size} notes?`,
+        description: `Renaming "${asset.name}" to "${nextName}" will rewrite its reference in ${referenceHrefsByNote.size} notes that use it.`,
         confirmLabel: 'Rename and Update'
       })
       if (!confirmed) return

@@ -1408,15 +1408,23 @@ function swapAssetHrefBasename(hrefDecoded: string, newName: string): string {
 /**
  * Rewrite every `![[href]]` / `![alt](href)` / `[text](href)` in `body` whose
  * (decoded) href is in `targetHrefs` — the exact reference strings this note
- * used to embed the asset being renamed — pointing it at `newName` instead.
- * Preserves directory prefixes, alias/title/`<>` wrapping, and leaves fenced /
- * inline code untouched. Mirrors `rewriteWikilinksForRename`'s approach for
- * note renames, adapted for the two asset-link syntaxes.
+ * used to embed the asset being renamed/moved — replacing each with
+ * `computeReplacement(matchedHref)`'s result. Preserves alias/title/`<>`
+ * wrapping, and leaves fenced / inline code untouched. Mirrors
+ * `rewriteWikilinksForRename`'s approach for note renames, adapted for the
+ * two asset-link syntaxes.
+ *
+ * `computeReplacement` lets the caller decide how much of the href to keep:
+ * a same-folder rename only needs the basename swapped (`swapAssetHrefBasename`
+ * preserves the existing directory prefix), but a cross-folder move can't
+ * reuse that — the old directory prefix is now wrong regardless of how the
+ * href was written, so a move should return the asset's new full
+ * vault-relative path outright.
  */
 function rewriteAssetReferencesInBody(
   body: string,
   targetHrefs: readonly string[],
-  newName: string
+  computeReplacement: (matchedHref: string) => string
 ): { body: string; changed: number } {
   const targets = new Set(targetHrefs)
   if (targets.size === 0) return { body, changed: 0 }
@@ -1439,7 +1447,7 @@ function rewriteAssetReferencesInBody(
     segment = segment.replace(ASSET_WIKILINK_RE, (full: string, target: string) => {
       const trimmed = target.trim()
       if (!targets.has(trimmed)) return full
-      const next = swapAssetHrefBasename(trimmed, newName)
+      const next = computeReplacement(trimmed)
       if (next === trimmed) return full
       changed++
       return full.replace(trimmed, next)
@@ -1455,7 +1463,7 @@ function rewriteAssetReferencesInBody(
           /* keep raw */
         }
         if (!targets.has(decoded)) return full
-        const nextDecoded = swapAssetHrefBasename(decoded, newName)
+        const nextDecoded = computeReplacement(decoded)
         if (nextDecoded === decoded) return full
         // encodeURI (not encodeURIComponent) so `/` directory separators
         // survive re-encoding — only characters unsafe in a bare link
@@ -2323,6 +2331,15 @@ interface Store {
   renameAssetAndRewriteReferences: (
     assetPath: string,
     nextName: string,
+    referenceHrefsByNote: ReadonlyMap<string, readonly string[]>
+  ) => Promise<void>
+  /** Move an asset to `targetDir`, then rewrite its reference in every note
+   *  that embeds it to the asset's new full vault-relative path — a move
+   *  invalidates any directory prefix a note wrote, regardless of style, so
+   *  (unlike rename) the replacement can't just swap the basename. */
+  moveAssetAndRewriteReferences: (
+    assetPath: string,
+    targetDir: string,
     referenceHrefsByNote: ReadonlyMap<string, readonly string[]>
   ) => Promise<void>
   undoLastAssetAction: () => Promise<boolean>
@@ -4550,10 +4567,20 @@ export const useStore = create<Store>((set, get) => {
 
   renameAssetAndRewriteReferences: async (assetPath, nextName, referenceHrefsByNote) => {
     const renamed = await window.zen.renameAsset(assetPath, nextName)
+
+    // Keep the pinned-reference pane pointed at the renamed asset — otherwise
+    // a pinned PDF (or any pinned asset) silently points at a path that no
+    // longer exists once renamed.
+    if (get().pinnedRefKind === 'asset' && get().pinnedRefPath === assetPath) {
+      set({ pinnedRefPath: renamed.path })
+    }
+
     for (const [notePath, hrefs] of referenceHrefsByNote) {
       try {
         const content = await window.zen.readNote(notePath)
-        const { body, changed } = rewriteAssetReferencesInBody(content.body, hrefs, renamed.name)
+        const { body, changed } = rewriteAssetReferencesInBody(content.body, hrefs, (href) =>
+          swapAssetHrefBasename(href, renamed.name)
+        )
         if (changed > 0) await window.zen.writeNote(notePath, body)
       } catch (err) {
         console.error('renameAssetAndRewriteReferences: failed on', notePath, err)
@@ -4562,6 +4589,42 @@ export const useStore = create<Store>((set, get) => {
 
     // Keep the currently-edited note's in-memory body in sync so the
     // editor reflects the change without a reload.
+    const activeNote = get().activeNote
+    if (activeNote && referenceHrefsByNote.has(activeNote.path)) {
+      try {
+        const fresh = await window.zen.readNote(activeNote.path)
+        set({ activeNote: fresh })
+      } catch {
+        /* ignore — note may have been moved/deleted */
+      }
+    }
+
+    await get().refreshAssets()
+    await get().refreshNotes()
+  },
+
+  moveAssetAndRewriteReferences: async (assetPath, targetDir, referenceHrefsByNote) => {
+    const moved = await window.zen.moveAsset(assetPath, targetDir)
+
+    // Keep the pinned-reference pane pointed at the moved asset — same
+    // staleness risk as rename.
+    if (get().pinnedRefKind === 'asset' && get().pinnedRefPath === assetPath) {
+      set({ pinnedRefPath: moved.path })
+    }
+
+    for (const [notePath, hrefs] of referenceHrefsByNote) {
+      try {
+        const content = await window.zen.readNote(notePath)
+        // Unlike rename, a move invalidates any directory prefix the note
+        // wrote (regardless of style), so every matching reference becomes
+        // the asset's new full vault-relative path outright.
+        const { body, changed } = rewriteAssetReferencesInBody(content.body, hrefs, () => moved.path)
+        if (changed > 0) await window.zen.writeNote(notePath, body)
+      } catch (err) {
+        console.error('moveAssetAndRewriteReferences: failed on', notePath, err)
+      }
+    }
+
     const activeNote = get().activeNote
     if (activeNote && referenceHrefsByNote.has(activeNote.path)) {
       try {

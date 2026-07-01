@@ -11,6 +11,7 @@ import { externalLinkUrl, resolveInternalNoteHref } from "../lib/internal-links"
 import { toggleTaskAtIndex } from "../lib/tasklists";
 import {
   enhanceLocalAssetNodes,
+  findAssetReferenceHrefs,
   resolveAssetVaultRelativePath,
 } from "../lib/local-assets";
 import { assetTabPath } from "../lib/asset-tabs";
@@ -382,6 +383,8 @@ export const Preview = memo(function Preview({
   const assetFiles = useStore((s) => s.assetFiles);
   const refreshAssets = useStore((s) => s.refreshAssets);
   const deleteAssetAction = useStore((s) => s.deleteAsset);
+  const renameAssetAndRewriteReferences = useStore((s) => s.renameAssetAndRewriteReferences);
+  const moveAssetAndRewriteReferences = useStore((s) => s.moveAssetAndRewriteReferences);
   const effectiveMode = usePreviewDiagramThemeMode();
   const selectNote = useStore((s) => s.selectNote);
   const openNoteInTab = useStore((s) => s.openNoteInTab);
@@ -864,8 +867,22 @@ export const Preview = memo(function Preview({
             },
           });
           if (!next || next === asset.name) return;
-          await window.zen.renameAsset(vaultRel, next);
-          await refreshAssets();
+
+          const referenceHrefsByNote = findAssetReferenceHrefs(notes, vault?.root, vaultRel);
+          if (referenceHrefsByNote.size > 5) {
+            const confirmed = await confirmApp({
+              title: `Update references in ${referenceHrefsByNote.size} notes?`,
+              description: `Renaming "${asset.name}" to "${next}" will rewrite its reference in ${referenceHrefsByNote.size} notes that use it.`,
+              confirmLabel: "Rename and Update",
+            });
+            if (!confirmed) return;
+          }
+
+          try {
+            await renameAssetAndRewriteReferences(vaultRel, next, referenceHrefsByNote);
+          } catch (err) {
+            window.alert(err instanceof Error ? err.message : String(err));
+          }
         },
       });
       items.push({
@@ -888,8 +905,22 @@ export const Preview = memo(function Preview({
             },
           });
           if (target === null || target === currentDir) return;
-          await window.zen.moveAsset(vaultRel, target);
-          await refreshAssets();
+
+          const referenceHrefsByNote = findAssetReferenceHrefs(notes, vault?.root, vaultRel);
+          if (referenceHrefsByNote.size > 5) {
+            const confirmed = await confirmApp({
+              title: `Update references in ${referenceHrefsByNote.size} notes?`,
+              description: `Moving "${asset.name}" will rewrite its reference in ${referenceHrefsByNote.size} notes that use it.`,
+              confirmLabel: "Move and Update",
+            });
+            if (!confirmed) return;
+          }
+
+          try {
+            await moveAssetAndRewriteReferences(vaultRel, target, referenceHrefsByNote);
+          } catch (err) {
+            window.alert(err instanceof Error ? err.message : String(err));
+          }
         },
       });
       items.push({
@@ -977,11 +1008,14 @@ export const Preview = memo(function Preview({
     canDeleteAssets,
     canRevealInFileManager,
     deleteAssetAction,
+    moveAssetAndRewriteReferences,
     notePath,
+    notes,
     openNoteInTab,
     pinAssetReference,
     pinAssetReferenceForNote,
     refreshAssets,
+    renameAssetAndRewriteReferences,
     vault?.root,
     workspaceMode,
   ]);
