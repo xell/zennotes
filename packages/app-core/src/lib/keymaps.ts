@@ -1106,7 +1106,7 @@ export function getKeymapBinding(
   id: KeymapId,
 ): string {
   const override = overrides?.[id];
-  return override || getDefaultKeymapBinding(id);
+  return override !== undefined ? override : getDefaultKeymapBinding(id);
 }
 
 export function getSequenceTokens(
@@ -1368,6 +1368,11 @@ export function normalizeKeymapOverrides(input: unknown): KeymapOverrides {
   for (const definition of KEYMAP_DEFINITIONS) {
     const raw = (input as Record<string, unknown>)[definition.id];
     if (typeof raw !== "string") continue;
+    if (raw === "") {
+      // Explicit unbound: preserve only when the default is not already empty.
+      if (definition.defaultBinding !== "") overrides[definition.id] = "";
+      continue;
+    }
     const normalized = normalizeKeymapBinding(definition.id, raw);
     if (normalized && normalized !== definition.defaultBinding) {
       overrides[definition.id] = normalized;

@@ -5039,8 +5039,8 @@ export const useStore = create<Store>((set, get) => {
   setKeymapBinding: (id, binding) => {
     set((s) => {
       const nextOverrides = { ...s.keymapOverrides }
-      if (binding) nextOverrides[id] = binding
-      else delete nextOverrides[id]
+      if (binding !== null) nextOverrides[id] = binding   // '' = explicitly unbound
+      else delete nextOverrides[id]                       // null = restore default
       return { keymapOverrides: nextOverrides }
     })
     savePrefs(collectPrefs(get()))
