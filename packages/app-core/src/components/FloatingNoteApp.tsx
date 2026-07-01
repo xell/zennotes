@@ -23,9 +23,11 @@ import {
   highlightActiveLine,
   highlightActiveLineGutter,
   keymap,
-  lineNumbers
+  lineNumbers,
+  tooltips
 } from '@codemirror/view'
 import { Vim, vim } from '@replit/codemirror-vim'
+import { unifiedMergeView } from '@codemirror/merge'
 import { history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { vimAwareDefaultKeymap } from '../lib/cm-vim-default-keymap'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
@@ -34,18 +36,31 @@ import { applyVimInsertEscape } from '../lib/vim-insert-escape'
 import { applyVimKeymap } from '../lib/vim-keymap'
 import { DEFAULT_VIM_KEYMAP } from '../lib/vim-keymap-defaults'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
+import {
+  orderedListRenumber,
+  skipOrderedListRenumber
+} from '../lib/cm-ordered-list-renumber'
+import { codeBlockFontPlugin } from '../lib/cm-code-block-font'
 import { vimImeControl } from '../lib/cm-vim-ime'
 import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
 import { syntaxHighlighting, HighlightStyle, defaultHighlightStyle } from '@codemirror/language'
 import { tags as t } from '@lezer/highlight'
 import { searchKeymap } from '@codemirror/search'
+import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
+import { slashCommandSource, slashCommandRender } from '../lib/cm-slash-commands'
+import { dateShortcutSource } from '../lib/cm-date-shortcuts'
+import { wikilinkSource, wikilinkHeadingSource } from '../lib/cm-wikilinks'
+import { completionNavKeymap } from '../lib/cm-completion-nav'
 import type { NoteContent, VaultChangeEvent } from '@shared/ipc'
 import type { LineNumberMode } from '../store'
 import { wysiwygExtensions } from '../lib/cm-wysiwyg-compose'
 import { useStore } from '../store'
 import { headingFolding } from '../lib/cm-heading-fold'
+import { frontmatterStyle } from '../lib/cm-frontmatter'
 import { LazyPreview as Preview } from './LazyPreview'
 import { CloseIcon, PinIcon } from './icons'
+import { ModeDropdown } from './ModeDropdown'
+import type { PaneMode } from '../lib/pane-mode'
 import {
   DEFAULT_THEME_ID,
   THEMES,
@@ -201,13 +216,36 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
   const prefs = useMemo(() => loadFloatingPrefs(), [])
   const [content, setContent] = useState<NoteContent | null>(null)
   const [dirty, setDirty] = useState(false)
-  // Three explicit modes — Edit (raw source), Live (WYSIWYG live preview),
-  // Preview (rendered HTML). Default to Live when the user keeps live
-  // preview on globally, otherwise raw Edit.
-  const [mode, setMode] = useState<'edit' | 'live' | 'preview'>(
-    prefs.livePreview ? 'live' : 'edit'
+  // Same four modes as the main editor's toolbar — Edit / Split / Preview /
+  // Diff. Inline WYSIWYG rendering is a separate, orthogonal concern driven
+  // by the global "live preview" setting below, exactly like the main editor.
+  const [mode, setMode] = useState<PaneMode>('edit')
+  // Mirrors appliedPrefsRef.current.livePreview as React state (refs don't
+  // trigger re-renders) so the `.cm-wysiwyg` class — which the WYSIWYG
+  // plugins' CSS is gated on — stays in sync after a settings refresh.
+  const [livePreviewOn, setLivePreviewOn] = useState(prefs.livePreview)
+  // This window is a separate renderer process from the main one, so it
+  // can't read the shared store's `isGitRepo` — it asks main directly,
+  // same IPC call App.tsx uses, scoped to this window's inherited vault.
+  const [isGitRepo, setIsGitRepo] = useState(false)
+  const [diffStatus, setDiffStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [diffRefreshKey, setDiffRefreshKey] = useState(0)
+  const diffInlineDiffs = useStore((s) => s.diffInlineDiffs)
+  const handleModeChange = useCallback(
+    (nextMode: PaneMode) => {
+      if (nextMode === 'diff' && mode === 'diff') {
+        // Already in diff mode — bump the refresh key to re-run the diff
+        // effect, which resets the compartment and re-collapses all
+        // expanded sections — mirrors EditorPane's applyPaneMode.
+        setDiffRefreshKey((k) => k + 1)
+        return
+      }
+      setMode(nextMode)
+    },
+    [mode]
   )
   const viewRef = useRef<EditorView | null>(null)
+  const diffCompartment = useMemo(() => new Compartment(), [])
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dirtyBodyRef = useRef<string | null>(null)
   // Live-preview lives in its own compartment so toggling Edit <-> Live
@@ -218,10 +256,6 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
   // (Cmd/Ctrl+Shift+,) can re-apply them in place without rebuilding.
   const lineNumbersCompartment = useMemo(() => new Compartment(), [])
   const wordWrapCompartment = useMemo(() => new Compartment(), [])
-  // Mirror the current mode into a ref so the deps-light editor-mount
-  // callback reads the right initial compartment value across remounts.
-  const modeRef = useRef(mode)
-  modeRef.current = mode
   // Latest prefs actually applied to this window; updated by
   // refreshSettings so editor remounts pick up the refreshed values.
   const appliedPrefsRef = useRef(prefs)
@@ -257,6 +291,19 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
       alive = false
     }
   }, [notePath])
+
+  // Same one-shot check App.tsx does for the main window — this window's
+  // vault is inherited from the source window (inheritWindowWorkspaceSession
+  // in main), so it resolves to the same vault/repo.
+  useEffect(() => {
+    let alive = true
+    void window.zen.gitIsRepo().then((v) => {
+      if (alive) setIsGitRepo(v)
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
 
   // Sync to external changes (file watcher broadcasts to all windows).
   useEffect(() => {
@@ -321,6 +368,12 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
         extensions: [
           appMarkdownSnippetExtension(),
           vimImeControl(),
+          // Give the editable surface an accessible name so accessibility
+          // clients (screen readers, proofreaders such as Grammarly) identify
+          // it as a text field — mirrors EditorPane.
+          EditorView.contentAttributes.of({
+            'aria-label': 'Floating note editor'
+          }),
           new Compartment().of(prefs.vimMode ? vim() : []),
           history(),
           drawSelection(),
@@ -330,20 +383,36 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
           ),
           markdown({ base: markdownLanguage, codeLanguages: resolveCodeLanguage, addKeymap: true }),
           markdownListIndentPlugin,
+          frontmatterStyle,
+          orderedListRenumber,
           headingFolding(),
+          codeBlockFontPlugin,
           syntaxHighlighting(paperHighlight),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
           livePreviewCompartment.of(
-            modeRef.current === 'live'
+            appliedPrefsRef.current.livePreview
               ? wysiwygExtensions(useStore.getState().renderTablesInLivePreview)
               : []
           ),
           lineNumbersCompartment.of(lineNumberExtension(appliedPrefsRef.current.lineNumberMode)),
+          diffCompartment.of([]),
+          tooltips({ parent: document.body }),
+          autocompletion({
+            override: [slashCommandSource, dateShortcutSource, wikilinkSource, wikilinkHeadingSource],
+            addToOptions: [{ render: slashCommandRender.render, position: 0 }],
+            icons: false,
+            optionClass: (completion) =>
+              (completion as { _kind?: string })._kind === 'wikilink'
+                ? 'wikilink-cmd-option'
+                : 'slash-cmd-option'
+          }),
+          completionNavKeymap,
           keymap.of([
             indentWithTab,
             ...vimAwareDefaultKeymap(prefs.vimMode),
             ...historyKeymap,
-            ...searchKeymap
+            ...searchKeymap,
+            ...completionKeymap
           ]),
           EditorView.updateListener.of((upd) => {
             if (!upd.docChanged) return
@@ -361,8 +430,9 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
         ]
       })
       viewRef.current = new EditorView({ state, parent: el })
-      // Focus the editor on mount (and on every edit/preview toggle that
-      // remounts it) so vim motions work immediately without a click.
+      // Focus the editor on mount so vim motions work immediately without
+      // a click. The editor stays mounted across mode toggles (see the
+      // mode-change effect below), so this only fires once per window.
       viewRef.current.focus()
     },
     // Intentionally omit `content?.body` so the CM view isn't rebuilt
@@ -371,20 +441,6 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
     [persist, livePreviewCompartment, prefs.vimMode]
   )
 
-  // Toggle live preview in place when switching Edit <-> Live so the
-  // editor isn't rebuilt (preserves undo history, cursor, scroll).
-  useEffect(() => {
-    const view = viewRef.current
-    if (!view || mode === 'preview') return
-    view.dispatch({
-      effects: livePreviewCompartment.reconfigure(
-        mode === 'live'
-          ? wysiwygExtensions(useStore.getState().renderTablesInLivePreview)
-          : []
-      )
-    })
-  }, [mode, livePreviewCompartment])
-
   // Pull the latest settings from the shared prefs blob and apply them to
   // this window without a reload. Theme/fonts/sizes go through applyTheme;
   // line numbers and word wrap reconfigure their compartments in place.
@@ -392,16 +448,58 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
   const refreshSettings = useCallback(() => {
     const next = loadFloatingPrefs()
     appliedPrefsRef.current = next
+    setLivePreviewOn(next.livePreview)
     applyTheme(next)
     const view = viewRef.current
     if (!view) return
     view.dispatch({
       effects: [
         lineNumbersCompartment.reconfigure(lineNumberExtension(next.lineNumberMode)),
-        wordWrapCompartment.reconfigure(next.wordWrap ? EditorView.lineWrapping : [])
+        wordWrapCompartment.reconfigure(next.wordWrap ? EditorView.lineWrapping : []),
+        livePreviewCompartment.reconfigure(
+          next.livePreview ? wysiwygExtensions(useStore.getState().renderTablesInLivePreview) : []
+        )
       ]
     })
-  }, [lineNumbersCompartment, wordWrapCompartment])
+  }, [lineNumbersCompartment, livePreviewCompartment, wordWrapCompartment])
+
+  // The editor stays mounted (hidden via CSS) across Edit/Split/Preview
+  // toggles, so refocus it explicitly on the way back in — mirrors the
+  // main editor's applyPaneMode behavior.
+  useEffect(() => {
+    if (mode === 'preview') return
+    viewRef.current?.focus()
+  }, [mode])
+
+  // Diff mode: load the git-index version and diff against it — mirrors
+  // EditorPane's diff effect, keyed on this window's fixed notePath.
+  useEffect(() => {
+    const view = viewRef.current
+    if (mode !== 'diff' || !view) {
+      if (view && mode !== 'diff') {
+        view.dispatch({ effects: diffCompartment.reconfigure([]) })
+        setDiffStatus('idle')
+      }
+      return
+    }
+    let cancelled = false
+    view.dispatch({ effects: diffCompartment.reconfigure([]) })
+    setDiffStatus('loading')
+    void window.zen.gitShowIndex(notePath).then((original) => {
+      if (cancelled) return
+      if (original === null) {
+        setDiffStatus('error')
+        return
+      }
+      setDiffStatus('ready')
+      view.dispatch({
+        effects: diffCompartment.reconfigure(
+          unifiedMergeView({ original, allowInlineDiffs: diffInlineDiffs, collapseUnchanged: { margin: 3, minSize: 4 } })
+        )
+      })
+    })
+    return () => { cancelled = true }
+  }, [mode, notePath, diffRefreshKey, diffInlineDiffs, diffCompartment])
 
   // Push external content updates into the live CM view (with
   // selection clamping to keep cursor near where it was).
@@ -414,7 +512,7 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
     const head = Math.min(sel.head, content.body.length)
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: content.body },
-      annotations: programmatic.of(true),
+      annotations: [programmatic.of(true), skipOrderedListRenumber.of(true)],
       selection: { anchor, head }
     })
   }, [content])
@@ -453,23 +551,26 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
         refreshSettings()
         return
       }
-      // Mode switching mirrors the main window's Cmd/Ctrl+4/5/6
-      // (Edit/Split/Preview). No Split here, so 5 maps to Live.
+      // Mode switching mirrors the main window's Cmd/Ctrl+4/5/6/7
+      // (Edit/Split/Preview/Diff).
       if (event.shiftKey) return
       if (key === '4') {
         event.preventDefault()
-        setMode('edit')
+        handleModeChange('edit')
       } else if (key === '5') {
         event.preventDefault()
-        setMode('live')
+        handleModeChange('split')
       } else if (key === '6') {
         event.preventDefault()
-        setMode('preview')
+        handleModeChange('preview')
+      } else if (key === '7' && isGitRepo) {
+        event.preventDefault()
+        handleModeChange('diff')
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [refreshSettings])
+  }, [refreshSettings, handleModeChange, isGitRepo])
 
   // Vim ex commands scoped to the floating window. The main-window
   // `registerVimCommands` never runs here (each Electron window has its
@@ -493,6 +594,10 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
     if (content?.title) return content.title
     return notePath.split('/').pop()?.replace(/\.md$/i, '') ?? notePath
   }, [content, notePath])
+
+  const showEditor = mode !== 'preview'
+  const showPreview = mode === 'split' || mode === 'preview'
+  const splitMode = mode === 'split'
 
   // Is this note currently the user's pinned reference? Read it from
   // the same prefs blob the main window writes to, so the pin icon
@@ -535,29 +640,7 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
           className="flex shrink-0 items-center gap-1"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
-          <div className="flex items-center gap-1 rounded-md bg-paper-200/70 p-0.5 text-xs">
-            {(
-              [
-                { m: 'edit', label: 'Edit', title: 'Raw Markdown source' },
-                { m: 'live', label: 'Live', title: 'Live preview — render inline while editing' },
-                { m: 'preview', label: 'Preview', title: 'Fully rendered preview' }
-              ] as const
-            ).map(({ m, label, title }) => (
-              <button
-                key={m}
-                onClick={() => setMode(m)}
-                title={title}
-                className={[
-                  'rounded px-1.5 py-0.5 transition-colors',
-                  mode === m
-                    ? 'bg-paper-50 text-ink-900 shadow-sm'
-                    : 'text-ink-500 hover:text-ink-800'
-                ].join(' ')}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <ModeDropdown mode={mode} onChange={handleModeChange} isGitRepo={isGitRepo} />
           <button
             type="button"
             title="Close window"
@@ -570,23 +653,62 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col">
-        {mode !== 'preview' ? (
-          <div ref={setContainerRef} className="min-h-0 min-w-0 flex-1" />
-        ) : content ? (
+        <div
+          className={[
+            'min-h-0 min-w-0 flex-1 overflow-hidden',
+            splitMode ? 'flex flex-row' : 'flex flex-col'
+          ].join(' ')}
+        >
           <div
-            data-preview-scroll
-            className="min-h-0 min-w-0 flex-1 overflow-y-auto"
+            className={[
+              'relative min-h-0 min-w-0',
+              splitMode
+                ? 'flex flex-[1.05] flex-col border-r border-paper-300/70'
+                : 'flex flex-1 flex-col'
+            ].join(' ')}
+            style={{ display: showEditor ? 'flex' : 'none' }}
           >
-            <Preview
-              markdown={dirtyBodyRef.current ?? content.body}
-              notePath={content.path}
+            <div
+              ref={setContainerRef}
+              className={[
+                'min-h-0 min-w-0 flex-1',
+                // WYSIWYG styling (tables, blockquotes, code-block cards,
+                // etc.) is gated on the same live-preview condition that
+                // loads the wysiwyg plugins — see EditorPane.
+                livePreviewOn ? 'cm-wysiwyg' : ''
+              ].join(' ')}
             />
+            {mode === 'diff' && diffStatus === 'loading' && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-paper-50/80 text-sm text-ink-400">
+                Loading diff…
+              </div>
+            )}
+            {mode === 'diff' && diffStatus === 'error' && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-paper-50/80 text-sm text-ink-400">
+                No index version — stage or commit this note to see a diff.
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="flex flex-1 items-center justify-center text-sm text-ink-400">
-            Loading…
-          </div>
-        )}
+          {showPreview &&
+            (content ? (
+              <div
+                data-preview-scroll
+                className={[
+                  'min-h-0 min-w-0 overflow-y-auto',
+                  splitMode ? 'flex flex-1 flex-col' : 'flex-1'
+                ].join(' ')}
+              >
+                <Preview
+                  markdown={dirtyBodyRef.current ?? content.body}
+                  notePath={content.path}
+                />
+              </div>
+            ) : (
+              <div className="flex flex-1 items-center justify-center text-sm text-ink-400">
+                Loading…
+              </div>
+            ))}
+        </div>
       </div>
     </div>
   )

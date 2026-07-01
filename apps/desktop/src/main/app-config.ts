@@ -230,7 +230,7 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
   pinnedRefMode: {
     section: 'view',
     tomlKey: 'pinned_ref_mode',
-    comment: 'edit | live | preview — default view mode for the pinned reference pane'
+    comment: 'edit | split | preview — default view mode for the pinned reference pane'
   },
   quickNoteDateTitle: {
     section: 'view',

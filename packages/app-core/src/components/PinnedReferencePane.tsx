@@ -8,7 +8,7 @@
  * edit here propagates to any main-pane view on the same path (and
  * vice versa) via the same sync-effect used by `EditorPane`.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Annotation,
   Compartment,
@@ -26,11 +26,19 @@ import {
   tooltips
 } from '@codemirror/view'
 import { vim } from '@replit/codemirror-vim'
+import { unifiedMergeView } from '@codemirror/merge'
 import { history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { vimAwareDefaultKeymap } from '../lib/cm-vim-default-keymap'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
+import {
+  orderedListRenumber,
+  skipOrderedListRenumber
+} from '../lib/cm-ordered-list-renumber'
+import { codeBlockFontPlugin } from '../lib/cm-code-block-font'
+import { vimImeControl } from '../lib/cm-vim-ime'
+import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
 import { syntaxHighlighting, HighlightStyle, defaultHighlightStyle } from '@codemirror/language'
 import { tags as t } from '@lezer/highlight'
 import { searchKeymap } from '@codemirror/search'
@@ -39,6 +47,7 @@ import { useStore } from '../store'
 import type { LineNumberMode } from '../store'
 import { wysiwygExtensions } from '../lib/cm-wysiwyg-compose'
 import { headingFolding } from '../lib/cm-heading-fold'
+import { frontmatterStyle } from '../lib/cm-frontmatter'
 import { slashCommandSource, slashCommandRender } from '../lib/cm-slash-commands'
 import { dateShortcutSource } from '../lib/cm-date-shortcuts'
 import { wikilinkSource, wikilinkHeadingSource } from '../lib/cm-wikilinks'
@@ -47,7 +56,8 @@ import { classifyLocalAssetHref, type LocalAssetKind } from '../lib/local-assets
 import { focusEditorNormalMode } from '../lib/editor-focus'
 import { LazyPreview as Preview } from './LazyPreview'
 import { TerminalPanel } from './TerminalPanel'
-import { DocumentTextIcon, EyeIcon, ListIcon, PencilIcon, PinIcon, SplitColumnsIcon, TerminalIcon } from './icons'
+import { DocumentTextIcon, ListIcon, PinIcon, TerminalIcon } from './icons'
+import { ModeDropdown } from './ModeDropdown'
 import type { NoteMeta } from '@shared/ipc'
 import { allLeaves } from '../lib/pane-layout'
 
@@ -151,6 +161,8 @@ export function PinnedReferencePane(): JSX.Element | null {
   const persistNote = useStore((s) => s.persistNote)
   const vimMode = useStore((s) => s.vimMode)
   const livePreview = useStore((s) => s.livePreview)
+  const isGitRepo = useStore((s) => s.isGitRepo)
+  const diffInlineDiffs = useStore((s) => s.diffInlineDiffs)
   const lineNumberMode = useStore((s) => s.lineNumberMode)
   const editorFontSize = useStore((s) => s.editorFontSize)
   const editorLineHeight = useStore((s) => s.editorLineHeight)
@@ -162,6 +174,9 @@ export function PinnedReferencePane(): JSX.Element | null {
   const vimCompartmentRef = useRef<Compartment | null>(null)
   const livePreviewCompartmentRef = useRef<Compartment | null>(null)
   const lineNumbersCompartmentRef = useRef<Compartment | null>(null)
+  const diffCompartmentRef = useRef<Compartment | null>(null)
+  const [diffStatus, setDiffStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [diffRefreshKey, setDiffRefreshKey] = useState(0)
 
   const rightPaneTab = useStore((s) => s.rightPaneTab)
   const setRightPaneTab = useStore((s) => s.setRightPaneTab)
@@ -213,15 +228,25 @@ export function PinnedReferencePane(): JSX.Element | null {
       const vimCompartment = new Compartment()
       const livePreviewCompartment = new Compartment()
       const lineNumbersCompartment = new Compartment()
+      const diffCompartment = new Compartment()
       vimCompartmentRef.current = vimCompartment
       livePreviewCompartmentRef.current = livePreviewCompartment
       lineNumbersCompartmentRef.current = lineNumbersCompartment
+      diffCompartmentRef.current = diffCompartment
       const s0 = useStore.getState()
       const initialPath = s0.pinnedRefPath
       const initialContent = initialPath ? s0.noteContents[initialPath] ?? null : null
       const state = EditorState.create({
         doc: initialContent?.body ?? '',
         extensions: [
+          appMarkdownSnippetExtension(),
+          vimImeControl(),
+          // Give the editable surface an accessible name so accessibility
+          // clients (screen readers, proofreaders such as Grammarly) identify
+          // it as a text field — mirrors EditorPane.
+          EditorView.contentAttributes.of({
+            'aria-label': 'Pinned reference editor'
+          }),
           vimCompartment.of(s0.vimMode ? vim() : []),
           history(),
           drawSelection(),
@@ -229,11 +254,15 @@ export function PinnedReferencePane(): JSX.Element | null {
           EditorView.lineWrapping,
           markdown({ base: markdownLanguage, codeLanguages: resolveCodeLanguage, addKeymap: true }),
           markdownListIndentPlugin,
+          frontmatterStyle,
+          orderedListRenumber,
           headingFolding(),
+          codeBlockFontPlugin,
           syntaxHighlighting(paperHighlight),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-          livePreviewCompartment.of(s0.pinnedRefMode === 'live' ? wysiwygExtensions(s0.renderTablesInLivePreview) : []),
+          livePreviewCompartment.of(s0.livePreview ? wysiwygExtensions(s0.renderTablesInLivePreview) : []),
           lineNumbersCompartment.of(lineNumberExtension(s0.lineNumberMode)),
+          diffCompartment.of([]),
           tooltips({ parent: document.body }),
           autocompletion({
             override: [slashCommandSource, dateShortcutSource, wikilinkSource, wikilinkHeadingSource],
@@ -291,7 +320,7 @@ export function PinnedReferencePane(): JSX.Element | null {
     const clampedHead = Math.min(sel.head, nextBody.length)
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: nextBody },
-      annotations: programmatic.of(true),
+      annotations: [programmatic.of(true), skipOrderedListRenumber.of(true)],
       selection: pathChanged ? { anchor: 0 } : { anchor: clampedAnchor, head: clampedHead }
     })
     viewPathRef.current = nextPath
@@ -308,14 +337,44 @@ export function PinnedReferencePane(): JSX.Element | null {
     const view = viewRef.current
     const comp = livePreviewCompartmentRef.current
     if (!view || !comp) return
-    view.dispatch({ effects: comp.reconfigure(pinnedRefMode === 'live' ? wysiwygExtensions(renderTablesInLivePreview) : []) })
-  }, [pinnedRefMode, renderTablesInLivePreview])
+    view.dispatch({ effects: comp.reconfigure(livePreview ? wysiwygExtensions(renderTablesInLivePreview) : []) })
+  }, [livePreview, renderTablesInLivePreview])
   useEffect(() => {
     const view = viewRef.current
     const comp = lineNumbersCompartmentRef.current
     if (!view || !comp) return
     view.dispatch({ effects: comp.reconfigure(lineNumberExtension(lineNumberMode)) })
   }, [lineNumberMode])
+
+  /* -------- Diff mode: load the git-index version and diff against it -------- */
+  useEffect(() => {
+    const compartment = diffCompartmentRef.current
+    const view = viewRef.current
+    if (pinnedRefMode !== 'diff' || !pinnedRefPath || !compartment || !view) {
+      if (compartment && view && pinnedRefMode !== 'diff') {
+        view.dispatch({ effects: compartment.reconfigure([]) })
+        setDiffStatus('idle')
+      }
+      return
+    }
+    let cancelled = false
+    view.dispatch({ effects: compartment.reconfigure([]) })
+    setDiffStatus('loading')
+    void window.zen.gitShowIndex(pinnedRefPath).then((original) => {
+      if (cancelled) return
+      if (original === null) {
+        setDiffStatus('error')
+        return
+      }
+      setDiffStatus('ready')
+      view.dispatch({
+        effects: compartment.reconfigure(
+          unifiedMergeView({ original, allowInlineDiffs: diffInlineDiffs, collapseUnchanged: { margin: 3, minSize: 4 } })
+        )
+      })
+    })
+    return () => { cancelled = true }
+  }, [pinnedRefMode, pinnedRefPath, diffRefreshKey, diffInlineDiffs])
 
   /* -------- Re-measure on font changes -------- */
   useEffect(() => {
@@ -397,7 +456,23 @@ export function PinnedReferencePane(): JSX.Element | null {
   }, [assetUrl, useAssetIframe])
 
   const showEditor = pinnedRefMode !== 'preview'
+  const showPreview = pinnedRefMode === 'split' || pinnedRefMode === 'preview'
+  const splitMode = pinnedRefMode === 'split'
   const hidden = zenMode || !pinnedRefVisible
+
+  const handleModeChange = useCallback(
+    (nextMode: typeof pinnedRefMode) => {
+      if (nextMode === 'diff' && pinnedRefMode === 'diff') {
+        // Already in diff mode — bump the refresh key to re-run the diff
+        // effect, which resets the compartment and re-collapses all
+        // expanded sections — mirrors EditorPane's applyPaneMode.
+        setDiffRefreshKey((k) => k + 1)
+        return
+      }
+      setPinnedRefMode(nextMode)
+    },
+    [pinnedRefMode, setPinnedRefMode]
+  )
 
   return (
     <section
@@ -476,7 +551,11 @@ export function PinnedReferencePane(): JSX.Element | null {
                 >
                   <ListIcon width={13} height={13} />
                 </button>
-                <RefModeDropdown mode={pinnedRefMode} onChange={setPinnedRefMode} />
+                <ModeDropdown
+                  mode={pinnedRefMode}
+                  onChange={handleModeChange}
+                  isGitRepo={isGitRepo}
+                />
               </>
             )}
               <div className="flex items-center rounded-md bg-paper-200/70 p-0.5">
@@ -527,22 +606,54 @@ export function PinnedReferencePane(): JSX.Element | null {
             invisibly; this half doesn't need the "preserve state" trick
             because note content is already persisted through the store. */}
         {pinnedRefPath && !showPicker && !isAsset && (
-          <>
+          <div
+            className={[
+              'min-h-0 min-w-0 flex-1 overflow-hidden',
+              splitMode ? 'flex flex-row' : 'flex flex-col'
+            ].join(' ')}
+          >
             <div
-              className="relative min-h-0 min-w-0 flex-1"
+              className={[
+                'relative min-h-0 min-w-0',
+                splitMode
+                  ? 'flex flex-[1.05] flex-col border-r border-paper-300/70'
+                  : 'flex flex-1 flex-col'
+              ].join(' ')}
               style={{ display: showEditor ? 'flex' : 'none' }}
             >
-              <div ref={setContainerRef} className="min-h-0 min-w-0 flex-1" />
+              <div
+                ref={setContainerRef}
+                className={[
+                  'min-h-0 min-w-0 flex-1',
+                  // WYSIWYG styling (tables, blockquotes, code-block cards,
+                  // etc.) is gated on the same `livePreview` condition that
+                  // loads the wysiwyg plugins — see EditorPane.
+                  livePreview ? 'cm-wysiwyg' : ''
+                ].join(' ')}
+              />
+              {pinnedRefMode === 'diff' && diffStatus === 'loading' && (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-paper-50/80 text-sm text-ink-400">
+                  Loading diff…
+                </div>
+              )}
+              {pinnedRefMode === 'diff' && diffStatus === 'error' && (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-paper-50/80 text-sm text-ink-400">
+                  No index version — stage or commit this note to see a diff.
+                </div>
+              )}
             </div>
-            {!showEditor && content && (
+            {showPreview && content && (
               <div
                 data-preview-scroll
-                className="min-h-0 min-w-0 flex-1 overflow-y-auto"
+                className={[
+                  'min-h-0 min-w-0 overflow-y-auto',
+                  splitMode ? 'flex flex-1 flex-col' : 'flex-1'
+                ].join(' ')}
               >
                 <Preview markdown={content.body} notePath={content.path} />
               </div>
             )}
-          </>
+          </div>
         )}
 
         {pinnedRefPath && !showPicker && isAsset && assetUrl && assetKind === 'image' && (
@@ -617,107 +728,6 @@ export function PinnedReferencePane(): JSX.Element | null {
         )}
       </div>
     </section>
-  )
-}
-
-type PinnedRefMode = 'edit' | 'live' | 'preview'
-
-const REF_MODE_OPTIONS: Array<{
-  mode: PinnedRefMode
-  label: string
-  icon: () => JSX.Element
-}> = [
-  { mode: 'edit', label: 'Edit — raw Markdown source', icon: () => <PencilIcon /> },
-  { mode: 'live', label: 'Live — render inline while editing', icon: () => <SplitColumnsIcon /> },
-  { mode: 'preview', label: 'Preview — fully rendered', icon: () => <EyeIcon /> }
-]
-
-function useHoverDropdown(openDelay = 150, closeDelay = 100) {
-  const [open, setOpen] = useState(false)
-  const openTimer = useRef<ReturnType<typeof setTimeout>>()
-  const closeTimer = useRef<ReturnType<typeof setTimeout>>()
-  const onEnter = () => {
-    clearTimeout(closeTimer.current)
-    openTimer.current = setTimeout(() => setOpen(true), openDelay)
-  }
-  const onLeave = () => {
-    clearTimeout(openTimer.current)
-    closeTimer.current = setTimeout(() => setOpen(false), closeDelay)
-  }
-  return { open, onEnter, onLeave }
-}
-
-function DropdownPanel({
-  open,
-  onEnter,
-  onLeave,
-  children
-}: {
-  open: boolean
-  onEnter: () => void
-  onLeave: () => void
-  children: ReactNode
-}): JSX.Element {
-  return (
-    <div
-      className={[
-        'absolute right-0 top-full z-30 pt-1 translate-x-[3px] transition-all duration-100 origin-top',
-        open ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-95 pointer-events-none'
-      ].join(' ')}
-      onMouseEnter={onEnter}
-      onMouseLeave={onLeave}
-    >
-      <div className="flex flex-col gap-px rounded-md border border-paper-300 bg-paper-50 p-0.5 shadow-panel">
-        {children}
-      </div>
-    </div>
-  )
-}
-
-function RefModeDropdown({
-  mode,
-  onChange
-}: {
-  mode: PinnedRefMode
-  onChange: (m: PinnedRefMode) => void
-}): JSX.Element {
-  const { open, onEnter, onLeave } = useHoverDropdown()
-  const current = REF_MODE_OPTIONS.find((o) => o.mode === mode)!
-
-  return (
-    <div className="relative" onMouseEnter={onEnter} onMouseLeave={onLeave}>
-      <button
-        type="button"
-        title={current.label}
-        aria-label={current.label}
-        className={[
-          'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
-          open ? 'bg-paper-200 text-ink-900' : 'text-ink-500 hover:bg-paper-200 hover:text-ink-900'
-        ].join(' ')}
-      >
-        {current.icon()}
-      </button>
-      <DropdownPanel open={open} onEnter={onEnter} onLeave={onLeave}>
-        {REF_MODE_OPTIONS.map((opt) => (
-          <button
-            key={opt.mode}
-            type="button"
-            onClick={() => onChange(opt.mode)}
-            aria-label={opt.label}
-            aria-pressed={mode === opt.mode}
-            className={[
-              'group/item relative flex h-7 w-7 items-center justify-center rounded transition-colors',
-              mode === opt.mode ? 'bg-paper-200 text-ink-900' : 'text-ink-500 hover:bg-paper-200 hover:text-ink-900'
-            ].join(' ')}
-          >
-            <span className="pointer-events-none">{opt.icon()}</span>
-            <span className="pointer-events-none absolute right-full mr-2 top-1/2 -translate-y-1/2 z-40 hidden whitespace-nowrap rounded-md border border-paper-300 bg-paper-50 px-2 py-1 text-xs font-medium text-ink-800 shadow-panel group-hover/item:block">
-              {opt.label}
-            </span>
-          </button>
-        ))}
-      </DropdownPanel>
-    </div>
   )
 }
 

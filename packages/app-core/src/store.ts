@@ -65,6 +65,7 @@ import {
   type TaskPriority as TaskLinePriority
 } from '@shared/tasklists'
 import { DEFAULT_THEME_ID, THEMES, type ThemeFamily, type ThemeMode } from './lib/themes'
+import type { PaneMode } from './lib/pane-mode'
 import { DEFAULT_VIM_KEYMAP } from './lib/vim-keymap-defaults'
 import { formatMarkdown } from './lib/format-markdown'
 import { confirmMoveToTrash } from './lib/confirm-trash'
@@ -433,7 +434,7 @@ interface Prefs {
   pinnedRefVisible: boolean
   pinnedRefWidth: number
   panelWidths: PanelWidths
-  pinnedRefMode: 'edit' | 'live' | 'preview'
+  pinnedRefMode: PaneMode
   /** When true, "New Quick Note" auto-titles to today's date
    *  (YYYY-MM-DD), appending " (2)", " (3)" etc. for collisions. */
   quickNoteDateTitle: boolean
@@ -785,7 +786,7 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
         : DEFAULT_PREFS.pinnedRefWidth,
     panelWidths: normalizePanelWidths(p.panelWidths),
     pinnedRefMode:
-      p.pinnedRefMode === 'edit' || p.pinnedRefMode === 'live' || p.pinnedRefMode === 'preview'
+      p.pinnedRefMode === 'edit' || p.pinnedRefMode === 'split' || p.pinnedRefMode === 'preview'
         ? p.pinnedRefMode
         : DEFAULT_PREFS.pinnedRefMode,
     quickNoteDateTitle:
@@ -1602,7 +1603,7 @@ function collectPrefs(s: {
   pinnedRefVisible: boolean
   pinnedRefWidth: number
   panelWidths: PanelWidths
-  pinnedRefMode: 'edit' | 'live' | 'preview'
+  pinnedRefMode: PaneMode
   quickNoteDateTitle: boolean
   quickNoteTitlePrefix: string | null
   wordWrap: boolean
@@ -2077,7 +2078,7 @@ interface Store {
   pinnedRefVisible: boolean
   pinnedRefWidth: number
   panelWidths: PanelWidths
-  pinnedRefMode: 'edit' | 'live' | 'preview'
+  pinnedRefMode: PaneMode
   /** Runtime-only: which tab is active in the right pane (not persisted). */
   rightPaneTab: 'reference' | 'terminal'
 
@@ -2461,7 +2462,7 @@ interface Store {
   togglePinnedRefVisible: () => void
   setPinnedRefWidth: (px: number) => void
   setPanelWidth: (panel: RightPanelId, px: number) => void
-  setPinnedRefMode: (mode: 'edit' | 'live' | 'preview') => void
+  setPinnedRefMode: (mode: PaneMode) => void
   setRightPaneTab: (tab: 'reference' | 'terminal') => void
 
   setQuickNoteDateTitle: (on: boolean) => void
