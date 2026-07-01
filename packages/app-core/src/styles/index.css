@@ -2687,6 +2687,13 @@ textarea,
   font-size: 1rem;
 }
 
+/* The ⌕ glyph renders much smaller than ↗ at the same font-size in most
+   fonts (it has a lot of built-in whitespace in its glyph box) — bump it
+   up so the two circular buttons read as a visually matched pair. */
+:is(.prose-zen, .cm-editor) .local-image-embed-action-locate {
+  font-size: 1.75rem;
+}
+
 :is(.prose-zen, .cm-editor) .local-image-embed-caption {
   margin-top: 0.55rem;
   text-align: center;

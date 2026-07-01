@@ -3635,13 +3635,22 @@ function AssetTabView({
           <span className="truncate">{title}</span>
         </div>
         {canReveal && assetPath && (
-          <button
-            type="button"
-            className="rounded-md px-2 py-1 text-xs font-medium text-ink-500 hover:bg-paper-200 hover:text-ink-900"
-            onClick={() => void window.zen.revealNote(assetPath)}
-          >
-            Reveal
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            <IconBtn
+              title="Locate in Assets Manager"
+              onClick={() => void useStore.getState().locateAssetInManager(assetPath)}
+            >
+              {/* ⌕ renders much smaller than ↗ at the same font-size in most
+                  fonts, so it needs a larger size to visually match. */}
+              <span className="text-[1.75rem] leading-none">⌕</span>
+            </IconBtn>
+            <IconBtn
+              title="Reveal in File Manager"
+              onClick={() => void window.zen.revealNote(assetPath)}
+            >
+              <span className="text-base leading-none">↗</span>
+            </IconBtn>
+          </div>
         )}
       </header>
       {body}
