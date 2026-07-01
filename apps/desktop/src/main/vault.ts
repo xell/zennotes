@@ -1454,10 +1454,6 @@ function normalizeVaultRelativePath(rel: string): string {
   return normalized === '.' ? '' : normalized
 }
 
-function markdownDestination(p: string): string {
-  return `<${p.replace(/>/g, '%3E')}>`
-}
-
 function folderOf(root: string, absPath: string): NoteFolder | null {
   return folderForRelativePath(path.relative(root, absPath))
 }
@@ -2896,18 +2892,6 @@ function cleanDeletedAssetToken(token: string): string {
   return token
 }
 
-function markdownForImportedAsset(
-  relativeFromNote: string,
-  filename: string,
-  kind: ImportedAssetKind
-): string {
-  const destination = markdownDestination(relativeFromNote)
-  if (kind === 'image') {
-    return `![${path.basename(filename, path.extname(filename))}](${destination})`
-  }
-  return `[${filename}](${destination})`
-}
-
 function padPastedImageDatePart(value: number): string {
   return String(value).padStart(2, '0')
 }
@@ -3685,12 +3669,12 @@ export async function duplicateNote(root: string, rel: string): Promise<NoteMeta
 
 export async function importFiles(
   root: string,
-  noteRelPath: string,
   sourcePaths: string[]
 ): Promise<ImportedAsset[]> {
-  await fs.mkdir(root, { recursive: true })
+  // Dropped files land in the unified `assets/` folder, same as pasted images.
+  const assetsDir = path.join(root, ASSETS_DIR)
+  await fs.mkdir(assetsDir, { recursive: true })
 
-  const noteDir = path.posix.dirname(toPosix(noteRelPath))
   const imported: ImportedAsset[] = []
 
   for (const sourcePath of sourcePaths) {
@@ -3698,20 +3682,16 @@ export async function importFiles(
     const stat = await fs.stat(sourceAbs)
     if (!stat.isFile()) continue
 
-    const finalName = await uniqueFilename(root, path.basename(sourceAbs))
-    const destAbs = path.join(root, finalName)
+    const finalName = await uniqueFilename(assetsDir, path.basename(sourceAbs))
+    const destAbs = path.join(assetsDir, finalName)
     await fs.copyFile(sourceAbs, destAbs)
 
     const vaultRelPath = toPosix(path.relative(root, destAbs))
-    const relativeFromNote = path.posix.relative(
-      noteDir === '.' ? '' : noteDir,
-      vaultRelPath
-    )
     const kind = classifyImportedAsset(finalName)
     imported.push({
       name: finalName,
       path: vaultRelPath,
-      markdown: markdownForImportedAsset(relativeFromNote, finalName, kind),
+      markdown: `![[${vaultRelPath}]]`,
       kind
     })
   }

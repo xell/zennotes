@@ -2542,12 +2542,12 @@ function registerIpc(): void {
 
   handle(
     IPC.VAULT_IMPORT_FILES,
-    async (_e, notePath: string, sourcePaths: string[]) => {
+    async (_e, _notePath: string, sourcePaths: string[]) => {
       if (isRemoteWorkspaceActive()) {
         throw new Error('Desktop file import is only available for local vaults right now.')
       }
       const v = requireVault()
-      return await importFiles(v.root, notePath, sourcePaths)
+      return await importFiles(v.root, sourcePaths)
     }
   )
 
