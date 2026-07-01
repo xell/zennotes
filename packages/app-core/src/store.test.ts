@@ -829,3 +829,28 @@ describe('database deletion', () => {
     expect(findLeaf(useStore.getState().paneLayout, paneId)?.tabs ?? []).not.toContain(tabPath)
   })
 })
+
+describe('manual order integrity on note rename', () => {
+  it('rewrites the renamed note\'s own key in place, keeping siblings and position', async () => {
+    const noteA = { ...makeNote('alpha'), path: 'inbox/A.md', title: 'A' }
+    const renamed = { ...noteA, path: 'inbox/A2.md', title: 'A2' }
+    installZen({
+      listNotes: vi.fn().mockResolvedValue([noteA]),
+      getManualOrder: vi.fn().mockResolvedValue({ inbox: ['inbox/B.md', 'inbox/A.md'] }),
+      renameNote: vi.fn().mockResolvedValue(renamed)
+    })
+
+    const { useStore } = await loadStore()
+    // Prime the once-per-vault manual-order load so the refreshNotes() inside
+    // renameNote() below doesn't re-fetch and clobber the in-place fix.
+    await useStore.getState().refreshNotes()
+    expect(useStore.getState().manualNoteOrder).toEqual({ inbox: ['inbox/B.md', 'inbox/A.md'] })
+
+    await useStore.getState().renameNote('inbox/A.md', 'A2')
+
+    // Regression: a title-only rename used to leave the manual order keyed
+    // on the stale path, silently dropping the note from its folder's
+    // custom order instead of rewriting its entry in place.
+    expect(useStore.getState().manualNoteOrder).toEqual({ inbox: ['inbox/B.md', 'inbox/A2.md'] })
+  })
+})

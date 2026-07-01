@@ -2851,12 +2851,17 @@ function renameNoteState(
     contents[meta.path] = { ...prevContent, ...meta }
   }
   dirty[meta.path] = prevDirty
+  const nextManualOrder =
+    oldPath === meta.path
+      ? s.manualNoteOrder
+      : remapManualOrderForMove(s.manualNoteOrder, oldPath, meta.path, false)
   return {
     paneLayout: ensured.layout,
     activePaneId: ensured.activePaneId,
     noteContents: contents,
     noteDirty: dirty,
     notes: replaceNoteMeta(s.notes, oldPath, meta),
+    manualNoteOrder: nextManualOrder,
     noteBackstack: rewriteNoteJumpHistory(s.noteBackstack, rewrite),
     noteForwardstack: rewriteNoteJumpHistory(s.noteForwardstack, rewrite),
     pendingJumpLocation:
