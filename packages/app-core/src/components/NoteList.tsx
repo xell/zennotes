@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import type { AssetMeta, NoteMeta } from '@shared/ipc'
 import { isDatabaseCsvPath } from '@shared/databases'
+import { DENSITY, densityFromTweaks } from '@shared/overrides'
 import {
   ArchiveIcon,
   ArrowUpRightIcon,
@@ -53,7 +54,6 @@ type AssetLayout = 'grid' | 'list'
 type FolderEntry = { type: 'note'; note: NoteMeta } | { type: 'asset'; asset: AssetMeta }
 
 const VIRTUAL_OVERSCAN_ROWS = 8
-const FOLDER_ENTRY_ROW_HEIGHT = 76
 const ASSET_LIST_ROW_HEIGHT = 64
 const ASSET_GRID_ROW_HEIGHT = 166
 
@@ -67,6 +67,11 @@ export function NoteList(): JSX.Element {
   const folders = useStore((s) => s.folders)
   const assetFiles = useStore((s) => s.assetFiles)
   const activeNote = useStore((s) => s.activeNote)
+  // Note-list row slot height tracks the Density tweak; the same DENSITY number
+  // feeds the virtualizer itemSize so windowing matches the painted rows. At
+  // compact the row card also drops to a single excerpt line so it doesn't clip.
+  const rowDensity = useStore((s) => densityFromTweaks(s.themeTweaks))
+  const noteRowH = DENSITY[rowDensity].noteRow
   const view = useStore((s) => s.view)
   const vaultSettings = useStore((s) => s.vaultSettings)
   const selectedPath = useStore((s) => s.selectedPath)
@@ -609,12 +614,12 @@ export function NoteList(): JSX.Element {
     () =>
       getVirtualRange({
         itemCount: orderedFolderEntries.length,
-        itemSize: FOLDER_ENTRY_ROW_HEIGHT,
+        itemSize: noteRowH,
         scrollTop: listScrollTop,
         viewportHeight: listViewportHeight,
         overscan: VIRTUAL_OVERSCAN_ROWS
       }),
-    [listScrollTop, listViewportHeight, orderedFolderEntries.length]
+    [listScrollTop, listViewportHeight, orderedFolderEntries.length, noteRowH]
   )
   const visibleFolderEntries = useMemo(
     () => orderedFolderEntries.slice(folderEntryRange.start, folderEntryRange.end),
@@ -685,7 +690,7 @@ export function NoteList(): JSX.Element {
     const nextScrollTop = getScrollTopForVirtualIndex({
       index,
       itemCount: orderedFolderEntries.length,
-      itemSize: FOLDER_ENTRY_ROW_HEIGHT,
+      itemSize: noteRowH,
       currentScrollTop: node.scrollTop,
       viewportHeight: node.clientHeight
     })
@@ -850,14 +855,15 @@ export function NoteList(): JSX.Element {
                   key={path}
                   className="absolute inset-x-0"
                   style={{
-                    height: FOLDER_ENTRY_ROW_HEIGHT,
-                    transform: `translateY(${i * FOLDER_ENTRY_ROW_HEIGHT}px)`
+                    height: noteRowH,
+                    transform: `translateY(${i * noteRowH}px)`
                   }}
                 >
                   {entry.type === 'note' ? (
                     <NoteRow
                       note={entry.note}
                       active={entry.note.path === selectedPath}
+                      compact={rowDensity === 'compact'}
                       onSelect={() =>
                         void (tabsEnabled ? previewNote : selectNote)(entry.note.path)
                       }
@@ -923,7 +929,8 @@ function NoteRow({
   onOpenPermanent,
   onContextMenu,
   noteListIdx,
-  vimHighlight
+  vimHighlight,
+  compact
 }: {
   note: NoteMeta
   active: boolean
@@ -933,6 +940,8 @@ function NoteRow({
   onContextMenu: (e: React.MouseEvent) => void
   noteListIdx?: number
   vimHighlight?: boolean
+  /** Compact density → single-line excerpt so the shorter row doesn't clip. */
+  compact?: boolean
 }): JSX.Element {
   return (
     <button
@@ -942,7 +951,7 @@ function NoteRow({
       draggable
       onDragStart={(e) => setDragPayload(e, { kind: 'note', path: note.path })}
       className={[
-        'list-row flex h-[72px] w-full flex-col gap-1 rounded-lg px-3 py-2 text-left outline-none focus:outline-none',
+        'list-row flex h-[calc(var(--z-note-row-h)_-_4px)] w-full flex-col gap-1 rounded-lg px-3 py-2 text-left outline-none focus:outline-none',
         active
           ? `${vimHighlight ? 'vim-cursor-on-selected ' : ''}bg-paper-200`
           : vimHighlight
@@ -969,7 +978,7 @@ function NoteRow({
         <span className="truncate text-sm font-medium text-ink-900">{note.title}</span>
         <span className="shrink-0 text-xs text-ink-500">{formatDate(note.updatedAt)}</span>
       </div>
-      <span className="line-clamp-2 text-xs text-ink-500">
+      <span className={`${compact ? 'line-clamp-1' : 'line-clamp-2'} text-xs text-ink-500`}>
         {note.excerpt || 'Empty note'}
       </span>
     </button>
@@ -1002,7 +1011,7 @@ function FolderAssetRow({
       draggable
       onDragStart={(e) => setDragPayload(e, { kind: 'asset', path: asset.path })}
       className={[
-        'list-row flex h-[72px] w-full items-center gap-3 rounded-lg px-3 py-2 text-left outline-none focus:outline-none',
+        'list-row flex h-[calc(var(--z-note-row-h)_-_4px)] w-full items-center gap-3 rounded-lg px-3 py-2 text-left outline-none focus:outline-none',
         vimHighlight ? 'vim-cursor' : 'hover:bg-paper-200/60'
       ].join(' ')}
       style={vimHighlight ? { boxShadow: 'inset 0 0 0 1px rgb(var(--z-accent) / 0.35)' } : undefined}

@@ -15,6 +15,8 @@ import {
   setCell,
   clearCells,
   cellWidth,
+  parseColWidthsComment,
+  serializeColWidthsComment,
   type MarkdownTable
 } from './markdown-table'
 
@@ -235,5 +237,49 @@ describe('cellWidth', () => {
     expect(cellWidth('ab')).toBe(2)
     expect(cellWidth('中文')).toBe(4)
     expect(cellWidth('a中')).toBe(3)
+  })
+})
+
+describe('column-width marker (#294)', () => {
+  it('un-resized tables serialize byte-identical (no marker)', () => {
+    expect(serializeTable(parse(SIMPLE))).not.toContain('zen:cols')
+  })
+
+  it('serializeTable appends a zen:cols comment when widths are set', () => {
+    const t: MarkdownTable = { ...parse(SIMPLE), colWidths: [120, 200] }
+    expect(serializeTable(t).split('\n').at(-1)).toBe('<!-- zen:cols=120,200 -->')
+  })
+
+  it('emits auto for unset columns and rounds px', () => {
+    expect(serializeColWidthsComment([120, null, 90.4])).toBe('<!-- zen:cols=120,auto,90 -->')
+  })
+
+  it('returns null when nothing is set', () => {
+    expect(serializeColWidthsComment(undefined)).toBeNull()
+    expect(serializeColWidthsComment([null, null])).toBeNull()
+  })
+
+  it('parses a zen:cols comment back to widths (auto → null)', () => {
+    expect(parseColWidthsComment('<!-- zen:cols=120,auto,90 -->')).toEqual([120, null, 90])
+  })
+
+  it('ignores non-marker lines and round-trips', () => {
+    expect(parseColWidthsComment('| A | B |')).toBeNull()
+    expect(parseColWidthsComment('<!-- a normal comment -->')).toBeNull()
+    const widths = [120, null, 90]
+    expect(parseColWidthsComment(serializeColWidthsComment(widths)!)).toEqual(widths)
+  })
+})
+
+describe('column-width marker round-trip (#294)', () => {
+  it('re-serializing a widths-bearing table is idempotent (single marker, stable)', () => {
+    const t: MarkdownTable = { ...parse(SIMPLE), colWidths: [120, 200] }
+    const out1 = serializeTable(t)
+    // Mirror the editor's resize→commit loop: re-parse the table body (dropping
+    // the marker line), re-attach widths, re-serialize. Output must be stable.
+    const body = out1.split('\n').filter((l) => !l.startsWith('<!--')).join('\n')
+    const out2 = serializeTable({ ...parse(body), colWidths: [120, 200] })
+    expect(out2).toBe(out1)
+    expect((out2.match(/zen:cols/g) ?? []).length).toBe(1)
   })
 })

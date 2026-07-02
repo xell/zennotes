@@ -1,5 +1,29 @@
 import { describe, expect, it } from 'vitest'
-import { matchesSelectedTags } from './tags'
+import { extractTags, matchesSelectedTags } from './tags'
+
+describe('extractTags — code fences are never scanned for tags (#293)', () => {
+  it('ignores #tags inside a top-level fenced code block', () => {
+    expect(extractTags('#real\n\n```c\n#include <stdio.h>\n```\n')).toEqual(['real'])
+  })
+
+  it('ignores #tags inside a fence INDENTED under a list item (the #293 repro)', () => {
+    const body = '- bullet\n\n  ```c\n  #include <stdio.h>\n  ```\n\n#kept'
+    expect(extractTags(body)).toEqual(['kept'])
+  })
+
+  it('handles tilde fences and longer (4-backtick) fences', () => {
+    expect(extractTags('~~~\n#nope\n~~~\n#yes')).toEqual(['yes'])
+    expect(extractTags('````\n```\n#nope\n```\n````\n#yes')).toEqual(['yes'])
+  })
+
+  it('ignores #tags in inline code but keeps real tags', () => {
+    expect(extractTags('use `#notatag` but #tagme')).toEqual(['tagme'])
+  })
+
+  it('extracts a real tag sitting right after a closed indented fence', () => {
+    expect(extractTags('- item\n  ```\n  #include\n  ```\n  #after')).toEqual(['after'])
+  })
+})
 
 describe('matchesSelectedTags', () => {
   const note = ['project', 'urgent', 'design']

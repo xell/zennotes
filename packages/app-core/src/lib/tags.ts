@@ -14,9 +14,7 @@
  *    character after the hash is a space, not a letter.
  */
 export function extractTags(body: string): string[] {
-  const stripped = body
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`[^`\n]*`/g, ' ')
+  const stripped = stripCodeContent(body)
   const regex = /(?:^|\s)#(\p{L}[\p{L}\d_/-]*)/gu
   const seen = new Set<string>()
   let m: RegExpExecArray | null
@@ -24,6 +22,47 @@ export function extractTags(body: string): string[] {
     seen.add(m[1])
   }
   return [...seen]
+}
+
+/**
+ * Blank out fenced and inline code so the tag scanner never reads code as a
+ * tag. Fence detection is line-based and indentation-tolerant: a fence nested
+ * under a list item is still a code block, so e.g. a C `#include` line inside
+ * it is not a tag (#293). Mirrors `stripCodeContent` in
+ * apps/desktop/src/main/vault.ts and apps/server/internal/vault/parse.go —
+ * keep the three in sync.
+ */
+function stripCodeContent(body: string): string {
+  if (!body.includes('`') && !body.includes('~')) return body
+  const lines = body.split('\n')
+  let inFence = false
+  let fenceChar = ''
+  let fenceLen = 0
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] as string
+    const m = /^[ \t]*(`{3,}|~{3,})(.*)$/.exec(line)
+    if (m) {
+      const marker = m[1] as string
+      const char = marker[0] as string
+      const rest = m[2] as string
+      if (!inFence) {
+        // A backtick fence's info string may not contain a backtick (CommonMark).
+        if (char === '~' || !rest.includes('`')) {
+          inFence = true
+          fenceChar = char
+          fenceLen = marker.length
+          lines[i] = ' '
+          continue
+        }
+      } else if (char === fenceChar && marker.length >= fenceLen && rest.trim() === '') {
+        inFence = false
+        lines[i] = ' '
+        continue
+      }
+    }
+    if (inFence) lines[i] = ' '
+  }
+  return lines.join('\n').replace(/`[^`\n]*`/g, ' ')
 }
 
 /**

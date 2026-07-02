@@ -529,7 +529,10 @@ export function normalizeVaultSettings(
     },
     folderIcons: normalizedFolderIcons,
     folderColors: normalizedFolderColors,
-    favorites: normalizedFavorites
+    favorites: normalizedFavorites,
+    // Per-vault view overrides (#292): passed through as-is; the store validates
+    // each value when it overlays them onto the live prefs.
+    ...(settings?.view ? { view: settings.view } : {})
   }
 }
 

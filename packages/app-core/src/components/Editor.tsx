@@ -9,7 +9,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { EditorView } from '@codemirror/view'
-import { Vim, getCM } from '@replit/codemirror-vim'
+import { CodeMirror, Vim, getCM } from '@replit/codemirror-vim'
 import { moveLineDown, moveLineUp } from '@codemirror/commands'
 import { foldAll, unfoldAll, foldCode, unfoldCode } from '@codemirror/language'
 import { isTagsViewActive, isTasksViewActive, useStore } from '../store'
@@ -319,6 +319,65 @@ function alertEditorError(message: string): void {
   focusEditorNormalMode()
 }
 
+// Minimal shape of the CodeMirror-Vim adapter + state the display-line motion
+// touches (the package's own types don't surface these helpers).
+type VimMotionCm = {
+  firstLine: () => number
+  lastLine: () => number
+  findPosV: (
+    start: { line: number; ch: number },
+    amount: number,
+    unit: string,
+    goalColumn?: number
+  ) => { line: number; ch: number }
+  charCoords: (pos: { line: number; ch: number }, mode: string) => { left: number }
+}
+type VimMotionState = {
+  visualLine?: boolean
+  visualBlock?: boolean
+  lastMotion?: unknown
+  lastHSPos?: number
+  lastHPos?: number
+  inputState?: { operator?: unknown }
+}
+
+/**
+ * `j`/`k` motion that moves by *visual* (display) line through soft-wrapped
+ * content instead of skipping to the next logical line (#290). With wrapping on
+ * by default, this matches the arrow keys and most GUI editors. Line-wise
+ * behavior is preserved where it matters:
+ *  - operators (`dj`/`yj`/`cj`) resolve in Vim's `operatorPending` context, so
+ *    our normal/visual `j`/`k` mappings never reach them — they keep the default
+ *    logical motion;
+ *  - line/block visual selections (`Vj`, `<C-v>j`) fall back to whole-logical-
+ *    line movement here so the selection grows a logical line at a time.
+ * `gj`/`gk` are untouched. Mirrors codemirror-vim's own `moveByDisplayLines`,
+ * including maintaining the horizontal goal column across consecutive presses.
+ */
+function zenMoveByDisplayLine(
+  cm: VimMotionCm,
+  head: { line: number; ch: number },
+  motionArgs: { forward?: boolean; repeat?: number },
+  vim: VimMotionState
+): { line: number; ch: number } {
+  const forward = !!motionArgs.forward
+  const repeat = motionArgs.repeat || 1
+  if (vim.visualLine || vim.visualBlock || vim.inputState?.operator) {
+    const target = Math.max(
+      cm.firstLine(),
+      Math.min(cm.lastLine(), forward ? head.line + repeat : head.line - repeat)
+    )
+    return new CodeMirror.Pos(target, head.ch)
+  }
+  // Keep the horizontal goal column stable across consecutive j/k, like gj/gk.
+  if (vim.lastMotion !== zenMoveByDisplayLine) {
+    vim.lastHSPos = cm.charCoords(head, 'div').left
+  }
+  const res = cm.findPosV(head, forward ? repeat : -repeat, 'line', vim.lastHSPos)
+  vim.lastHPos = res.ch
+  return res
+}
+
 function registerVimCommands(): void {
   if (vimCommandsRegistered) return
   vimCommandsRegistered = true
@@ -348,6 +407,32 @@ function registerVimCommands(): void {
   })
   Vim.mapCommand('J', 'action', 'zenMoveSelectionDown', {}, { context: 'visual' })
   Vim.mapCommand('K', 'action', 'zenMoveSelectionUp', {}, { context: 'visual' })
+
+  // #290: make j/k move by display line through soft-wrapped content (see
+  // zenMoveByDisplayLine). Mapped only in normal + visual contexts, so
+  // operator-pending motions (dj/yj/cj) keep Vim's default logical movement.
+  // The package's MotionFn type is looser/different than our precise params;
+  // the runtime contract (cm, head, motionArgs, vim) → position is correct.
+  Vim.defineMotion(
+    'zenMoveByDisplayLine',
+    zenMoveByDisplayLine as unknown as Parameters<typeof Vim.defineMotion>[1]
+  )
+  for (const context of ['normal', 'visual'] as const) {
+    Vim.mapCommand(
+      'j',
+      'motion',
+      'zenMoveByDisplayLine',
+      { forward: true, linewise: true },
+      { context }
+    )
+    Vim.mapCommand(
+      'k',
+      'motion',
+      'zenMoveByDisplayLine',
+      { forward: false, linewise: true },
+      { context }
+    )
+  }
 
   Vim.defineEx('write', 'w', () => {
     void useStore.getState().persistActive()

@@ -3,9 +3,19 @@ import ReactDOM from 'react-dom/client'
 import type { AssetMeta, NoteContent, NoteMeta, VaultInfo } from '@shared/ipc'
 import { LazyPreview as Preview } from '@renderer/components/LazyPreview'
 import { useStore } from '@renderer/store'
+import { resolveAuto, findTheme } from '@renderer/lib/themes'
+import type { ThemeFamily } from '@renderer/lib/themes'
+import {
+  injectActiveTheme,
+  isCustomThemeId,
+  customThemeSlugFromId,
+  resolveCustomThemeMode
+} from '@renderer/lib/custom-themes'
 import '@renderer/styles/index.css'
 
 const PREFS_KEY = 'zen:prefs:v2'
+
+type ExportThemeMode = 'light' | 'dark' | 'auto'
 
 type ExportPrefs = {
   editorFontSize: number
@@ -16,6 +26,12 @@ type ExportPrefs = {
   interfaceFont: string | null
   textFont: string | null
   monoFont: string | null
+  /** When true, export in the user's current theme instead of the clean
+   *  light-for-print theme. Mirrors the `pdfExportUseTheme` app pref. */
+  pdfExportUseTheme: boolean
+  themeId: string
+  themeFamily: ThemeFamily
+  themeMode: ExportThemeMode
 }
 
 const DEFAULT_EXPORT_PREFS: ExportPrefs = {
@@ -26,7 +42,11 @@ const DEFAULT_EXPORT_PREFS: ExportPrefs = {
   contentAlign: 'center',
   interfaceFont: null,
   textFont: null,
-  monoFont: null
+  monoFont: null,
+  pdfExportUseTheme: false,
+  themeId: 'github-light',
+  themeFamily: 'github',
+  themeMode: 'light'
 }
 
 function setExportState(state: 'loading' | 'ready' | 'error', message?: string): void {
@@ -50,6 +70,10 @@ function loadExportPrefs(): ExportPrefs {
     if (!raw) return DEFAULT_EXPORT_PREFS
     const parsed = JSON.parse(raw) as Record<string, unknown>
     const contentAlign = parsed.contentAlign === 'left' ? 'left' : 'center'
+    const themeMode: ExportThemeMode =
+      parsed.themeMode === 'light' || parsed.themeMode === 'dark' || parsed.themeMode === 'auto'
+        ? parsed.themeMode
+        : DEFAULT_EXPORT_PREFS.themeMode
     return {
       editorFontSize: safeNumber(parsed.editorFontSize, DEFAULT_EXPORT_PREFS.editorFontSize),
       editorLineHeight: safeNumber(parsed.editorLineHeight, DEFAULT_EXPORT_PREFS.editorLineHeight),
@@ -58,7 +82,14 @@ function loadExportPrefs(): ExportPrefs {
       contentAlign,
       interfaceFont: safeString(parsed.interfaceFont),
       textFont: safeString(parsed.textFont),
-      monoFont: safeString(parsed.monoFont)
+      monoFont: safeString(parsed.monoFont),
+      pdfExportUseTheme:
+        typeof parsed.pdfExportUseTheme === 'boolean'
+          ? parsed.pdfExportUseTheme
+          : DEFAULT_EXPORT_PREFS.pdfExportUseTheme,
+      themeId: safeString(parsed.themeId) ?? DEFAULT_EXPORT_PREFS.themeId,
+      themeFamily: (safeString(parsed.themeFamily) ?? DEFAULT_EXPORT_PREFS.themeFamily) as ThemeFamily,
+      themeMode
     }
   } catch {
     return DEFAULT_EXPORT_PREFS
@@ -76,12 +107,73 @@ function loadExportPrefs(): ExportPrefs {
 // exceeded the printable width.)
 const PDF_PRINTABLE_WIDTH = '7.1in'
 
-function applyExportPrefs(prefs: ExportPrefs): void {
+/** The clean default: a light theme on a white page, best for printing. */
+function applyLightExportTheme(): void {
   const html = document.documentElement
   html.dataset.theme = 'github-light'
+  html.dataset.themeMode = 'light'
+  html.style.colorScheme = 'light'
+}
+
+/** Resolve the export theme synchronously. For the default (pref off) and for
+ *  built-in themes this is the final answer; for a custom theme it sets the id
+ *  and a best-guess mode now, and `applyCustomExportTheme` injects the CSS and
+ *  refines the mode once the theme list loads. Mirrors App.tsx's theme effect. */
+function applyExportTheme(prefs: ExportPrefs): void {
+  const html = document.documentElement
+  if (!prefs.pdfExportUseTheme) {
+    applyLightExportTheme()
+    return
+  }
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+  if (isCustomThemeId(prefs.themeId)) {
+    const wantDark = prefs.themeMode === 'auto' ? prefersDark : prefs.themeMode === 'dark'
+    const mode = resolveCustomThemeMode(undefined, wantDark)
+    html.dataset.theme = prefs.themeId
+    html.dataset.themeMode = mode
+    html.style.colorScheme = mode
+    return
+  }
+  const id =
+    prefs.themeMode === 'auto'
+      ? resolveAuto(prefs.themeFamily, prefersDark, prefs.themeId)
+      : prefs.themeId
+  const mode = findTheme(id).mode
+  html.dataset.theme = id
+  html.dataset.themeMode = mode
+  html.style.colorScheme = mode
+}
+
+/** Inject a custom theme's CSS and finalize its mode. Falls back to the clean
+ *  light export if the theme can't be loaded, so a broken or missing custom
+ *  theme never yields an unreadable PDF. */
+async function applyCustomExportTheme(prefs: ExportPrefs): Promise<void> {
+  const html = document.documentElement
+  try {
+    const themes = await window.zen.listCustomThemes()
+    const slug = customThemeSlugFromId(prefs.themeId)
+    const theme = themes.find((t) => t.slug === slug)
+    if (!theme) {
+      applyLightExportTheme()
+      return
+    }
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+    const wantDark = prefs.themeMode === 'auto' ? prefersDark : prefs.themeMode === 'dark'
+    const mode = resolveCustomThemeMode(theme, wantDark)
+    html.dataset.theme = prefs.themeId
+    html.dataset.themeMode = mode
+    html.style.colorScheme = mode
+    injectActiveTheme(prefs.themeId, themes)
+  } catch {
+    applyLightExportTheme()
+  }
+}
+
+function applyExportPrefs(prefs: ExportPrefs): void {
+  const html = document.documentElement
   html.dataset.contentAlign = prefs.contentAlign
   html.setAttribute('data-opaque', '')
-  html.style.colorScheme = 'light'
+  applyExportTheme(prefs)
   html.style.setProperty('--z-editor-font-size', `${prefs.editorFontSize}px`)
   html.style.setProperty('--z-editor-line-height', String(prefs.editorLineHeight))
   html.style.setProperty(
@@ -115,11 +207,23 @@ function applyExportPrefs(prefs: ExportPrefs): void {
 }
 
 function ExportNoteWindow({ notePath }: { notePath: string }): JSX.Element {
+  const [prefs] = useState(loadExportPrefs)
   const [note, setNote] = useState<NoteContent | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // When exporting in the user's theme, the page follows the theme background;
+  // otherwise it's the clean white print page.
+  const pageBg = prefs.pdfExportUseTheme ? 'rgb(var(--z-bg))' : '#ffffff'
+  // A themed export goes full-bleed: with a non-zero @page margin, paged media
+  // leaves that margin frame unpainted and `color-scheme: dark` fills it with
+  // Chromium's default dark canvas (#121212) — a mismatched frame around the
+  // themed content. So drop the page margin and inset the content with padding
+  // instead, letting --z-bg cover the whole sheet. The light export keeps the
+  // classic per-page margin (white paper margins look correct there).
+  const pageMargin = prefs.pdfExportUseTheme ? '0' : '0.7in'
+  const contentInset = prefs.pdfExportUseTheme ? '0.7in' : '0'
 
   useEffect(() => {
-    applyExportPrefs(loadExportPrefs())
+    applyExportPrefs(prefs)
     setExportState('loading')
 
     let cancelled = false
@@ -135,6 +239,14 @@ function ExportNoteWindow({ notePath }: { notePath: string }): JSX.Element {
         if (cancelled) return
         if (!vault) {
           throw new Error('No active vault was available for PDF export.')
+        }
+
+        // A custom theme's CSS lives on disk, not in index.css — inject it (and
+        // finalize its light/dark mode) before rendering so printToPDF captures
+        // the themed styles. Built-ins and the light default are already applied.
+        if (prefs.pdfExportUseTheme && isCustomThemeId(prefs.themeId)) {
+          await applyCustomExportTheme(prefs)
+          if (cancelled) return
         }
 
         useStore.setState({
@@ -159,7 +271,7 @@ function ExportNoteWindow({ notePath }: { notePath: string }): JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [notePath])
+  }, [notePath, prefs])
 
   if (error) {
     return (
@@ -188,7 +300,7 @@ function ExportNoteWindow({ notePath }: { notePath: string }): JSX.Element {
     <>
       <style>{`
         @page {
-          margin: 0.7in;
+          margin: ${pageMargin};
         }
         html,
         body,
@@ -196,7 +308,9 @@ function ExportNoteWindow({ notePath }: { notePath: string }): JSX.Element {
           height: auto !important;
           min-height: 0 !important;
           overflow: visible !important;
-          background: #ffffff !important;
+          background: ${pageBg} !important;
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
         }
         body,
         #root {
@@ -211,8 +325,10 @@ function ExportNoteWindow({ notePath }: { notePath: string }): JSX.Element {
           min-height: auto;
           width: 100%;
           overflow: visible;
-          background: #ffffff;
+          background: ${pageBg};
           color: rgb(var(--z-fg));
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
         }
         .export-note-shell .prose-zen {
           padding: 32px 40px 48px;
@@ -259,11 +375,16 @@ function ExportNoteWindow({ notePath }: { notePath: string }): JSX.Element {
             height: auto !important;
             min-height: 0 !important;
             overflow: visible !important;
-            background: #ffffff !important;
+            background: ${pageBg} !important;
           }
           .export-note-shell {
             min-height: auto;
             overflow: visible;
+            box-sizing: border-box;
+            /* With @page margin dropped for themed (full-bleed) exports, the
+               content inset comes from padding here instead — so the theme
+               background reaches the paper edge. 0 for the light export. */
+            padding: ${contentInset};
           }
           .export-note-shell .prose-zen {
             max-width: none;

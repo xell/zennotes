@@ -39,13 +39,25 @@ export async function cmdCapture(vault: string, args: ParsedArgs): Promise<void>
   emitLine(`  ${truncate(body.replace(/\s+/g, ' ').trim(), 80)}`)
 }
 
-function deriveTitle(body: string): string {
-  // First non-empty line, capped at 60 chars, used as the title.
+/** First non-empty line, stripped of its leading marker and capped at 60
+ *  chars. So a captured task `- [ ] buy milk` titles the note "buy milk"
+ *  (the marker still lives in the body). */
+export function deriveTitle(body: string): string {
   for (const line of body.split('\n')) {
-    const t = line.trim().replace(/^#+\s*/, '')
+    const t = stripLeadingMarker(line.trim())
     if (t) return t.slice(0, 60)
   }
   return new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+}
+
+/** Strip a leading heading (`#`), list bullet (`-`/`*`/`+`, `1.`) and/or task
+ *  checkbox (`[ ]`/`[x]`) so titles derived from list/task lines read cleanly. */
+function stripLeadingMarker(line: string): string {
+  return line
+    .replace(/^#+\s*/, '')
+    .replace(/^(?:[-*+]|\d+[.)])\s+/, '')
+    .replace(/^\[[ xX]\]\s*/, '')
+    .trim()
 }
 
 function composeBody(title: string, body: string, tags: string[]): string {

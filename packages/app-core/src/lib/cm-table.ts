@@ -14,7 +14,13 @@
  * WYSIWYG-only: registered via `wysiwygExtensions()`; never loads in Split.
  */
 import { syntaxTree } from '@codemirror/language'
-import { Prec, RangeSetBuilder, StateField, type EditorState } from '@codemirror/state'
+import {
+  Prec,
+  RangeSetBuilder,
+  StateField,
+  type EditorState,
+  type Text
+} from '@codemirror/state'
 import {
   Decoration,
   type DecorationSet,
@@ -26,10 +32,14 @@ import {
   insertRow,
   moveColumn,
   moveRow,
+  parseColWidthsComment,
   parseTable,
   serializeTable,
   type MarkdownTable
 } from './markdown-table'
+
+/** Minimum draggable column width (px) for the resize handles (#294). */
+const MIN_COL_WIDTH = 48
 import { openTableContextMenu } from './cm-table-menu'
 import { renderMarkdown } from './markdown'
 import { getCM } from '@replit/codemirror-vim'
@@ -55,11 +65,31 @@ function renderInlineCell(text: string): string {
   return match ? match[1] : html
 }
 
-/** Find the enclosing `Table` node range for a doc position, or null. */
+/** If a `<!-- zen:cols=… -->` width marker sits on the line right after the
+ *  table ending at `tableTo`, return its parsed per-column widths and the end
+ *  offset of that line. The widget swallows the marker (so it never shows as
+ *  raw text) and writes replace the table + marker atomically. (#294) */
+function colWidthsAfter(
+  doc: Text,
+  tableTo: number
+): { widths: Array<number | null>; to: number } | null {
+  const last = doc.lineAt(tableTo)
+  if (last.number >= doc.lines) return null
+  const next = doc.line(last.number + 1)
+  const widths = parseColWidthsComment(next.text)
+  return widths ? { widths, to: next.to } : null
+}
+
+/** Find the enclosing `Table` node range for a doc position, or null. The range
+ *  is extended over a trailing `zen:cols` width marker so re-serialization
+ *  replaces both (no duplicate markers, no leaked raw comment). */
 function tableRangeAt(view: EditorView, pos: number): { from: number; to: number } | null {
   let node = syntaxTree(view.state).resolveInner(pos, 1)
   while (node) {
-    if (node.name === 'Table') return { from: node.from, to: node.to }
+    if (node.name === 'Table') {
+      const ext = colWidthsAfter(view.state.doc, node.to)
+      return { from: node.from, to: ext ? ext.to : node.to }
+    }
     if (!node.parent) break
     node = node.parent
   }
@@ -94,6 +124,8 @@ class TableWidget extends WidgetType {
   private model: MarkdownTable
   private dom: HTMLElement | null = null
   private dirty = false
+  /** Live `<col>` elements (one per column) the resize handles drive. (#294) */
+  private cols: HTMLTableColElement[] = []
   /** Vim cell mode: 'normal' is a block-cursor that moves over characters
    *  (h/l) and rows (j/k); 'insert' edits the focused cell. Vim mode only. */
   private cellMode: 'normal' | 'insert' = 'normal'
@@ -200,10 +232,32 @@ class TableWidget extends WidgetType {
     wrapper.className = 'cm-table-wrapper'
 
     const table = document.createElement('table')
+
+    // Colgroup carries persisted column widths and is what the resize handles
+    // drive. Built for every table so a drag can populate it. (#294)
+    const colgroup = document.createElement('colgroup')
+    const colWidths = this.model.colWidths ?? []
+    this.cols = []
+    let anyWidth = false
+    for (let c = 0; c < this.model.headers.length; c++) {
+      const colEl = document.createElement('col')
+      const w = colWidths[c]
+      if (typeof w === 'number' && w > 0) {
+        colEl.style.width = `${w}px`
+        anyWidth = true
+      }
+      colgroup.append(colEl)
+      this.cols.push(colEl)
+    }
+    table.append(colgroup)
+    if (anyWidth) table.classList.add('cm-table-fixed')
+
     const thead = document.createElement('thead')
     const headRow = document.createElement('tr')
     this.model.headers.forEach((text, col) => {
-      headRow.append(this.buildCell('th', -1, col, text))
+      const th = this.buildCell('th', -1, col, text)
+      this.attachColResizeHandle(th, col)
+      headRow.append(th)
     })
     thead.append(headRow)
     table.append(thead)
@@ -253,6 +307,77 @@ class TableWidget extends WidgetType {
     })
 
     return root
+  }
+
+  /** Add a drag-to-resize grip on a header cell's right border. (#294) */
+  private attachColResizeHandle(th: HTMLElement, col: number): void {
+    const handle = document.createElement('div')
+    handle.className = 'cm-table-col-resize'
+    handle.setAttribute('contenteditable', 'false')
+    handle.addEventListener('pointerdown', (e) => this.beginColResize(e, col))
+    // Don't let press/click on the grip bubble into cell focus or drag-reorder
+    // (pointerdown's stopPropagation doesn't stop the compat mouse events).
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+    })
+    handle.addEventListener('click', (e) => e.stopPropagation())
+    th.appendChild(handle)
+  }
+
+  /** Pointer-drag a column border to set its width. Locks every column to its
+   *  current rendered width first (so the drag is stable under fixed layout),
+   *  then persists all widths through the model's zen:cols marker on release. */
+  private beginColResize(e: PointerEvent, col: number): void {
+    if (!this.dom || !this.cols.length) return
+    e.preventDefault()
+    e.stopPropagation()
+    const table = this.dom.querySelector('table')
+    const ths = this.dom.querySelectorAll<HTMLElement>('thead th')
+    const widths = this.cols.map((c, i) => {
+      const fromStyle = c.style.width ? Number.parseFloat(c.style.width) : NaN
+      const measured = ths[i]?.getBoundingClientRect().width ?? MIN_COL_WIDTH
+      return Math.max(MIN_COL_WIDTH, Math.round(Number.isFinite(fromStyle) ? fromStyle : measured))
+    })
+    // Pin all columns + switch to fixed layout so dragging one is predictable.
+    this.cols.forEach((c, i) => {
+      c.style.width = `${widths[i]}px`
+    })
+    table?.classList.add('cm-table-fixed')
+    this.dom.classList.add('is-col-resizing')
+
+    const handle = e.target as HTMLElement
+    const startX = e.clientX
+    const startW = widths[col]
+    try {
+      handle.setPointerCapture(e.pointerId)
+    } catch {
+      /* capture is best-effort */
+    }
+    const onMove = (ev: PointerEvent): void => {
+      const next = Math.max(MIN_COL_WIDTH, Math.round(startW + (ev.clientX - startX)))
+      widths[col] = next
+      const target = this.cols[col]
+      if (target) target.style.width = `${next}px`
+    }
+    const onUp = (): void => {
+      handle.removeEventListener('pointermove', onMove)
+      handle.removeEventListener('pointerup', onUp)
+      handle.removeEventListener('pointercancel', onUp)
+      try {
+        handle.releasePointerCapture(e.pointerId)
+      } catch {
+        /* released already */
+      }
+      this.dom?.classList.remove('is-col-resizing')
+      // Fold any pending cell edits in, then persist widths → zen:cols marker.
+      this.syncFromDom()
+      this.model = { ...this.model, colWidths: widths.slice() }
+      commitTable(this.view, this.dom as HTMLElement, this.model)
+    }
+    handle.addEventListener('pointermove', onMove)
+    handle.addEventListener('pointerup', onUp)
+    handle.addEventListener('pointercancel', onUp)
   }
 
   private buildCell(
@@ -1288,15 +1413,21 @@ function buildDecorations(state: EditorState): DecorationSet {
   tree.iterate({
     enter: (node) => {
       if (node.name !== 'Table') return
-      const source = state.sliceDoc(node.from, node.to)
-      const parsed = parseTable(source)
+      const parsed = parseTable(state.sliceDoc(node.from, node.to))
       if (!parsed) return false
+      // Pull persisted column widths from a trailing zen:cols marker and extend
+      // the replaced range over it. The widget's `eq` key (blockSource) includes
+      // the marker, so a width change rebuilds the DOM. (#294)
+      const ext = colWidthsAfter(state.doc, node.to)
+      if (ext) parsed.colWidths = ext.widths
+      const to = ext ? ext.to : node.to
+      const blockSource = state.sliceDoc(node.from, to)
       ranges.push({
         from: node.from,
-        to: node.to,
+        to,
         deco: Decoration.replace({
           block: true,
-          widget: new TableWidget(source, parsed)
+          widget: new TableWidget(blockSource, parsed)
         })
       })
       return false

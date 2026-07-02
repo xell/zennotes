@@ -322,6 +322,16 @@ function setManualOrder(map: ManualOrderMap): Promise<void> {
   return Promise.resolve()
 }
 
+// Workspace state lives in the desktop vault's .zennotes/ on disk (#292); the
+// web build has no local vault filesystem, so these are no-ops.
+function readWorkspaceState(): Promise<string | null> {
+  return Promise.resolve(null)
+}
+
+function writeWorkspaceState(_json: string): Promise<void> {
+  return Promise.resolve()
+}
+
 function rootContentHiddenByInboxMode(): Promise<boolean> {
   // Desktop-local concern; the web/server build never hides root content this way.
   return Promise.resolve(false)
@@ -1470,6 +1480,8 @@ export const httpBridge: ZenBridge = {
   getInputSource,
   setInputSource,
   getUserScript,
+  readWorkspaceState,
+  writeWorkspaceState,
   rootContentHiddenByInboxMode,
 
   listNotes,
@@ -1578,10 +1590,29 @@ export const httpBridge: ZenBridge = {
     onData: () => () => {},
     onExit: () => () => {}
   },
+
+  // Diff view needs a local git checkout — no-op on web.
+  gitIsRepo: async () => false,
+  gitShowIndex: async () => null,
   setConfig: async () => {},
   getConfigPath: async () => null,
   revealConfigFile: async () => {},
-  onConfigChange: () => () => {}
+  onConfigChange: () => () => {},
+
+  // Custom themes + CSS overrides are desktop-only (they read/write files under
+  // ~/.config/zennotes). On web these are no-ops so the shared bridge contract
+  // is still satisfied.
+  listCustomThemes: async () => [],
+  getCustomThemesDir: async () => null,
+  revealCustomThemesDir: async () => {},
+  deleteCustomTheme: async () => {},
+  createCustomTheme: async () => null,
+  onCustomThemesChange: () => () => {},
+  listOverrides: async () => [],
+  revealOverridesDir: async () => {},
+  deleteOverride: async () => {},
+  onOverridesChange: () => () => {},
+  toggleDevTools: async () => {}
 }
 
 export function installBridge(): void {

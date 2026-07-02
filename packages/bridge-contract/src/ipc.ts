@@ -135,7 +135,22 @@ export const IPC = {
   CONFIG_REVEAL: 'config:reveal',
   CONFIG_ON_CHANGE: 'config:on-change',
   GIT_IS_REPO: 'git:is-repo',
-  GIT_SHOW_INDEX: 'git:show-index'
+  GIT_SHOW_INDEX: 'git:show-index',
+  CUSTOM_THEMES_LIST: 'custom-themes:list',
+  CUSTOM_THEMES_GET_DIR: 'custom-themes:get-dir',
+  CUSTOM_THEMES_REVEAL: 'custom-themes:reveal',
+  CUSTOM_THEMES_DELETE: 'custom-themes:delete',
+  CUSTOM_THEMES_CREATE: 'custom-themes:create',
+  CUSTOM_THEMES_ON_CHANGE: 'custom-themes:on-change',
+  OVERRIDES_LIST: 'overrides:list',
+  OVERRIDES_REVEAL: 'overrides:reveal',
+  OVERRIDES_DELETE: 'overrides:delete',
+  OVERRIDES_ON_CHANGE: 'overrides:on-change',
+  DEVTOOLS_TOGGLE: 'devtools:toggle',
+  // Per-vault workspace state (open tabs, layout, cursor) persisted to
+  // <vault>/.zennotes/workspace.json so it syncs with the vault. (#292)
+  WORKSPACE_STATE_READ: 'workspace-state:read',
+  WORKSPACE_STATE_WRITE: 'workspace-state:write'
 } as const
 
 export interface TikzRenderResponse {
@@ -172,7 +187,7 @@ export interface CliInstallStatus {
    *  $PATH. False means we'd install but the binary wouldn't be
    *  callable until the user updates their shell config. */
   targetOnPath: boolean
-  /** Shell snippet the user can paste into ~/.zshrc / ~/.bashrc to
+  /** Shell override the user can paste into ~/.zshrc / ~/.bashrc to
    *  put the chosen directory on PATH. Null when targetOnPath is true
    *  or when nothing helpful applies. */
   pathHint: string | null
@@ -328,10 +343,31 @@ export interface WeeklyNotesSettings {
   templateId?: string
 }
 
+/**
+ * Per-vault overrides for "how this vault looks" — sort order, grouping, the
+ * tasks view, etc. Each key falls back to the matching global preference
+ * (config.toml) when unset, so a fresh vault inherits the global default and a
+ * customized one keeps its own look. Stored in `<vault>/.zennotes/vault.json`
+ * so it travels with the vault. Values are kept loose here (the IPC boundary)
+ * and validated in the renderer's normalizer. (#292)
+ */
+export interface VaultViewSettings {
+  noteSortOrder?: string
+  groupByKind?: boolean
+  tasksViewMode?: string
+  kanbanGroupBy?: string
+  kanbanColumnTitles?: Record<string, string>
+  autoReveal?: boolean
+  systemFolderLabels?: Record<string, unknown>
+  unifiedSidebar?: boolean
+}
+
 export interface VaultSettings {
   primaryNotesLocation: PrimaryNotesLocation
   dailyNotes: DailyNotesSettings
   weeklyNotes: WeeklyNotesSettings
+  /** Per-vault view overrides (#292); absent/empty means "inherit global". */
+  view?: VaultViewSettings
   folderIcons: Record<string, FolderIconId>
   /** Per-folder accent color, keyed by `folder:subpath` (same key as folderIcons). */
   folderColors: Record<string, FolderColorId>
@@ -508,7 +544,7 @@ export interface ImportedAsset {
   name: string
   /** Vault-relative path to the imported asset, POSIX-style. */
   path: string
-  /** Markdown snippet to insert into the note. */
+  /** Markdown override to insert into the note. */
   markdown: string
   kind: ImportedAssetKind
 }

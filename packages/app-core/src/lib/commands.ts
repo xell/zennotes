@@ -475,6 +475,15 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       run: () => getState().closeActiveNote()
     },
     {
+      id: 'tab.reopen',
+      title: 'Reopen Closed Tab',
+      category: 'Tabs',
+      keywords: 'restore last undo closed reopen',
+      shortcut: shortcut('global.reopenClosedTab'),
+      when: () => getState().closedTabStack.length > 0,
+      run: () => getState().reopenLastClosedTab()
+    },
+    {
       id: 'tab.pin',
       title: isActiveTabPinned() ? 'Unpin Tab' : 'Pin Tab',
       category: 'Tabs',
@@ -1288,6 +1297,33 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       /* handled by CommandPalette */
     }
   })
+  cmds.push({
+    id: 'ui.newTheme',
+    title: 'New Custom Theme…',
+    category: 'UI',
+    keywords: 'custom theme create css appearance author new',
+    when: () => window.zen.getAppInfo().runtime === 'desktop',
+    run: async () => {
+      const name = await promptApp({
+        title: 'New theme',
+        description: 'Creates a folder with a manifest.json and theme.css you can edit.',
+        placeholder: 'My Theme',
+        initialValue: 'My Theme',
+        okLabel: 'Create'
+      })
+      if (name === null) return
+      const slug = await window.zen.createCustomTheme?.({ name: name.trim() || 'My Theme' })
+      if (slug) void window.zen.revealCustomThemesDir?.(slug)
+    }
+  })
+  cmds.push({
+    id: 'ui.overrides',
+    title: 'Overrides…',
+    category: 'UI',
+    keywords: 'css override tweak override theme appearance customize color',
+    when: () => window.zen.getAppInfo().runtime === 'desktop',
+    run: () => getState().setSettingsOpen(true)
+  })
 
   /* ---------------- Tags ---------------- */
   cmds.push(
@@ -1535,7 +1571,7 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
         }
         if (status.pathHint) {
           lines.push(
-            `Heads up: ${status.defaultTarget.replace(/\/[^/]+$/, '')} is not on your PATH yet. Settings → CLI shows the one-line shell snippet you'll need to add after install.`
+            `Heads up: ${status.defaultTarget.replace(/\/[^/]+$/, '')} is not on your PATH yet. Settings → CLI shows the one-line shell override you'll need to add after install.`
           )
         }
         const ok = await confirmApp({

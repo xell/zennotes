@@ -20,6 +20,9 @@ export type ThemeFamily =
   | 'tokyo-night'
   | 'kanagawa'
   | 'black-metal'
+  | 'rose-pine'
+  // User-authored themes loaded from ~/.config/zennotes/themes (see lib/custom-themes).
+  | 'custom'
 export type ThemeMode = 'light' | 'dark' | 'auto'
 
 export interface ThemeOption {
@@ -106,7 +109,14 @@ export const THEMES: ThemeOption[] = [
   // Monochrome: true-black background, soft grey text, a single muted
   // teal accent. The dark variant follows the repo's default (bathory).
   { id: 'black-metal', label: 'Black', family: 'black-metal', mode: 'dark' },
-  { id: 'black-metal-day', label: 'Day', family: 'black-metal', mode: 'light' }
+  { id: 'black-metal-day', label: 'Day', family: 'black-metal', mode: 'light' },
+
+  // --- Rosé Pine (rose-pine/neovim) -----------------------------------
+  // "All natural pine, faux fur and a bit of soho vibes." Main + Moon are the
+  // two dark variants; Dawn is the light one.
+  { id: 'rose-pine-main', label: 'Rosé Pine', family: 'rose-pine', mode: 'dark', variant: 'main' },
+  { id: 'rose-pine-moon', label: 'Moon', family: 'rose-pine', mode: 'dark', variant: 'moon' },
+  { id: 'rose-pine-dawn', label: 'Dawn', family: 'rose-pine', mode: 'light', variant: 'dawn' }
 ]
 
 export const DEFAULT_THEME_ID = 'dark-hard'
@@ -170,6 +180,9 @@ export function resolveAuto(
   }
   if (family === 'black-metal') {
     return targetMode === 'dark' ? 'black-metal' : 'black-metal-day'
+  }
+  if (family === 'rose-pine') {
+    return targetMode === 'dark' ? 'rose-pine-main' : 'rose-pine-dawn'
   }
   // github
   return targetMode === 'dark' ? 'github-dark' : 'github-light'

@@ -257,6 +257,15 @@ export function CommandPalette(): JSX.Element {
     setOpen(false)
     try {
       await cmd.run()
+      // A command that opens a note (or otherwise lands on the editor) should
+      // move DOM focus there — not just set focusedPanel. Closing the palette
+      // otherwise leaves focus on whatever was focused before (e.g. the
+      // explorer), and the editor's own focus-on-`focusedPanel` effect is a
+      // single, no-retry `view.focus()` that races the palette unmount. Mirror
+      // closePalette's focus restore; the retry wins that race. Skipped when the
+      // command opened the Settings modal so we don't pull focus behind it.
+      const s = useStore.getState()
+      if (s.focusedPanel === 'editor' && !s.settingsOpen) focusEditorNormalMode()
     } catch (err) {
       console.error('command failed', cmd.id, err)
     }

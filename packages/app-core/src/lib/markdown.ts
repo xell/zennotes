@@ -15,6 +15,7 @@ import type { Root as MdRoot } from 'mdast'
 import type { Root as HastRoot, Element as HastElement } from 'hast'
 import { recordRendererPerf } from './perf'
 import { classifyLocalAssetHref } from './local-assets'
+import { parseColWidthsComment } from './markdown-table'
 
 /**
  * Remark plugin: `[[target]]` and `[[target|label]]` → link nodes
@@ -419,6 +420,47 @@ function rehypeMathDiagrams() {
   }
 }
 
+/**
+ * Honor a `<!-- zen:cols=120,auto,90 -->` width hint that follows a table (#294):
+ * turn it into a <colgroup> so the preview and PDF export render the columns at
+ * the widths set by the live-table resize handles. The comment node itself is
+ * dropped by the sanitizer. Runs after rehypeRaw so the comment is a hast node.
+ */
+function rehypeTableColWidths() {
+  return (tree: HastRoot): void => {
+    visit(tree, 'element', (node, index, parent) => {
+      if (node.tagName !== 'table' || !parent || index === undefined) return
+      const siblings = (parent as unknown as AnyParent).children
+      let j = index + 1
+      while (
+        j < siblings.length &&
+        siblings[j]?.type === 'text' &&
+        String((siblings[j] as { value?: string }).value ?? '').trim() === ''
+      ) {
+        j++
+      }
+      const sib = siblings[j] as (AnyNode & { value?: string }) | undefined
+      if (!sib || sib.type !== 'comment' || typeof sib.value !== 'string') return
+      const widths = parseColWidthsComment(`<!--${sib.value}-->`)
+      if (!widths || !widths.some((w) => w != null)) return
+      const colgroup = {
+        type: 'element',
+        tagName: 'colgroup',
+        properties: {},
+        children: widths.map((w) => ({
+          type: 'element',
+          tagName: 'col',
+          properties: w != null ? { style: `width:${w}px` } : {},
+          children: []
+        }))
+      } as unknown as HastElement
+      node.children = [colgroup, ...(node.children ?? [])] as HastElement['children']
+      const cls = (node.properties?.className as string[] | undefined) ?? []
+      node.properties = { ...(node.properties ?? {}), className: [...cls, 'zen-has-col-widths'] }
+    })
+  }
+}
+
 const processor = unified()
   .use(remarkParse)
   .use(remarkFrontmatter, ['yaml', 'toml'])
@@ -431,6 +473,7 @@ const processor = unified()
   .use(remarkCallouts)
   .use(remarkRehype, { allowDangerousHtml: true })
   .use(rehypeRaw)
+  .use(rehypeTableColWidths)
   .use(rehypeMermaid)
   .use(rehypeMathDiagrams)
   .use(rehypeHighlight, { detect: true, ignoreMissing: true })

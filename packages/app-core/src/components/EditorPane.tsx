@@ -2754,7 +2754,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
             className={[
               // Flat, full-height segmented tabs (VS Code-style): right-border
               // separators, no rounded tops; the active tab is filled. (#185)
-              'group relative flex h-full min-h-8 min-w-0 items-center gap-1.5 border-r border-paper-300/60 px-2 text-sm transition-colors',
+              'group relative flex h-full min-h-8 min-w-0 items-center gap-1.5 border-r border-paper-300/60 px-[var(--z-tab-pad-x)] text-sm transition-colors',
               tab.pinned ? 'max-w-[140px]' : 'max-w-[220px]',
               active && isActive
                 ? focusedPanel === 'tabs'
@@ -3003,13 +3003,13 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   // Outer header holds the back/forward nav buttons + the (flex-1) tab strip.
   const tabStripHeaderClass = [
     'glass-header flex shrink-0 items-stretch border-b border-paper-300/70 pl-1',
-    wrapTabs ? 'min-h-10' : 'h-10'
+    wrapTabs ? 'min-h-[var(--z-tab-height)]' : 'h-[var(--z-tab-height)]'
   ].join(' ')
   const tabStripClass = [
     'workspace-tab-strip flex min-w-0 flex-1 items-stretch gap-0',
     wrapTabs
-      ? 'min-h-10 flex-wrap content-start overflow-x-hidden overflow-y-visible'
-      : `h-10 ${tabStripOverflowing ? 'overflow-x-auto' : 'overflow-x-hidden'} overflow-y-hidden`
+      ? 'min-h-[var(--z-tab-height)] flex-wrap content-start overflow-x-hidden overflow-y-visible'
+      : `h-[var(--z-tab-height)] ${tabStripOverflowing ? 'overflow-x-auto' : 'overflow-x-hidden'} overflow-y-hidden`
   ].join(' ')
   const deferEditorHydration = shouldDeferEditorHydration(
     showEditor,

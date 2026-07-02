@@ -22,6 +22,8 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
+          # GitHub's free arm64 Linux runner for public repos.
+          - ubuntu-24.04-arm
           - macos-latest
           - windows-latest
     steps:

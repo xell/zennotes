@@ -148,11 +148,20 @@ describe('TOML serialization', () => {
     expect(text).toContain('[folder_labels]')
     expect(text).toContain('# Example: inbox = "Notes"')
     expect(text).toContain('[kanban_column_titles]')
+    expect(text).toContain('[tweaks]')
     // And it must still parse back cleanly to the defaults.
     const { portable } = deserializeConfig(text)
     expect(portable.themeMode).toBe('dark')
     expect(portable.editorFontSize).toBe(16)
     expect(portable.ripgrepBinaryPath).toBeNull()
+  })
+
+  it('round-trips visual tweaks (colors + sliders) through the [tweaks] table', () => {
+    const tweaks = { accent: '#ff3b30', density: 'comfortable', cornerRadius: 'rounded' }
+    const text = serializeConfig({ themeTweaks: tweaks })
+    expect(text).toContain('[tweaks]')
+    expect(text).toContain('"#ff3b30"')
+    expect(deserializeConfig(text).portable.themeTweaks).toEqual(tweaks)
   })
 })
 
@@ -172,6 +181,26 @@ describe('persistence + cache', () => {
     const text = await readFile(getConfigFilePath(), 'utf8')
     expect(text).toContain('font_size = 20')
     expect(deserializeConfig(text).portable.themeMode).toBe('light')
+  })
+
+  it('does not let a stale watcher read of an earlier own-write clobber the cache', async () => {
+    // Regression for a Windows CI flake: two rapid writes let the file watcher
+    // observe the FIRST own-write out of order; with only a single-value
+    // loop-guard it treated that stale read as an external edit and reverted
+    // the freshly-merged cache. The watcher must recognize any recent own-write.
+    process.env.ZENNOTES_CONFIG_DIR = await tmp('zen-cfg-stale-')
+    await initAppConfig(() => {})
+
+    await setPortableConfig({ editorFontSize: 18 })
+    const staleText = await readFile(getConfigFilePath(), 'utf8')
+    await setPortableConfig({ editorFontSize: 22 })
+
+    // Write the earlier own-write back and let the debounced watcher process it.
+    await writeFile(getConfigFilePath(), staleText)
+    await new Promise((resolve) => setTimeout(resolve, 700))
+
+    // It's a known own-write, so the cache keeps the latest merged value.
+    expect(getPortableConfigSnapshot().editorFontSize).toBe(22)
   })
 
   it('ensureConfigFile creates the file when missing', async () => {

@@ -10,7 +10,13 @@ vi.mock('@replit/codemirror-vim', () => ({
   getCM: () => ({ state: { vim: cmMock.vim } })
 }))
 
-import { hintTargetOpensNote, isVimAwaitingArgument } from './vim-nav'
+import {
+  getVisiblePanels,
+  hintTargetOpensNote,
+  isVimAwaitingArgument,
+  resolveNextPanel,
+  shouldYieldToHomeNav
+} from './vim-nav'
 
 function el(html: string): HTMLElement {
   const container = document.createElement('div')
@@ -54,6 +60,30 @@ describe('hintTargetOpensNote (#100 — hint into a note lands in the editor)', 
   })
 })
 
+describe('shouldYieldToHomeNav (#273 — Space leader must work on the home view)', () => {
+  const homeTarget = (): HTMLElement => {
+    const home = el('<div data-home-nav><button data-home-item>Recent</button></div>')
+    return home.querySelector('button') as HTMLElement
+  }
+
+  it('yields for a non-leader key (home view owns j/k/arrows/Enter)', () => {
+    expect(shouldYieldToHomeNav(homeTarget(), false, false)).toBe(true)
+  })
+
+  it('does NOT yield for the leader key — it falls through to VimNav', () => {
+    expect(shouldYieldToHomeNav(homeTarget(), true, false)).toBe(false)
+  })
+
+  it('does NOT yield while a leader sequence is pending', () => {
+    expect(shouldYieldToHomeNav(homeTarget(), false, true)).toBe(false)
+  })
+
+  it('is false outside the home view, so VimNav handles keys normally', () => {
+    expect(shouldYieldToHomeNav(el('<button>Settings</button>'), false, false)).toBe(false)
+    expect(shouldYieldToHomeNav(null, false, false)).toBe(false)
+  })
+})
+
 describe('isVimAwaitingArgument (#147 — Space is the Vim arg, not the leader)', () => {
   const view = {} as unknown as EditorView // getCM is mocked, so the view is unused
 
@@ -76,5 +106,37 @@ describe('isVimAwaitingArgument (#147 — Space is the Vim arg, not the leader)'
     cmMock.vim = null
     expect(isVimAwaitingArgument(view)).toBe(false)
     expect(isVimAwaitingArgument(null)).toBe(false)
+  })
+})
+
+describe('getVisiblePanels — calendar in the focus cycle (#285)', () => {
+  it('appends the calendar last (after connections/comments) when open', () => {
+    expect(getVisiblePanels(true, true, false, false, false, false, true)).toEqual([
+      'sidebar',
+      'notelist',
+      'editor',
+      'calendar'
+    ])
+    expect(getVisiblePanels(true, true, false, true, true, false, true)).toEqual([
+      'sidebar',
+      'notelist',
+      'editor',
+      'connections',
+      'comments',
+      'calendar'
+    ])
+  })
+
+  it('omits the calendar when it is closed (default arg)', () => {
+    expect(getVisiblePanels(true, true, false, false, false)).not.toContain('calendar')
+    expect(getVisiblePanels(true, true, false, false, false, false, false)).not.toContain('calendar')
+  })
+
+  it('resolveNextPanel reaches the calendar from the editor and stays at the edge', () => {
+    const panels = getVisiblePanels(true, true, false, false, false, false, true)
+    expect(resolveNextPanel('editor', 'right', panels)).toBe('calendar')
+    // Calendar is the right-most panel, so going further right is a no-op.
+    expect(resolveNextPanel('calendar', 'right', panels)).toBe('calendar')
+    expect(resolveNextPanel('calendar', 'left', panels)).toBe('editor')
   })
 })

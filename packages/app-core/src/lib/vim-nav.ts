@@ -17,6 +17,26 @@ export function hintTargetOpensNote(element: HTMLElement | null | undefined): bo
   return !!tabPath && !isWorkspaceVirtualTabPath(tabPath)
 }
 
+/**
+ * True when a keydown inside the home view (`data-home-nav`) should yield to the
+ * home view's own roving-focus handler instead of VimNav's global bindings.
+ *
+ * The home view owns ↑/↓/j/k/Enter, but it does NOT handle the leader key — so
+ * the leader (and any in-progress leader sequence) must fall through to VimNav,
+ * otherwise Space-as-leader is silently swallowed while the home view is focused
+ * (no note open). (#273)
+ */
+export function shouldYieldToHomeNav(
+  target: HTMLElement | null | undefined,
+  isLeaderKey: boolean,
+  leaderPending: boolean
+): boolean {
+  if (!target?.closest('[data-home-nav]')) return false
+  // Keep leader input flowing through to VimNav's leader handling.
+  if (isLeaderKey || leaderPending) return false
+  return true
+}
+
 // ---------------------------------------------------------------------------
 // Panel types & navigation
 // ---------------------------------------------------------------------------
@@ -28,6 +48,7 @@ export type Panel =
   | 'editor'
   | 'connections'
   | 'comments'
+  | 'calendar'
   | 'hoverpreview'
   | 'tasks'
   | 'tags'
@@ -38,7 +59,8 @@ export function getVisiblePanels(
   unifiedSidebar: boolean,
   connectionsOpen: boolean,
   commentsOpen: boolean,
-  tasksViewOpen = false
+  tasksViewOpen = false,
+  calendarOpen = false
 ): Panel[] {
   const panels: Panel[] = []
   if (sidebarOpen) panels.push('sidebar')
@@ -46,6 +68,9 @@ export function getVisiblePanels(
   panels.push(tasksViewOpen ? 'tasks' : 'editor')
   if (connectionsOpen) panels.push('connections')
   if (commentsOpen) panels.push('comments')
+  // The calendar is the right-most of the editor-pane side panels (it renders
+  // after connections/comments), so it's last in the focus order. (#285)
+  if (calendarOpen) panels.push('calendar')
   return panels
 }
 

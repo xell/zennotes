@@ -20,7 +20,7 @@ import {
   type ViewUpdate
 } from '@codemirror/view'
 import { useStore } from '../store'
-import { resolveWikilinkTarget, wikilinkHeadingAnchor } from './wikilinks'
+import { isSameFileHeadingLink, resolveWikilinkTarget, wikilinkHeadingAnchor } from './wikilinks'
 import { openDatabaseFromWikilink, openWikilinkHeading } from './wikilink-navigation'
 
 // Same shape as the Preview pipeline (remarkWikilinks).
@@ -138,19 +138,25 @@ const wikilinkRenderPlugin = ViewPlugin.fromClass(
  */
 function openWikilink(target: string): void {
   const state = useStore.getState()
-  const resolved = resolveWikilinkTarget(state.notes, target)
-  if (!resolved) {
-    // Not a note — maybe a `.base` database; otherwise leave it to other flows.
-    openDatabaseFromWikilink(target)
-    return
-  }
-
   const focusEditorSoon = (): void => {
     useStore.getState().setFocusedPanel('editor')
     requestAnimationFrame(() => useStore.getState().editorViewRef?.focus())
   }
 
   const anchor = wikilinkHeadingAnchor(target)
+  const resolved = resolveWikilinkTarget(state.notes, target)
+  if (!resolved) {
+    // `[[#heading]]` (no note part) points at a heading in the current note,
+    // so scroll within the note being edited. (#291)
+    if (anchor && isSameFileHeadingLink(target) && state.selectedPath) {
+      void openWikilinkHeading(state.selectedPath, anchor).then(focusEditorSoon)
+      return
+    }
+    // Not a note — maybe a `.base` database; otherwise leave it to other flows.
+    openDatabaseFromWikilink(target)
+    return
+  }
+
   if (!anchor) {
     void state.selectNote(resolved.path).then(focusEditorSoon)
     return

@@ -44,9 +44,12 @@ export function parse(argv: string[]): ParsedArgs {
       }
       continue
     }
-    if (token.startsWith('-') && token.length > 1 && token !== '-') {
-      // Short flag. We only ship a couple of these (e.g. -h). Treat as
-      // boolean; no `-abc` combining yet (unnecessary for our surface).
+    if (/^-[A-Za-z][\w-]*$/.test(token)) {
+      // Short flag (e.g. `-h`). Only a dash followed by a letter counts as a
+      // flag; text that merely starts with `-` — a markdown task `- [ ] …`, a
+      // list item, or a negative number — stays positional so
+      // `zen capture "- [ ] task"` works. Boolean only (no value / `-abc`
+      // combining — unnecessary for our surface).
       push(flags, token.slice(1), 'true')
       continue
     }

@@ -155,6 +155,26 @@ export const HELP_HOW_TO_GUIDES: HelpCard[] = [
     title: 'Run the self-hosted web version with Docker',
     body:
       'Prefer ZenNotes in a browser instead of the desktop app? Pull the prebuilt, multi-arch image from Docker Hub with `docker pull adibhanna/zennotes`, generate a login token and keep a copy (`openssl rand -hex 32`), then start the container with your vault mounted:\n`docker run -d -p 127.0.0.1:7878:7878 \\\n  -e ZENNOTES_AUTH_TOKEN=<your-token> \\\n  -v "$HOME/Documents/MyVault:/workspace" \\\n  -v "$HOME/zennotes-data:/data" \\\n  adibhanna/zennotes:latest`\nThe server binds to 0.0.0.0, so it will not start without that token — open http://localhost:7878 and paste the token on first connect. Your notes stay as ordinary .md files on the host, and the desktop app can point at the same server. The full walkthrough, including reverse-proxy and TLS hardening, lives at zennotes.org/docs.'
+  },
+  {
+    title: 'Customize the look: themes vs. overrides',
+    body:
+      'ZenNotes has two CSS-based ways to change how it looks. A **theme** is a complete palette you select under Settings → Appearance → Custom. An **override** is a small CSS file that layers on top of whichever theme is active, toggled on or off under Settings → Appearance → Overrides. Reach for a theme to design a whole look; reach for an override to change one or two things — a different accent, a darker background — without forking a theme. Both apply live, no restart.'
+  },
+  {
+    title: 'Build a custom theme',
+    body:
+      'Settings → Appearance → Custom → New theme scaffolds a folder at `~/.config/zennotes/themes/<name>/` with a `manifest.json` and a `theme.css`, reveals it, and adds a card you click to apply. Edits to `theme.css` apply live. Only the active theme CSS is loaded, so write `:root { … }` for the light/shared values and `:root[data-theme-mode="dark"] { … }` for dark — you never put the theme name in a selector. Colors are the `--z-*` tokens, written as space-separated RGB (`--z-accent: 255 59 48;`): backgrounds `--z-bg` / `--z-bg-softer` / `--z-bg-1`…`--z-bg-4`, text `--z-fg-1` / `--z-fg-2` / `--z-grey-0`…`--z-grey-2`, accent `--z-accent` / `--z-accent-soft` / `--z-accent-muted`, and the syntax hues `--z-red` / `--z-green` / `--z-yellow` / `--z-blue` / `--z-purple` / `--z-aqua`. `manifest.json` carries name, author, version, description, `modes` (light | dark | both), and an optional preview swatch.'
+  },
+  {
+    title: 'Override one thing on any theme',
+    body:
+      'An override is a `.css` file in `~/.config/zennotes/overrides/`, toggled under Settings → Appearance → Overrides. Enabled overrides inject on top of the active theme in filename order, so they win the cascade — target `:root[data-theme] { … }` so the rule beats both built-in and custom themes. Because they sit on top, one override re-themes everything: `:root[data-theme] { --z-accent: 255 59 48; }` turns the accent hot pink on every theme. Overrides stack, so keep several small ones and flip each independently. The seeded `example.css` is a commented cookbook with the full token list and ready-to-uncomment recipes. To find what controls an element, use the **Developer tools** button in that same Overrides section and inspect it.'
+  },
+  {
+    title: 'Bundle fonts and images in a theme',
+    body:
+      'Ship an asset with a theme by dropping the file in the theme folder and referencing it with the `zen-theme://` scheme, where the host is the folder name: `@font-face { font-family: "Display"; src: url(zen-theme://my-theme/display.woff2); }`. Remote http/https URLs are never loaded, so themes stay self-contained and work offline; small images can also be inlined as `data:` URIs. Font family and text size are not theme tokens — set those under Settings → Typography.'
   }
 ]
 
@@ -310,6 +330,7 @@ export const HELP_SHORTCUT_SECTIONS: HelpShortcutSection[] = [
       { keys: 'Alt+H / Alt+J / Alt+K / Alt+L', action: 'Focus pane left / down / up / right', detail: 'Always-on pane-focus motions — they work even with Vim mode off and skip the Ctrl+W prefix some Linux setups intercept. (Ctrl+W h/j/k/l still works in Vim mode.)' },
       { keys: 'Mod+.', action: 'Toggle Zen mode', detail: 'Hide or restore the app chrome so only the active editor, preview, or split view stays on screen.' },
       { keys: 'Mod+W', action: 'Close active tab', detail: 'Close the current note or virtual tab.' },
+      { keys: 'Shift+Mod+T', action: 'Reopen closed tab', detail: 'Reopen the most recently closed tab, restoring its position and pinned state. Repeat to walk back through your close history.' },
       { keys: 'Shift+Mod+E', action: 'Export note as PDF', detail: 'Export the active note as a PDF file.' },
       { keys: 'Mod+=', action: 'Zoom in', detail: 'Scale the whole app up, including chrome, editor, and preview.' },
       { keys: 'Mod+-', action: 'Zoom out', detail: 'Scale the whole app down when the UI feels too large.' },
@@ -690,9 +711,10 @@ export const HELP_SETTINGS: HelpSettingsSection[] = [
   {
     title: 'Appearance',
     items: [
-      { label: 'Theme, mode, and variant', detail: 'Pick a theme family — Apple, Gruvbox, Catppuccin, GitHub, Solarized, One, Nord, Tokyo Night, Kanagawa (Wave / Dragon / Lotus), or the monochrome, true-black (OLED-friendly) Black Metal — plus light or dark mode and the active flavor or contrast where the theme supports it.' },
+      { label: 'Theme, mode, and variant', detail: 'Pick a theme family — Apple, Gruvbox, Catppuccin, GitHub, Solarized, One, Nord, Tokyo Night, Kanagawa (Wave / Dragon / Lotus), Rosé Pine (Rosé Pine / Moon / Dawn), or the monochrome, true-black (OLED-friendly) Black Metal — plus light or dark mode and the active flavor or contrast where the theme supports it.' },
       { label: 'Dark sidebar', detail: 'Tint the sidebar slightly darker than the canvas so the chrome reads as a distinct surface.' },
-      { label: 'Sidebar arrows', detail: 'Show or hide disclosure arrows for collapsible sidebar folders and sections.' }
+      { label: 'Sidebar arrows', detail: 'Show or hide disclosure arrows for collapsible sidebar folders and sections.' },
+      { label: 'Use theme for PDF export', detail: 'Under Settings → Appearance → PDF export. Off by default, so exported PDFs use a clean light print theme. Turn it on to render the PDF in your current theme instead — colors and dark/light, including custom themes — as a full-bleed page.' }
     ]
   },
   {
@@ -728,6 +750,7 @@ export const HELP_SETTINGS: HelpSettingsSection[] = [
     items: [
       { label: 'Shortcut overrides', detail: 'Remap global app shortcuts, Vim-specific bindings, panel navigation keys, and view actions from one place.' },
       { label: 'Recorded sequences', detail: 'Capture single shortcuts or multi-step sequences such as Leader flows, pane prefixes, `g g`, `g d`, or fold motions without editing raw config files.' },
+      { label: 'Conflict detection', detail: 'When you record a global shortcut that another action already uses, the recorder names the clash and disables Save, so two actions can no longer silently share one key. Any existing clash shows a badge on the affected rows. Vim, navigation, and view keys that deliberately reuse a key by context are left alone.' },
       { label: 'Context-menu bindings', detail: 'The same keymap table controls the context-menu action used in the sidebar, note list, and preview-side active-tab menu, so mouse-free navigation stays configurable.' },
       { label: 'Reset controls', detail: 'Clear an individual override or reset the entire keymap table back to the shipped defaults.' }
     ]
@@ -792,7 +815,7 @@ export const HELP_CLI: HelpCard[] = [
   {
     title: 'Capture is the gateway drug',
     body:
-      'The fastest way to add a note is `zen capture "..."`. Pipe-friendly: `pbpaste | zen capture --tag idea` lifts the clipboard into a tagged note. The first non-empty line becomes the title.'
+      'The fastest way to add a note is `zen capture "..."`. Pipe-friendly: `pbpaste | zen capture --tag idea` lifts the clipboard into a tagged note. The first non-empty line becomes the title. Markdown works too — `zen capture "- [ ] buy milk"` keeps the leading `- [ ]` as a task in the body (so it appears in the Tasks view) while the title reads "buy milk".'
   },
   {
     title: 'Read and search from the terminal',

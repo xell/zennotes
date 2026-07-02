@@ -49,6 +49,8 @@ import type {
   McpServerRuntime
 } from '@zennotes/shared-domain/mcp-clients'
 import type { AppConfigPortable } from '@zennotes/shared-domain/app-config'
+import type { CustomTheme } from '@zennotes/shared-domain/custom-themes'
+import type { Override } from '@zennotes/shared-domain/overrides'
 
 export interface ZenCapabilities {
   supportsUpdater: boolean
@@ -127,6 +129,11 @@ export interface ZenBridge {
    *  Vim `zen:<file>:<fn>(args)` mappings. Returns the code + mtime, or null
    *  if missing/unreadable. `name` is a bare filename (no path separators). */
   getUserScript(name: string): Promise<{ code: string; mtime: number } | null>
+  /** Read the current vault's `.zennotes/workspace.json` (open tabs, layout,
+   *  cursor) as a raw JSON string, or null when absent. Syncs with the vault. (#292) */
+  readWorkspaceState(): Promise<string | null>
+  /** Write the current vault's `.zennotes/workspace.json` (raw JSON string). (#292) */
+  writeWorkspaceState(json: string): Promise<void>
   /** True when the vault is in `inbox` mode but its root holds notes that only
    *  `root` mode would surface (drives the "Switch to Vault root" banner). */
   rootContentHiddenByInboxMode(): Promise<boolean>
@@ -297,6 +304,32 @@ export interface ZenBridge {
   /** Returns the index (staged) content for a vault-relative path, or null when
    *  the file is untracked or the vault is not a git repository. */
   gitShowIndex(vaultRelativePath: string): Promise<string | null>
+  /** User themes loaded from `~/.config/zennotes/themes/<slug>/`. Empty on web. */
+  listCustomThemes(): Promise<CustomTheme[]>
+  /** Absolute path of the custom-themes directory, or null when unsupported. */
+  getCustomThemesDir(): Promise<string | null>
+  /** Reveal the themes directory in the file manager — or a specific theme's
+   *  `theme.css` when a slug is given (creating the dir if needed). */
+  revealCustomThemesDir(slug?: string): Promise<void>
+  /** Delete a custom theme's folder (`<slug>/`) from the themes directory. */
+  deleteCustomTheme(slug: string): Promise<void>
+  /** Scaffold a new theme folder from a starter palette. Resolves to the new
+   *  slug, or null on failure / when unsupported (web). */
+  createCustomTheme(input: { name?: string }): Promise<string | null>
+  /** Subscribe to changes in the themes directory (file added/edited/removed). */
+  onCustomThemesChange(cb: (next: CustomTheme[]) => void): () => void
+  /** CSS overrides from `~/.config/zennotes/overrides/*.css`. Empty on web. */
+  listOverrides(): Promise<Override[]>
+  /** Reveal the overrides directory — or a specific override file when a name is
+   *  given (creating the dir if needed). */
+  revealOverridesDir(name?: string): Promise<void>
+  /** Delete a override file (`<name>`) from the overrides directory. */
+  deleteOverride(name: string): Promise<void>
+  /** Subscribe to changes in the overrides directory. */
+  onOverridesChange(cb: (next: Override[]) => void): () => void
+  /** Open/close the renderer's developer tools (for inspecting elements while
+   *  authoring themes/overrides). No-op on web. */
+  toggleDevTools(): Promise<void>
 }
 
 let installedBridge: ZenBridge | null = null

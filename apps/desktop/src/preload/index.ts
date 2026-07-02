@@ -12,6 +12,8 @@ import type {
 } from '@zennotes/bridge-contract/templates'
 import { IPC } from '@shared/ipc'
 import type { AppConfigPortable } from '@shared/app-config'
+import type { CustomTheme } from '@shared/custom-themes'
+import type { Override } from '@shared/overrides'
 import type {
   AppUpdateState,
   AssetMeta,
@@ -273,6 +275,10 @@ const api: ZenBridge = {
     ipcRenderer.invoke(IPC.IME_SET_LAYOUT, binaryPath, layoutId),
   getUserScript: (name: string): Promise<{ code: string; mtime: number } | null> =>
     ipcRenderer.invoke(IPC.USER_SCRIPT_GET, name),
+  readWorkspaceState: (): Promise<string | null> =>
+    ipcRenderer.invoke(IPC.WORKSPACE_STATE_READ),
+  writeWorkspaceState: (json: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.WORKSPACE_STATE_WRITE, json),
   rootContentHiddenByInboxMode: (): Promise<boolean> =>
     ipcRenderer.invoke(IPC.VAULT_ROOT_CONTENT_HIDDEN),
 
@@ -546,7 +552,34 @@ const api: ZenBridge = {
       ipcRenderer.on(IPC.TERMINAL_EXIT, listener)
       return () => ipcRenderer.removeListener(IPC.TERMINAL_EXIT, listener)
     }
-  }
+  },
+
+  listCustomThemes: (): Promise<CustomTheme[]> => ipcRenderer.invoke(IPC.CUSTOM_THEMES_LIST),
+  getCustomThemesDir: (): Promise<string | null> =>
+    ipcRenderer.invoke(IPC.CUSTOM_THEMES_GET_DIR),
+  revealCustomThemesDir: (slug?: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.CUSTOM_THEMES_REVEAL, slug),
+  deleteCustomTheme: (slug: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.CUSTOM_THEMES_DELETE, slug),
+  createCustomTheme: (input: { name?: string }): Promise<string | null> =>
+    ipcRenderer.invoke(IPC.CUSTOM_THEMES_CREATE, input),
+  onCustomThemesChange: (cb: (next: CustomTheme[]) => void): (() => void) => {
+    const listener = (_: unknown, next: CustomTheme[]): void => cb(next)
+    ipcRenderer.on(IPC.CUSTOM_THEMES_ON_CHANGE, listener)
+    return () => ipcRenderer.removeListener(IPC.CUSTOM_THEMES_ON_CHANGE, listener)
+  },
+
+  listOverrides: (): Promise<Override[]> => ipcRenderer.invoke(IPC.OVERRIDES_LIST),
+  revealOverridesDir: (name?: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.OVERRIDES_REVEAL, name),
+  deleteOverride: (name: string): Promise<void> => ipcRenderer.invoke(IPC.OVERRIDES_DELETE, name),
+  onOverridesChange: (cb: (next: Override[]) => void): (() => void) => {
+    const listener = (_: unknown, next: Override[]): void => cb(next)
+    ipcRenderer.on(IPC.OVERRIDES_ON_CHANGE, listener)
+    return () => ipcRenderer.removeListener(IPC.OVERRIDES_ON_CHANGE, listener)
+  },
+
+  toggleDevTools: (): Promise<void> => ipcRenderer.invoke(IPC.DEVTOOLS_TOGGLE)
 }
 
 export type ZenApi = ZenBridge

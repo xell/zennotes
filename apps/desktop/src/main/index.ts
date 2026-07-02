@@ -110,7 +110,26 @@ import {
   ensureConfigFile,
   getConfigDir
 } from './app-config'
+import {
+  getCustomThemesDir,
+  ensureCustomThemesDir,
+  listCustomThemes,
+  startWatchingCustomThemes,
+  deleteCustomTheme,
+  customThemeRevealTarget,
+  createCustomTheme,
+  resolveThemeAssetPath
+} from './custom-themes'
+import {
+  ensureOverridesDir,
+  listOverrides,
+  startWatchingOverrides,
+  overrideRevealTarget,
+  deleteOverride
+} from './overrides'
 import type { AppConfigPortable } from '@shared/app-config'
+import type { CustomTheme } from '@shared/custom-themes'
+import type { Override } from '@shared/overrides'
 import {
   listCustomTemplates,
   readCustomTemplate,
@@ -182,18 +201,19 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const LOCAL_ASSET_SCHEME = 'zen-asset'
+const THEME_ASSET_SCHEME = 'zen-theme'
+
+const PRIVILEGED_ASSET_PRIVILEGES = {
+  standard: true,
+  secure: true,
+  supportFetchAPI: true,
+  stream: true,
+  corsEnabled: true
+} as const
 
 protocol.registerSchemesAsPrivileged([
-  {
-    scheme: LOCAL_ASSET_SCHEME,
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      stream: true,
-      corsEnabled: true
-    }
-  }
+  { scheme: LOCAL_ASSET_SCHEME, privileges: PRIVILEGED_ASSET_PRIVILEGES },
+  { scheme: THEME_ASSET_SCHEME, privileges: PRIVILEGED_ASSET_PRIVILEGES }
 ])
 
 let mainWindow: BrowserWindow | null = null
@@ -682,6 +702,7 @@ function installNavigationGuards(win: BrowserWindow): void {
       }
       return { action: 'deny' }
     }
+    if (url.startsWith(`${THEME_ASSET_SCHEME}://`)) return { action: 'deny' }
     openAllowedExternalUrl(url)
     return { action: 'deny' }
   })
@@ -696,6 +717,7 @@ function installNavigationGuards(win: BrowserWindow): void {
       }
       return
     }
+    if (url.startsWith(`${THEME_ASSET_SCHEME}://`)) return
     openAllowedExternalUrl(url)
   })
 }
@@ -741,6 +763,16 @@ function mimeTypeForPath(absPath: string): string {
       return 'video/ogg'
     case '.webm':
       return 'video/webm'
+    case '.woff2':
+      return 'font/woff2'
+    case '.woff':
+      return 'font/woff'
+    case '.ttf':
+      return 'font/ttf'
+    case '.otf':
+      return 'font/otf'
+    case '.eot':
+      return 'application/vnd.ms-fontobject'
     default:
       return 'application/octet-stream'
   }
@@ -2143,6 +2175,35 @@ function registerIpc(): void {
     }
   })
 
+  // Per-vault workspace state (#292): open tabs, pane layout, sidebar, cursors.
+  // Stored as <vault>/.zennotes/workspace.json so it travels with the vault.
+  // Local vaults only — remote workspaces manage their session server-side.
+  // NOTE: not currently called from the renderer (see store.ts) — this fork's
+  // multi-window feature keys workspace snapshots per-window so that two
+  // windows on the same vault restore independently, which this single
+  // shared-file-per-vault design would silently defeat if wired up naively.
+  // Left registered (harmless, and useful if reconciled with per-window
+  // snapshots later) but intentionally dormant for now.
+  handle(IPC.WORKSPACE_STATE_READ, async (): Promise<string | null> => {
+    if (isRemoteWorkspaceActive()) return null
+    const v = requireVault()
+    try {
+      return await fsp.readFile(path.join(v.root, '.zennotes', 'workspace.json'), 'utf8')
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw err
+    }
+  })
+
+  handle(IPC.WORKSPACE_STATE_WRITE, async (_e, json: string): Promise<void> => {
+    if (isRemoteWorkspaceActive()) return
+    if (typeof json !== 'string') return
+    const v = requireVault()
+    const dir = path.join(v.root, '.zennotes')
+    await fsp.mkdir(dir, { recursive: true })
+    await fsp.writeFile(path.join(dir, 'workspace.json'), json, 'utf8')
+  })
+
   handle(IPC.VAULT_ROOT_CONTENT_HIDDEN, async () => {
     // Local-vault only: a remote workspace manages its own layout server-side.
     if (isRemoteWorkspaceActive()) return false
@@ -2932,6 +2993,28 @@ function registerIpc(): void {
     try { session.pty.kill() } catch { /* already dead */ }
     ptySessions.delete(id)
   })
+
+  handle(IPC.CUSTOM_THEMES_LIST, () => listCustomThemes())
+  handle(IPC.CUSTOM_THEMES_GET_DIR, () => getCustomThemesDir())
+  handle(IPC.CUSTOM_THEMES_REVEAL, async (_event, slug?: string) => {
+    shell.showItemInFolder(await customThemeRevealTarget(slug))
+  })
+  handle(IPC.CUSTOM_THEMES_DELETE, async (_event, slug: string) => {
+    await deleteCustomTheme(slug)
+  })
+  handle(IPC.CUSTOM_THEMES_CREATE, (_event, input: { name?: string }) => createCustomTheme(input))
+  handle(IPC.OVERRIDES_LIST, () => listOverrides())
+  handle(IPC.OVERRIDES_REVEAL, async (_event, name?: string) => {
+    shell.showItemInFolder(await overrideRevealTarget(name))
+  })
+  handle(IPC.OVERRIDES_DELETE, async (_event, name: string) => {
+    await deleteOverride(name)
+  })
+  handle(IPC.DEVTOOLS_TOGGLE, (event) => {
+    const wc = event.sender
+    if (wc.isDevToolsOpened()) wc.closeDevTools()
+    else wc.openDevTools({ mode: 'detach' })
+  })
 }
 
 /** Push an externally-changed config (synced dotfile / hand-edit) to every
@@ -2939,6 +3022,20 @@ function registerIpc(): void {
 function broadcastConfigChange(next: AppConfigPortable): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send(IPC.CONFIG_ON_CHANGE, next)
+  }
+}
+
+/** Push the freshly-scanned custom themes to every renderer on a file change. */
+function broadcastCustomThemesChange(next: CustomTheme[]): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(IPC.CUSTOM_THEMES_ON_CHANGE, next)
+  }
+}
+
+/** Push the freshly-scanned overrides to every renderer on a file change. */
+function broadcastOverridesChange(next: Override[]): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(IPC.OVERRIDES_ON_CHANGE, next)
   }
 }
 
@@ -3036,6 +3133,12 @@ let registeredQuickCaptureHotkey: string | null = null
 /** When true, the quick-capture window stays pinned on top and does not
  *  auto-hide on blur. Mirrors PersistedConfig.quickCapturePinned. */
 let quickCapturePinned = false
+/** True when the panel was summoned while ZenNotes was NOT the frontmost app
+ *  (the global hotkey fired from another app). On dismiss we then hide the
+ *  whole app so macOS hands focus back to that app instead of surfacing
+ *  ZenNotes' main window — the Spotlight/Raycast feel. Recomputed on every
+ *  show; consumed (reset to false) on the next dismiss. */
+let quickCaptureReturnFocus = false
 
 async function ensureQuickCaptureWindow(): Promise<BrowserWindow> {
   if (quickCaptureWindow && !quickCaptureWindow.isDestroyed()) return quickCaptureWindow
@@ -3085,7 +3188,7 @@ async function ensureQuickCaptureWindow(): Promise<BrowserWindow> {
   win.on('close', (event) => {
     if (quickCaptureQuitting) return
     event.preventDefault()
-    win.hide()
+    hideQuickCaptureWindow(win)
   })
   win.on('closed', () => {
     if (quickCaptureWindow === win) quickCaptureWindow = null
@@ -3138,7 +3241,22 @@ function applyQuickCapturePinned(): void {
   }
 }
 
+/** Dismiss the quick-capture panel. When it was summoned from another app,
+ *  hide the whole app (macOS) so focus returns to that app rather than
+ *  surfacing ZenNotes' main window. */
+function hideQuickCaptureWindow(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
+  const returnFocus = quickCaptureReturnFocus
+  quickCaptureReturnFocus = false
+  win.hide()
+  if (returnFocus && isMac()) app.hide()
+}
+
 async function showQuickCaptureWindow(): Promise<void> {
+  // Remember whether ZenNotes was already frontmost. If no ZenNotes window is
+  // focused, the panel was summoned from another app (global hotkey / deep
+  // link) — dismissing it should hand focus back to that app.
+  quickCaptureReturnFocus = !BrowserWindow.getFocusedWindow()
   const win = await ensureQuickCaptureWindow()
   const sourceWindow = BrowserWindow.getFocusedWindow() ?? mainWindow
   if (sourceWindow && sourceWindow.id !== win.id && !sourceWindow.isDestroyed()) {
@@ -3151,7 +3269,7 @@ async function showQuickCaptureWindow(): Promise<void> {
 async function toggleQuickCaptureWindow(): Promise<void> {
   const win = quickCaptureWindow
   if (win && !win.isDestroyed() && win.isVisible() && win.isFocused()) {
-    win.hide()
+    hideQuickCaptureWindow(win)
     return
   }
   await showQuickCaptureWindow()
@@ -3491,6 +3609,32 @@ app.whenReady().then(async () => {
     })
   })
 
+  // Theme-relative assets: url(zen-theme://<slug>/<file>) in a custom theme's
+  // CSS, served sandboxed to that theme's own folder.
+  protocol.handle(THEME_ASSET_SCHEME, async (request) => {
+    // Parse host=slug + path by hand so the slug keeps its case (new URL()
+    // would lowercase the hostname, breaking case-sensitive filesystems).
+    const without = request.url.slice(`${THEME_ASSET_SCHEME}://`.length).split(/[?#]/)[0]
+    const slashIdx = without.indexOf('/')
+    const rawSlug = slashIdx === -1 ? without : without.slice(0, slashIdx)
+    const rel = slashIdx === -1 ? '' : without.slice(slashIdx + 1)
+    let slug: string
+    try {
+      slug = decodeURIComponent(rawSlug)
+    } catch {
+      throw new Error(`Invalid theme asset URL: ${request.url}`)
+    }
+    const abs = resolveThemeAssetPath(slug, rel)
+    if (!abs) throw new Error(`Invalid theme asset URL: ${request.url}`)
+    const data = await fsp.readFile(abs)
+    return new Response(data, {
+      headers: {
+        'content-type': mimeTypeForPath(abs),
+        'cache-control': 'no-cache'
+      }
+    })
+  })
+
   // Permissions this app grants to its own renderer (deny everything else —
   // it's our app talking to our own vault, no third-party surface):
   //   - 'local-fonts'   → queryLocalFonts() for the font picker
@@ -3526,6 +3670,16 @@ app.whenReady().then(async () => {
   // Load the portable config from disk before any window opens so the
   // preload's synchronous getConfigSync() returns real data on first paint.
   await initAppConfig(broadcastConfigChange)
+
+  // Custom user themes live alongside the config dotfile. Seed the dir on first
+  // run, then watch it so edits apply live. Await the seed so the watcher
+  // attaches to a directory that already exists.
+  await ensureCustomThemesDir().catch(() => {})
+  startWatchingCustomThemes(broadcastCustomThemesChange)
+
+  // CSS overrides live in a sibling dir; same seed-then-watch dance.
+  await ensureOverridesDir().catch(() => {})
+  startWatchingOverrides(broadcastOverridesChange)
 
   installAppMenu()
   registerIpc()

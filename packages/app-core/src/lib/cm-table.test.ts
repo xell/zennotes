@@ -281,3 +281,66 @@ describe('text objects (vi / va, di / ca)', () => {
     expect(textObjectRange('plain', 0, 'i', '"')).toBeNull()
   })
 })
+
+describe('tablePlugin — column widths (#294)', () => {
+  const WIDTH_DOC = `Intro.
+
+| Name | Age |
+| --- | --- |
+| Alice | 30 |
+<!-- zen:cols=120,200 -->`
+
+  const PLAIN_DOC = `Intro.
+
+| A | B |
+| --- | --- |
+| 1 | 2 |`
+
+  it('renders persisted widths as a <colgroup> and swallows the marker', () => {
+    const view = mount(WIDTH_DOC)
+    const widget = view.dom.querySelector('.cm-table-widget')!
+    expect(widget).toBeTruthy()
+    const cols = widget.querySelectorAll('col')
+    expect(cols.length).toBe(2)
+    expect((cols[0] as HTMLElement).style.width).toBe('120px')
+    expect((cols[1] as HTMLElement).style.width).toBe('200px')
+    expect(widget.querySelector('table')?.classList.contains('cm-table-fixed')).toBe(true)
+    // The raw marker is inside the widget's atomic range — never visible text.
+    expect(view.dom.textContent ?? '').not.toContain('zen:cols')
+    view.destroy()
+  })
+
+  it('a table with no marker renders a colgroup but no fixed widths', () => {
+    const view = mount(PLAIN_DOC)
+    const widget = view.dom.querySelector('.cm-table-widget')!
+    const cols = widget.querySelectorAll('col')
+    expect(cols.length).toBe(2)
+    expect((cols[0] as HTMLElement).style.width).toBe('')
+    expect(widget.querySelector('table')?.classList.contains('cm-table-fixed')).toBe(false)
+    view.destroy()
+  })
+
+  const drag = (view: EditorView, from: number, to: number): void => {
+    const handle = view.dom.querySelector<HTMLElement>('.cm-table-col-resize')
+    if (!handle) throw new Error('no resize handle')
+    handle.dispatchEvent(new MouseEvent('pointerdown', { clientX: from, bubbles: true, cancelable: true }))
+    handle.dispatchEvent(new MouseEvent('pointermove', { clientX: to, bubbles: true }))
+    handle.dispatchEvent(new MouseEvent('pointerup', { clientX: to, bubbles: true }))
+  }
+
+  it('dragging a column resize grip persists a zen:cols marker in the source', () => {
+    const view = mount(PLAIN_DOC)
+    drag(view, 100, 180)
+    expect(view.state.doc.toString()).toContain('<!-- zen:cols=')
+    view.destroy()
+  })
+
+  it('re-resizing replaces the marker — never duplicates it', () => {
+    const view = mount(PLAIN_DOC)
+    drag(view, 100, 180)
+    drag(view, 100, 140)
+    const markers = view.state.doc.toString().match(/zen:cols/g) ?? []
+    expect(markers.length).toBe(1)
+    view.destroy()
+  })
+})

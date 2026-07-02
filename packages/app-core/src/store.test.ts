@@ -22,10 +22,13 @@ function makeTask(content: string, taskIndex = 0): VaultTask {
   }
 }
 
-function makeNote(body: string) {
+// Some store flows validate tabs against `state.notes` by path, so tests that
+// open multiple tabs need note fixtures whose metadata matches each tab path.
+function makeNote(body: string, path = 'inbox/Note.md') {
+  const title = path.split('/').pop()?.replace(/\.md$/i, '') || 'Note'
   return {
-    path: 'inbox/Note.md',
-    title: 'Note',
+    path,
+    title,
     folder: 'inbox' as const,
     siblingOrder: 0,
     createdAt: 0,
@@ -136,6 +139,34 @@ describe('tasks cache freshness', () => {
 
     expect(scanTasksForPath).toHaveBeenCalledWith('inbox/Note.md')
     expect(useStore.getState().vaultTasks).toEqual(freshTasks)
+  })
+})
+
+describe('closed tab history', () => {
+  it('reopens closed tabs in reverse close order', async () => {
+    installZen({
+      readNote: vi.fn((path: string) => Promise.resolve(makeNote(`# ${path}`, path)))
+    })
+
+    const { useStore } = await loadStore()
+    const paneId = useStore.getState().activePaneId
+    useStore.setState({
+      notes: [makeNote('A', 'inbox/A.md'), makeNote('B', 'inbox/B.md')]
+    })
+
+    await useStore.getState().openNoteInPane(paneId, 'inbox/A.md')
+    await useStore.getState().openNoteInPane(paneId, 'inbox/B.md')
+    await useStore.getState().closeTabInPane(paneId, 'inbox/A.md')
+    await useStore.getState().closeTabInPane(paneId, 'inbox/B.md')
+
+    await useStore.getState().reopenLastClosedTab()
+    const reopenedPaneId = useStore.getState().activePaneId
+    expect(findLeaf(useStore.getState().paneLayout, reopenedPaneId)?.activeTab).toBe('inbox/B.md')
+
+    await useStore.getState().reopenLastClosedTab()
+    const leaf = findLeaf(useStore.getState().paneLayout, reopenedPaneId)
+    expect(leaf?.tabs).toEqual(['inbox/A.md', 'inbox/B.md'])
+    expect(leaf?.activeTab).toBe('inbox/A.md')
   })
 })
 
@@ -852,5 +883,108 @@ describe('manual order integrity on note rename', () => {
     // on the stale path, silently dropping the note from its folder's
     // custom order instead of rewriting its entry in place.
     expect(useStore.getState().manualNoteOrder).toEqual({ inbox: ['inbox/B.md', 'inbox/A2.md'] })
+  })
+})
+
+describe('viewPrefsFromVault (#292 — per-vault view overlay)', () => {
+  type ViewArg = Parameters<Awaited<ReturnType<typeof loadStore>>['viewPrefsFromVault']>[0]
+
+  it('overlays valid view overrides onto the prefs patch', async () => {
+    installZen()
+    const { viewPrefsFromVault } = await loadStore()
+    const patch = viewPrefsFromVault({
+      view: {
+        noteSortOrder: 'name-asc',
+        groupByKind: false,
+        tasksViewMode: 'kanban',
+        kanbanGroupBy: 'priority',
+        autoReveal: true,
+        unifiedSidebar: true
+      }
+    } as unknown as ViewArg)
+    expect(patch.noteSortOrder).toBe('name-asc')
+    expect(patch.groupByKind).toBe(false)
+    expect(patch.tasksViewMode).toBe('kanban')
+    expect(patch.kanbanGroupBy).toBe('priority')
+    expect(patch.autoReveal).toBe(true)
+    expect(patch.unifiedSidebar).toBe(true)
+  })
+
+  it('drops invalid enum values (they stay out of the patch → keep the global)', async () => {
+    installZen()
+    const { viewPrefsFromVault } = await loadStore()
+    const patch = viewPrefsFromVault({
+      view: { noteSortOrder: 'totally-invalid', tasksViewMode: 'nope' }
+    } as unknown as ViewArg)
+    expect('noteSortOrder' in patch).toBe(false)
+    expect('tasksViewMode' in patch).toBe(false)
+  })
+
+  it('returns an empty patch when there is no view block', async () => {
+    installZen()
+    const { viewPrefsFromVault } = await loadStore()
+    expect(viewPrefsFromVault({} as unknown as ViewArg)).toEqual({})
+    expect(viewPrefsFromVault(null)).toEqual({})
+  })
+})
+
+describe('viewSettingsScope (#292 — global vs per-vault)', () => {
+  it('overlays the vault view when switching to per-vault, not when switching to global', async () => {
+    installZen()
+    const { useStore } = await loadStore()
+    // A vault override that differs from the live (global) prefs.
+    useStore.setState({
+      vaultSettings: {
+        ...useStore.getState().vaultSettings,
+        view: { groupByKind: false, noteSortOrder: 'name-asc' }
+      },
+      groupByKind: true,
+      noteSortOrder: 'none',
+      viewSettingsScope: 'global'
+    })
+    // Global scope leaves the live (global) prefs alone.
+    useStore.getState().setViewSettingsScope('global')
+    expect(useStore.getState().groupByKind).toBe(true)
+    expect(useStore.getState().noteSortOrder).toBe('none')
+    // Per-vault scope overlays the vault's saved view immediately (no reopen).
+    useStore.getState().setViewSettingsScope('vault')
+    expect(useStore.getState().groupByKind).toBe(false)
+    expect(useStore.getState().noteSortOrder).toBe('name-asc')
+  })
+})
+
+describe('pdfExportUseTheme — theme in PDF export', () => {
+  it('defaults off and round-trips through persistence', async () => {
+    installZen()
+    const { useStore } = await loadStore()
+    expect(useStore.getState().pdfExportUseTheme).toBe(false)
+
+    useStore.getState().setPdfExportUseTheme(true)
+    expect(useStore.getState().pdfExportUseTheme).toBe(true)
+    // collectPrefs persisted it to localStorage.
+    const saved = JSON.parse(localStorage.getItem('zen:prefs:v2') ?? '{}')
+    expect(saved.pdfExportUseTheme).toBe(true)
+
+    // A fresh module instance reads it back via loadPrefs → normalizePrefs.
+    vi.resetModules()
+    const reloaded = await import('./store')
+    expect(reloaded.useStore.getState().pdfExportUseTheme).toBe(true)
+  })
+
+  it('normalizes missing and non-boolean stored values to false', async () => {
+    installZen()
+    await loadStore() // fresh module + cleared storage
+
+    // Non-boolean → default.
+    localStorage.setItem('zen:prefs:v2', JSON.stringify({ pdfExportUseTheme: 'yes' }))
+    vi.resetModules()
+    const bad = await import('./store')
+    expect(bad.useStore.getState().pdfExportUseTheme).toBe(false)
+
+    // Missing → default.
+    localStorage.setItem('zen:prefs:v2', JSON.stringify({ themeId: 'dark-hard' }))
+    vi.resetModules()
+    const missing = await import('./store')
+    expect(missing.useStore.getState().pdfExportUseTheme).toBe(false)
   })
 })

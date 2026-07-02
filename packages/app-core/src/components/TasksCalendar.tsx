@@ -23,6 +23,7 @@ import {
 import { useStore } from '../store'
 import { ChevronLeftIcon, ChevronRightIcon } from './icons'
 import { InlineMarkdown } from '../lib/inline-markdown'
+import { resolveWeekStartDay } from '../lib/week-start'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 
 interface Props {
@@ -41,9 +42,9 @@ interface Props {
   dailyNotesEnabled: boolean
 }
 
-/** Sunday-first; matches how most US/Western calendars read. The month
- *  grid is 6 weeks (42 cells) so layouts don't reflow when months span
- *  4-vs-5-vs-6 weeks. */
+/** Canonical Sun..Sat labels; rotated to the user's `calendarWeekStart` at
+ *  render (#300). The month grid is 6 weeks (42 cells) so layouts don't reflow
+ *  when months span 4-vs-5-vs-6 weeks. */
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 function firstOfMonth(d: Date): Date {
@@ -73,10 +74,11 @@ function taskTail(task: VaultTask): string {
   return m ? task.rawText.slice(m[0].length) : task.content
 }
 
-function buildMonthGrid(anchor: Date): Date[] {
+function buildMonthGrid(anchor: Date, firstDay: number): Date[] {
   const first = firstOfMonth(anchor)
-  // Walk back to the most recent Sunday (could be in the previous month).
-  const start = addDays(first, -first.getDay())
+  // Walk back to the most recent `firstDay` weekday (may be in the prev month).
+  const offset = (first.getDay() - firstDay + 7) % 7
+  const start = addDays(first, -offset)
   return Array.from({ length: 42 }, (_, i) => addDays(start, i))
 }
 
@@ -98,6 +100,7 @@ export function TasksCalendar({
   const setMonthAnchor = useStore((s) => s.setTasksCalendarMonthAnchor)
   const selectedDateIso = useStore((s) => s.tasksCalendarSelectedDate)
   const setSelectedDate = useStore((s) => s.setTasksCalendarSelectedDate)
+  const weekStart = useStore((s) => s.calendarWeekStart)
   const applyTaskMutation = useStore((s) => s.applyTaskMutation)
   const deleteTaskFromList = useStore((s) => s.deleteTaskFromList)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -151,7 +154,15 @@ export function TasksCalendar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const cells = useMemo(() => buildMonthGrid(monthAnchor), [monthAnchor])
+  const firstDay = resolveWeekStartDay(weekStart)
+  const dayLabels = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => WEEKDAY_LABELS[(firstDay + i) % 7]),
+    [firstDay]
+  )
+  const cells = useMemo(
+    () => buildMonthGrid(monthAnchor, firstDay),
+    [monthAnchor, firstDay]
+  )
 
   const buckets = useMemo(() => bucketTasksByDueDate(tasks), [tasks])
   const unscheduled = buckets.get('unscheduled') ?? []
@@ -621,7 +632,7 @@ export function TasksCalendar({
       </div>
 
       <div className="grid shrink-0 grid-cols-7 px-3 pt-2 text-2xs uppercase tracking-wide text-current/40">
-        {WEEKDAY_LABELS.map((d) => (
+        {dayLabels.map((d) => (
           <div key={d} className="px-1 py-1 text-center">
             {d}
           </div>

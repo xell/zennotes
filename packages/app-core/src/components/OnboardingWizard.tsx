@@ -56,6 +56,12 @@ const FAMILY_DESCRIPTORS: ThemeFamilyDescriptor[] = [
     dark: { bg: '#1e1e2e', fg: '#cdd6f4', accent: '#cba6f7' }
   },
   {
+    family: 'rose-pine',
+    label: 'Rosé Pine',
+    light: { bg: '#faf4ed', fg: '#575279', accent: '#907aa9' },
+    dark: { bg: '#191724', fg: '#e0def4', accent: '#c4a7e7' }
+  },
+  {
     family: 'github',
     label: 'GitHub',
     light: { bg: '#ffffff', fg: '#24292f', accent: '#0969da' },

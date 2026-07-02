@@ -30,6 +30,19 @@ export default {
         success: 'rgb(var(--z-green) / <alpha-value>)',
         warning: 'rgb(var(--z-yellow) / <alpha-value>)'
       },
+      borderRadius: {
+        // Scale every rounded-* by --z-radius-scale (default 1) so one var can
+        // square all corners (Quick tweaks → Square corners sets it to 0).
+        // rounded-none / rounded-full keep Tailwind defaults, so pills and
+        // circles stay round.
+        DEFAULT: 'calc(0.25rem * var(--z-radius-scale, 1))',
+        sm: 'calc(0.125rem * var(--z-radius-scale, 1))',
+        md: 'calc(0.375rem * var(--z-radius-scale, 1))',
+        lg: 'calc(0.5rem * var(--z-radius-scale, 1))',
+        xl: 'calc(0.75rem * var(--z-radius-scale, 1))',
+        '2xl': 'calc(1rem * var(--z-radius-scale, 1))',
+        '3xl': 'calc(1.5rem * var(--z-radius-scale, 1))'
+      },
       fontFamily: {
         sans: [
           '-apple-system',

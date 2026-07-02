@@ -79,3 +79,17 @@ describe('renderMarkdown', () => {
     expect(html).toContain('green')
   })
 })
+
+describe('table column widths (#294)', () => {
+  it('renders a <colgroup> from a trailing zen:cols comment', () => {
+    const html = renderMarkdown('| A | B |\n| --- | --- |\n| 1 | 2 |\n<!-- zen:cols=120,200 -->\n')
+    expect(html).toContain('<colgroup>')
+    expect(html).toContain('width:120px')
+    expect(html).toContain('zen-has-col-widths')
+  })
+  it('leaves a plain table (no marker) untouched', () => {
+    const html = renderMarkdown('| A | B |\n| --- | --- |\n| 1 | 2 |\n')
+    expect(html).not.toContain('colgroup')
+    expect(html).not.toContain('zen-has-col-widths')
+  })
+})

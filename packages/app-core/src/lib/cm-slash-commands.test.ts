@@ -9,7 +9,11 @@ import { describe, expect, it, vi } from 'vitest'
 // tests below never apply Page, so a bare stub keeps the module store-free.
 vi.mock('../store', () => ({ useStore: { getState: () => ({}) } }))
 
-import { slashCommandSource, templateSlashCommandSource } from './cm-slash-commands'
+import {
+  slashCommandSource,
+  templateSlashCommandSource,
+  blockInsertPadding
+} from './cm-slash-commands'
 
 type Source = typeof templateSlashCommandSource
 
@@ -69,5 +73,66 @@ describe('slash command sources', () => {
     expect(view.state.doc.toString()).toBe('- [ ] ')
     view.destroy()
     parent.remove()
+  })
+})
+
+describe('blockInsertPadding (#294 — tables become their own block)', () => {
+  it('adds no padding at document start', () => {
+    expect(blockInsertPadding('', '')).toEqual({ lead: '', trail: '' })
+  })
+
+  it('adds a blank line before text with no trailing newline', () => {
+    expect(blockInsertPadding('Some text', '')).toEqual({ lead: '\n\n', trail: '' })
+  })
+
+  it('completes a single trailing newline into a blank line', () => {
+    expect(blockInsertPadding('Some text\n', '')).toEqual({ lead: '\n', trail: '' })
+  })
+
+  it('leaves an existing blank line alone', () => {
+    expect(blockInsertPadding('Some text\n\n', '')).toEqual({ lead: '', trail: '' })
+  })
+
+  it('pads before following content (and respects existing newlines)', () => {
+    expect(blockInsertPadding('', 'More text')).toEqual({ lead: '', trail: '\n\n' })
+    expect(blockInsertPadding('', '\nMore')).toEqual({ lead: '', trail: '\n' })
+    expect(blockInsertPadding('', '\n\nMore')).toEqual({ lead: '', trail: '' })
+  })
+
+  it('pads both sides when inserted between two paragraphs', () => {
+    expect(blockInsertPadding('para', 'para')).toEqual({ lead: '\n\n', trail: '\n\n' })
+  })
+})
+
+describe('/table insertion separates the table into its own block (#294)', () => {
+  function applyTable(doc: string): string {
+    const parent = document.createElement('div')
+    document.body.append(parent)
+    const view = new EditorView({ parent, state: EditorState.create({ doc }) })
+    const result = templateSlashCommandSource(
+      new CompletionContext(view.state, doc.length, true)
+    )
+    const table = result?.options.find((o) => (o.displayLabel ?? o.label) === 'Table')
+    const apply = table?.apply
+    if (typeof apply !== 'function') throw new Error('expected a Table apply handler')
+    apply(view, table!, result!.from, view.state.doc.length)
+    const out = view.state.doc.toString()
+    view.destroy()
+    parent.remove()
+    return out
+  }
+
+  const TABLE = '| Column 1 | Column 2 |\n| --- | --- |\n| | |'
+
+  it('inserts the bare table at document start', () => {
+    expect(applyTable('/')).toBe(TABLE)
+  })
+
+  it('inserts a blank line before a table typed directly under a paragraph', () => {
+    expect(applyTable('Some text\n/')).toBe(`Some text\n\n${TABLE}`)
+  })
+
+  it('does not double a blank line that already separates it', () => {
+    expect(applyTable('Some text\n\n/')).toBe(`Some text\n\n${TABLE}`)
   })
 })

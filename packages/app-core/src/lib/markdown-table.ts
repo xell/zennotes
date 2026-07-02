@@ -19,6 +19,11 @@ export interface MarkdownTable {
   rows: string[][]
   /** Per-column alignment, length === headers.length. */
   aligns: ColumnAlign[]
+  /** Optional explicit per-column pixel widths (`null` = auto). GFM has no
+   *  width syntax, so these persist in a trailing `<!-- zen:cols=… -->` comment
+   *  (see serializeColWidthsComment / parseColWidthsComment). Absent for tables
+   *  that have never been resized — serialization stays byte-identical then. */
+  colWidths?: Array<number | null>
 }
 
 /** A cell address. `row === -1` denotes the header row; body rows are 0-based. */
@@ -207,7 +212,37 @@ export function serializeTable(table: MarkdownTable): string {
     .map((a, c) => delimiterCell(widths[c], a))
     .join(' | ')} |`
   const body = table.rows.map(renderRow)
-  return [header, delim, ...body].join('\n')
+  const tableMd = [header, delim, ...body].join('\n')
+  const cols = serializeColWidthsComment(table.colWidths)
+  return cols ? `${tableMd}\n${cols}` : tableMd
+}
+
+// A trailing `<!-- zen:cols=120,auto,90 -->` line persists explicit per-column
+// pixel widths (#294). A plain HTML comment is invisible in every other
+// markdown renderer, travels with the note, and survives `:format`.
+const COLS_COMMENT_RE = /^[ \t]*<!--[ \t]*zen:cols=([0-9,\sauto]*?)[ \t]*-->[ \t]*$/i
+
+/** Parse a `<!-- zen:cols=… -->` width-hint line into per-column pixel widths
+ *  (`null` = auto). Returns null if the line isn't a zen:cols comment. */
+export function parseColWidthsComment(line: string): Array<number | null> | null {
+  const m = COLS_COMMENT_RE.exec(line)
+  if (!m) return null
+  return (m[1] ?? '').split(',').map((part) => {
+    const t = part.trim().toLowerCase()
+    if (t === '' || t === 'auto') return null
+    const n = Number.parseInt(t, 10)
+    return Number.isFinite(n) && n > 0 ? n : null
+  })
+}
+
+/** Serialize per-column widths to a `<!-- zen:cols=… -->` line, or null when no
+ *  column has an explicit width (so an un-resized table emits no comment). */
+export function serializeColWidthsComment(
+  widths: ReadonlyArray<number | null> | undefined
+): string | null {
+  if (!widths || !widths.some((w) => typeof w === 'number' && w > 0)) return null
+  const parts = widths.map((w) => (typeof w === 'number' && w > 0 ? String(Math.round(w)) : 'auto'))
+  return `<!-- zen:cols=${parts.join(',')} -->`
 }
 
 // ---------------------------------------------------------------------------

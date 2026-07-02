@@ -97,6 +97,29 @@ function renderCompletion(completion: Completion): HTMLElement {
  * CodeMirror completion source for Notion-style slash commands.
  * Activates when `/` is typed at the start of a line or after whitespace.
  */
+/**
+ * Blank-line padding to drop a block element (a GFM table) into its own
+ * paragraph at an insertion point, given the text immediately before and after.
+ * Without a blank line on each side the table is absorbed into adjacent prose,
+ * so strict parsers (PDF export, `:format`) render it scrambled. (#294)
+ */
+export function blockInsertPadding(
+  before: string,
+  after: string
+): { lead: string; trail: string } {
+  let lead = ''
+  if (before.length > 0 && !before.endsWith('\n\n')) {
+    lead = before.endsWith('\n') ? '\n' : '\n\n'
+  }
+  const trail =
+    after.length === 0 || after.startsWith('\n\n')
+      ? ''
+      : after.startsWith('\n')
+        ? '\n'
+        : '\n\n'
+  return { lead, trail }
+}
+
 export function slashCommandSource(context: CompletionContext): CompletionResult | null {
   const { state, pos } = context
   const line = state.doc.lineAt(pos)
@@ -139,11 +162,23 @@ export function slashCommandSource(context: CompletionContext): CompletionResult
             }
             return
           }
-          const insert = cmd.insert
+          let insert = cmd.insert
+          let leadPad = ''
+          if (cmd.label === 'Table') {
+            // A GFM table must be separated from surrounding text by blank lines,
+            // or strict parsers (PDF export, `:format`) read it as paragraph
+            // text and it renders scrambled. Pad it into its own block. (#294)
+            const pad = blockInsertPadding(
+              view.state.doc.sliceString(0, slashStart),
+              view.state.doc.sliceString(to)
+            )
+            leadPad = pad.lead
+            insert = pad.lead + insert + pad.trail
+          }
           const cursorPos =
             cmd.cursorOffset != null
               ? slashStart + insert.length + cmd.cursorOffset
-              : slashStart + insert.length
+              : slashStart + leadPad.length + cmd.insert.length
           view.dispatch({
             changes: { from: slashStart, to, insert },
             selection: { anchor: cursorPos }

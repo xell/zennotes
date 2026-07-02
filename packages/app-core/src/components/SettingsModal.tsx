@@ -25,10 +25,11 @@ import {
   type McpInstructionsPayload,
   type McpServerRuntime
 } from '@shared/mcp-clients'
-import { useStore } from '../store'
+import { useStore, refreshCustomThemes, refreshOverrides } from '../store'
 import type { LineNumberMode, WhichKeyHintMode } from '../store'
 import type { KeymapDefinition, KeymapId, KeymapOverrides } from '../lib/keymaps'
 import {
+  findKeymapConflict,
   formatKeymapBinding,
   getKeymapBinding,
   getKeymapDefinitionsByGroup,
@@ -40,6 +41,16 @@ import {
 import { resolveAuto, THEMES, type ThemeFamily, type ThemeMode } from '../lib/themes'
 import { applyVimKeymap } from '../lib/vim-keymap'
 import { focusEditorNormalMode } from '../lib/editor-focus'
+import { customThemeSlugFromId } from '../lib/custom-themes'
+import { TrashIcon, ExternalIcon } from './icons'
+import { customThemeSupportsMode, type CustomTheme } from '@shared/custom-themes'
+import {
+  buildTweaksCss,
+  isOverrideEnabled,
+  TWEAKABLE_TOKENS,
+  type Override,
+  type TweakableToken
+} from '@shared/overrides'
 import { hasSystemFontAccess, listSystemFonts } from '../lib/system-fonts'
 import {
   DEFAULT_SYSTEM_FOLDER_LABELS,
@@ -65,6 +76,7 @@ import { useAppUpdateState } from '../lib/app-update-state'
 import { getZenBridge } from '@zennotes/bridge-contract/bridge'
 import companyLogo from '../assets/lumary-labs-logo.svg'
 import { confirmApp } from '../lib/confirm-requests'
+import { promptApp } from '../lib/prompt-requests'
 import { isImeComposing } from '../lib/ime'
 import { RemoteWorkspaceProfileModal } from './RemoteWorkspaceProfileModal'
 import { Button } from './ui/Button'
@@ -313,6 +325,21 @@ function formatReleaseNotesForDisplay(notes: string | null): string | null {
   }
 }
 
+/** Read a `--z-*` token's current resolved value off <html> as #rrggbb, for
+ *  seeding the Quick-tweaks pickers from the active theme. */
+function rgbVarToHex(token: string): string {
+  if (typeof document === 'undefined') return '#000000'
+  const parts = getComputedStyle(document.documentElement)
+    .getPropertyValue(token)
+    .trim()
+    .split(/\s+/)
+    .map(Number)
+  if (parts.length < 3 || parts.some((n) => !Number.isFinite(n))) return '#000000'
+  const hex = (n: number): string =>
+    Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0')
+  return `#${hex(parts[0])}${hex(parts[1])}${hex(parts[2])}`
+}
+
 export function SettingsModal(): JSX.Element {
   const zenBridge = getZenBridge()
   const appInfo = zenBridge.getAppInfo()
@@ -481,6 +508,13 @@ export function SettingsModal(): JSX.Element {
   const themeFamily = useStore((s) => s.themeFamily)
   const themeMode = useStore((s) => s.themeMode)
   const setTheme = useStore((s) => s.setTheme)
+  const customThemes = useStore((s) => s.customThemes)
+  const overrides = useStore((s) => s.overrides)
+  const enabledOverrides = useStore((s) => s.enabledOverrides)
+  const setOverrideEnabled = useStore((s) => s.setOverrideEnabled)
+  const themeTweaks = useStore((s) => s.themeTweaks)
+  const setThemeTweak = useStore((s) => s.setThemeTweak)
+  const resetThemeTweaks = useStore((s) => s.resetThemeTweaks)
   const editorFontSize = useStore((s) => s.editorFontSize)
   const setEditorFontSize = useStore((s) => s.setEditorFontSize)
   const editorLineHeight = useStore((s) => s.editorLineHeight)
@@ -489,6 +523,8 @@ export function SettingsModal(): JSX.Element {
   const setPreviewMaxWidth = useStore((s) => s.setPreviewMaxWidth)
   const lineNumberMode = useStore((s) => s.lineNumberMode)
   const setLineNumberMode = useStore((s) => s.setLineNumberMode)
+  const viewSettingsScope = useStore((s) => s.viewSettingsScope)
+  const setViewSettingsScope = useStore((s) => s.setViewSettingsScope)
   const lineNumberPosition = useStore((s) => s.lineNumberPosition)
   const setLineNumberPosition = useStore((s) => s.setLineNumberPosition)
   const interfaceFont = useStore((s) => s.interfaceFont)
@@ -503,6 +539,8 @@ export function SettingsModal(): JSX.Element {
   const setDarkSidebar = useStore((s) => s.setDarkSidebar)
   const showSidebarChevrons = useStore((s) => s.showSidebarChevrons)
   const setShowSidebarChevrons = useStore((s) => s.setShowSidebarChevrons)
+  const pdfExportUseTheme = useStore((s) => s.pdfExportUseTheme)
+  const setPdfExportUseTheme = useStore((s) => s.setPdfExportUseTheme)
   const appUpdateState = useAppUpdateState()
   const [editingRemoteProfile, setEditingRemoteProfile] = useState<{
     mode: 'create' | 'edit'
@@ -654,7 +692,8 @@ export function SettingsModal(): JSX.Element {
       { id: 'nord', label: 'Nord' },
       { id: 'tokyo-night', label: 'Tokyo Night' },
       { id: 'kanagawa', label: 'Kanagawa' },
-      { id: 'black-metal', label: 'Black Metal' }
+      { id: 'black-metal', label: 'Black Metal' },
+      { id: 'rose-pine', label: 'Rosé Pine' }
     ],
     []
   )
@@ -722,28 +761,28 @@ export function SettingsModal(): JSX.Element {
   }, [themeFamily, effectiveMode])
 
   const pickFamily = (family: ThemeFamily): void => {
-    // When family changes, keep the mode the same and pick the canonical
-    // first variant in that family (medium for gruvbox, default for
-    // catppuccin/github).
-    const preferred: Record<ThemeFamily, { light: string; dark: string }> = {
-      apple: { light: 'apple-light', dark: 'apple-dark' },
-      gruvbox: { light: 'light-medium', dark: 'dark-medium' },
-      catppuccin: { light: 'catppuccin-latte', dark: 'catppuccin-mocha' },
-      github: { light: 'github-light', dark: 'github-dark' },
-      solarized: { light: 'solarized-light', dark: 'solarized-dark' },
-      one: { light: 'one-light', dark: 'one-dark' },
-      nord: { light: 'nord-light', dark: 'nord-dark' },
-      'tokyo-night': { light: 'tokyo-night-day', dark: 'tokyo-night-storm' },
-      kanagawa: { light: 'kanagawa-lotus', dark: 'kanagawa-wave' },
-      'black-metal': { light: 'black-metal-day', dark: 'black-metal' }
-    }
-    const targetId = preferred[family][effectiveMode]
-    setTheme({ id: targetId, family, mode: themeMode })
+    // Custom themes have their own picker section.
+    if (family === 'custom') return
+    // `resolveAuto` is the single source of truth for a family's default variant
+    // (it also carries the current variant across modes), so every built-in
+    // family resolves here automatically — no separate map to keep in sync.
+    setTheme({ id: resolveAuto(family, effectiveMode === 'dark', themeId), family, mode: themeMode })
   }
 
   const pickMode = (mode: ThemeMode): void => {
     if (mode === 'auto') {
       setTheme({ id: themeId, family: themeFamily, mode: 'auto' })
+      return
+    }
+    // A custom theme keeps its single id (`custom-<slug>`) and just changes the
+    // mode — clamped to what the theme supports (a dark-only theme ignores a
+    // "light" pick). Built-in families fall through to the variant logic below.
+    if (themeFamily === 'custom') {
+      const slug = customThemeSlugFromId(themeId)
+      const theme = slug ? customThemes.find((t) => t.slug === slug) : null
+      if (theme && customThemeSupportsMode(theme, mode)) {
+        setTheme({ id: `custom-${theme.slug}`, family: 'custom', mode })
+      }
       return
     }
     // Flip to the mode-equivalent variant in the same family. For
@@ -769,6 +808,163 @@ export function SettingsModal(): JSX.Element {
     // by `effectiveMode`.
     const nextMode: ThemeMode = themeMode === 'auto' ? 'auto' : t.mode
     setTheme({ id: t.id, family: t.family, mode: nextMode })
+  }
+
+  const pickCustomTheme = (theme: CustomTheme): void => {
+    if (theme.error) return
+    // A both-mode theme follows the global light/dark/auto toggle; a single-mode
+    // theme pins its one mode.
+    const mode: ThemeMode = theme.modes === 'both' ? themeMode : theme.modes
+    setTheme({ id: `custom-${theme.slug}`, family: 'custom', mode })
+  }
+
+  const revealThemesFolder = (): void => {
+    void window.zen.revealCustomThemesDir?.()
+  }
+
+  const revealCustomTheme = (theme: CustomTheme): void => {
+    void window.zen.revealCustomThemesDir?.(theme.slug)
+  }
+
+  const removeCustomTheme = async (theme: CustomTheme): Promise<void> => {
+    const ok = await confirmApp({
+      title: `Remove “${theme.name}”?`,
+      description: `This deletes the “${theme.slug}” folder from your themes folder. You can add it back any time.`,
+      confirmLabel: 'Remove',
+      danger: true
+    })
+    if (!ok) return
+    // If the theme being removed is the active one, step back to a built-in
+    // first so the UI doesn't fall through to the default theme mid-delete.
+    if (customThemeSlugFromId(themeId) === theme.slug) {
+      setTheme({
+        id: effectiveMode === 'dark' ? 'apple-dark' : 'apple-light',
+        family: 'apple',
+        mode: themeMode
+      })
+    }
+    await window.zen.deleteCustomTheme?.(theme.slug)
+    refreshCustomThemes()
+  }
+
+  const createTheme = async (): Promise<void> => {
+    const name = await promptApp({
+      title: 'New theme',
+      description: 'Creates a folder with a manifest.json and theme.css you can edit.',
+      placeholder: 'My Theme',
+      initialValue: 'My Theme',
+      okLabel: 'Create'
+    })
+    if (name === null) return
+    const slug = await window.zen.createCustomTheme?.({ name: name.trim() || 'My Theme' })
+    if (slug) {
+      refreshCustomThemes()
+      void window.zen.revealCustomThemesDir?.(slug)
+    }
+  }
+
+  // Keep the swatches showing the *active theme's* colors: re-read each token
+  // whenever the applied theme changes (data-theme / data-theme-mode flip on
+  // <html>), via an observer so it's robust to React effect ordering.
+  const [themeColors, setThemeColors] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined
+    const read = (): void => {
+      const next: Record<string, string> = {}
+      for (const t of TWEAKABLE_TOKENS) {
+        if ((t.kind ?? 'color') === 'color') next[t.token] = rgbVarToHex(t.token)
+      }
+      setThemeColors(next)
+    }
+    read()
+    const obs = new MutationObserver(read)
+    obs.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme', 'data-theme-mode']
+    })
+    return () => obs.disconnect()
+  }, [])
+
+  const copyTweaksCss = (): void => {
+    void navigator.clipboard?.writeText(buildTweaksCss(themeTweaks)).catch(() => {})
+  }
+
+  const renderTweak = (t: TweakableToken) => {
+    const tweaked = themeTweaks[t.slug] != null
+    const resetBtn = tweaked ? (
+      <button
+        type="button"
+        onClick={() => setThemeTweak(t.slug, null)}
+        title={`Reset ${t.label}`}
+        className="shrink-0 text-ink-400 transition-colors hover:text-ink-800"
+      >
+        ↺
+      </button>
+    ) : null
+
+    if (t.kind === 'preset') {
+      const current = themeTweaks[t.slug] ?? 'default'
+      return (
+        <div key={t.slug} className="flex items-center gap-3 text-xs text-ink-700">
+          <span className="w-32 shrink-0 truncate">{t.label}</span>
+          <div className="inline-flex rounded-xl border border-paper-300/70 bg-paper-100/75 p-1">
+            {(t.options ?? []).map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setThemeTweak(t.slug, opt.value === 'default' ? null : opt.value)}
+                className={[
+                  'rounded-lg px-3 py-1 text-xs transition-colors',
+                  current === opt.value
+                    ? 'bg-paper-50 text-ink-900 shadow-sm'
+                    : 'text-ink-600 hover:text-ink-900'
+                ].join(' ')}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <label key={t.slug} className="flex items-center gap-2 text-xs text-ink-700">
+        <input
+          type="color"
+          value={themeTweaks[t.slug] ?? themeColors[t.token] ?? '#000000'}
+          onInput={(e) => setThemeTweak(t.slug, (e.target as HTMLInputElement).value)}
+          aria-label={`${t.label} color`}
+          className="h-7 w-9 shrink-0 cursor-pointer rounded-md border border-paper-300/70 bg-transparent p-0"
+        />
+        <span className="flex-1 truncate">{t.label}</span>
+        {resetBtn}
+      </label>
+    )
+  }
+
+  const openDevTools = (): void => {
+    void window.zen.toggleDevTools?.()
+  }
+
+  const revealOverridesFolder = (): void => {
+    void window.zen.revealOverridesDir?.()
+  }
+
+  const revealOverride = (override: Override): void => {
+    void window.zen.revealOverridesDir?.(override.name)
+  }
+
+  const removeOverride = async (override: Override): Promise<void> => {
+    const ok = await confirmApp({
+      title: `Remove “${override.name}”?`,
+      description: `This deletes ${override.name} from your overrides folder. You can add it back any time.`,
+      confirmLabel: 'Remove',
+      danger: true
+    })
+    if (!ok) return
+    await window.zen.deleteOverride?.(override.name)
+    refreshOverrides()
   }
 
   const ref = useRef<HTMLDivElement | null>(null)
@@ -1003,6 +1199,273 @@ export function SettingsModal(): JSX.Element {
                   </div>
                 </div>
               )}
+
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="text-xs font-medium uppercase tracking-[0.18em] text-ink-500">
+                    Custom
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => void createTheme()}
+                      className="text-xs text-ink-500 transition-colors hover:text-ink-800"
+                    >
+                      New theme
+                    </button>
+                    <button
+                      onClick={revealThemesFolder}
+                      className="text-xs text-ink-500 transition-colors hover:text-ink-800"
+                    >
+                      Open themes folder
+                    </button>
+                  </div>
+                </div>
+                {customThemes.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-paper-300/70 px-3 py-3 text-xs leading-5 text-ink-500">
+                    Create a theme — or drop a folder with a{' '}
+                    <span className="font-mono text-ink-700">manifest.json</span> +{' '}
+                    <span className="font-mono text-ink-700">theme.css</span> into your themes
+                    folder. Start from the bundled <span className="text-ink-700">Soft Paper</span>{' '}
+                    example or its <span className="font-mono text-ink-700">README</span>.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2 xl:grid-cols-3">
+                    {customThemes.map((theme) => {
+                      const isActive =
+                        !theme.error && customThemeSlugFromId(themeId) === theme.slug
+                      const swatchLight = theme.preview?.light ?? '#d8d8dc'
+                      const swatchDark = theme.preview?.dark ?? '#3a3a3c'
+                      const left = theme.modes === 'dark' ? swatchDark : swatchLight
+                      const right = theme.modes === 'light' ? swatchLight : swatchDark
+                      return (
+                        <div key={theme.slug} className="group relative">
+                          {theme.error ? (
+                            <div
+                              className="rounded-xl border border-danger/40 bg-danger/5 px-3 py-2.5 pr-16 text-left"
+                              title={theme.error}
+                            >
+                              <div className="truncate text-sm text-ink-800">{theme.name}</div>
+                              <div className="mt-0.5 line-clamp-2 text-xs text-danger">
+                                {theme.error}
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => pickCustomTheme(theme)}
+                              className={[
+                                'flex w-full items-center gap-2.5 rounded-xl border px-3 py-2.5 pr-16 text-left text-sm transition-colors',
+                                isActive
+                                  ? 'border-accent/45 bg-accent/10 text-ink-900'
+                                  : 'border-paper-300/70 bg-paper-100/70 text-ink-700 hover:bg-paper-200/80'
+                              ].join(' ')}
+                            >
+                              <span className="relative flex h-6 w-6 shrink-0 overflow-hidden rounded-md border border-paper-300/70">
+                                <span className="flex-1" style={{ background: left }} />
+                                <span className="flex-1" style={{ background: right }} />
+                              </span>
+                              <span className="flex min-w-0 flex-1 flex-col">
+                                <span className="truncate">{theme.name}</span>
+                                {theme.author && (
+                                  <span className="truncate text-[11px] text-ink-400">
+                                    {theme.author}
+                                  </span>
+                                )}
+                              </span>
+                            </button>
+                          )}
+                          <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+                            <button
+                              type="button"
+                              onClick={() => revealCustomTheme(theme)}
+                              aria-label={`Reveal ${theme.name} in file manager`}
+                              title="Reveal file"
+                              className="flex h-6 w-6 items-center justify-center rounded-md text-ink-400 transition-colors hover:bg-paper-300/70 hover:text-ink-800 focus:opacity-100 focus:outline-none"
+                            >
+                              <ExternalIcon width={13} height={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void removeCustomTheme(theme)}
+                              aria-label={`Remove ${theme.name}`}
+                              title="Remove theme"
+                              className="flex h-6 w-6 items-center justify-center rounded-md text-ink-400 transition-colors hover:bg-paper-300/70 hover:text-danger focus:opacity-100 focus:outline-none"
+                            >
+                              <TrashIcon width={13} height={13} />
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="text-xs font-medium uppercase tracking-[0.18em] text-ink-500">
+                    Quick tweaks
+                  </div>
+                  {Object.keys(themeTweaks).length > 0 && (
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={copyTweaksCss}
+                        title="Copy these tweaks as CSS you can paste into an override"
+                        className="text-xs text-ink-500 transition-colors hover:text-ink-800"
+                      >
+                        Copy CSS
+                      </button>
+                      <button
+                        onClick={resetThemeTweaks}
+                        className="text-xs text-ink-500 transition-colors hover:text-ink-800"
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <p className="mb-2.5 text-xs leading-5 text-ink-500">
+                  Adjust the active theme — colors and a few layout options — with no CSS. These
+                  apply on top of whichever theme is selected; reset any one with ↺.
+                </p>
+                <div className="flex flex-col gap-2.5">
+                  {TWEAKABLE_TOKENS.filter((t) => t.group === 'accent').map(renderTweak)}
+                  <div className="mt-1 text-xs uppercase tracking-wide text-ink-400">
+                    Syntax &amp; diagnostic colors
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+                    {TWEAKABLE_TOKENS.filter((t) => t.group === 'syntax').map(renderTweak)}
+                  </div>
+                  <div className="mt-1 text-xs uppercase tracking-wide text-ink-400">Layout</div>
+                  <div className="flex flex-col gap-2.5">
+                    {TWEAKABLE_TOKENS.filter((t) => t.group === 'layout').map(renderTweak)}
+                  </div>
+                </div>
+                {/* Live preview — built from the same --z-* tokens, so it reflects the tweaks
+                    above instantly. Lets you see tab/row density, corner radius and accent
+                    without closing the modal to look at the app behind it. */}
+                <div className="mt-3 rounded-lg border border-paper-300/60 bg-paper-100/50 p-3">
+                  <div className="mb-2 text-xs uppercase tracking-wide text-ink-400">Preview</div>
+                  {/* mock tab strip — tracks tab density (height + padding) + corner radius */}
+                  <div className="flex items-stretch overflow-hidden rounded-md bg-paper-200 p-1">
+                    <div
+                      className="flex items-center rounded bg-paper-50 px-[var(--z-tab-pad-x)] text-xs text-ink-900 shadow-sm"
+                      style={{ height: 'var(--z-tab-height)' }}
+                    >
+                      Welcome.md
+                    </div>
+                    <div
+                      className="flex items-center px-[var(--z-tab-pad-x)] text-xs text-ink-500"
+                      style={{ height: 'var(--z-tab-height)' }}
+                    >
+                      Ideas.md
+                    </div>
+                  </div>
+                  {/* mock note rows — track row density (height) + corner radius + accent */}
+                  <div className="mt-2 flex flex-col gap-0.5">
+                    {['Roadmap', 'Meeting notes'].map((label, i) => (
+                      <div
+                        key={label}
+                        className={`flex items-center gap-2 rounded-md px-2 text-xs ${
+                          i === 0 ? 'bg-paper-200 text-ink-900' : 'text-ink-500'
+                        }`}
+                        style={{ height: 'var(--z-sidebar-row-h)' }}
+                      >
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent/70" />
+                        {label}
+                      </div>
+                    ))}
+                  </div>
+                  {/* button + accent selection — track corner radius + accent color */}
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="rounded-md bg-ink-900 px-3 py-1 text-xs font-medium text-paper-50">
+                      Button
+                    </span>
+                    <span className="rounded-md border border-accent/45 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent">
+                      Selected
+                    </span>
+                    <span className="text-xs font-medium text-accent">link</span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="text-xs font-medium uppercase tracking-[0.18em] text-ink-500">
+                    Overrides
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {appInfo.runtime === 'desktop' && (
+                      <button
+                        onClick={openDevTools}
+                        title="Inspect elements to find --z-* tokens and class names"
+                        className="text-xs text-ink-500 transition-colors hover:text-ink-800"
+                      >
+                        Developer tools
+                      </button>
+                    )}
+                    <button
+                      onClick={revealOverridesFolder}
+                      className="text-xs text-ink-500 transition-colors hover:text-ink-800"
+                    >
+                      Open overrides folder
+                    </button>
+                  </div>
+                </div>
+                {overrides.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-paper-300/70 px-3 py-3 text-xs leading-5 text-ink-500">
+                    Drop a <span className="font-mono text-ink-700">.css</span> file into your
+                    overrides folder to tweak any theme, then toggle it on here. Overrides layer on top
+                    of whichever theme is active.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-1.5">
+                    {overrides.map((override) => (
+                      <div
+                        key={override.name}
+                        className="group relative flex items-center rounded-xl border border-paper-300/70 bg-paper-100/70 px-3 py-2 pr-16"
+                      >
+                        <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
+                          <input
+                            type="checkbox"
+                            checked={isOverrideEnabled(enabledOverrides, override.name)}
+                            disabled={!!override.error}
+                            onChange={(e) => setOverrideEnabled(override.name, e.target.checked)}
+                            className="h-4 w-4 shrink-0 accent-accent"
+                          />
+                          <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-700">
+                            {override.name}
+                          </span>
+                          {override.error && (
+                            <span className="shrink-0 text-xs text-danger" title={override.error}>
+                              error
+                            </span>
+                          )}
+                        </label>
+                        <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+                          <button
+                            type="button"
+                            onClick={() => revealOverride(override)}
+                            aria-label={`Reveal ${override.name} in file manager`}
+                            title="Reveal file"
+                            className="flex h-6 w-6 items-center justify-center rounded-md text-ink-400 transition-colors hover:bg-paper-300/70 hover:text-ink-800 focus:opacity-100 focus:outline-none"
+                          >
+                            <ExternalIcon width={13} height={13} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void removeOverride(override)}
+                            aria-label={`Remove ${override.name}`}
+                            title="Remove override"
+                            className="flex h-6 w-6 items-center justify-center rounded-md text-ink-400 transition-colors hover:bg-paper-300/70 hover:text-danger focus:opacity-100 focus:outline-none"
+                          >
+                            <TrashIcon width={13} height={13} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </Section>
 
@@ -1023,6 +1486,19 @@ export function SettingsModal(): JSX.Element {
               value={showSidebarChevrons}
               settingId="sidebar-arrows"
               onChange={setShowSidebarChevrons}
+            />
+          </Section>
+
+          <Section
+            title="PDF export"
+            description="How notes look when you export them to PDF."
+          >
+            <ToggleRow
+              label="Use theme for PDF export"
+              description="On: exported PDFs use your current theme — colors and dark/light, including custom themes. Off: a clean light theme, best for printing on paper."
+              value={pdfExportUseTheme}
+              settingId="pdf-export-use-theme"
+              onChange={setPdfExportUseTheme}
             />
           </Section>
         </div>
@@ -1098,10 +1574,10 @@ export function SettingsModal(): JSX.Element {
           keywords: ['table', 'tables', 'wysiwyg', 'grid', 'vim', 'plain text', 'source']
         },
         {
-          id: 'markdown-snippets',
+          id: 'markdown-overrides',
           title: 'Markdown snippets',
           description: 'Auto-close markdown delimiters as you type (** then Space, ``` then Enter).',
-          keywords: ['snippets', 'auto close', 'autoclose', 'auto-pair', 'brackets', 'markdown', 'completion']
+          keywords: ['overrides', 'auto close', 'autoclose', 'auto-pair', 'brackets', 'markdown', 'completion']
         },
         {
           id: 'note-tabs',
@@ -1356,7 +1832,7 @@ export function SettingsModal(): JSX.Element {
           searchIds: [
             'live-preview',
             'render-tables',
-            'markdown-snippets',
+            'markdown-overrides',
             'note-tabs',
             'wrap-note-tabs',
             'word-wrap',
@@ -1398,7 +1874,7 @@ export function SettingsModal(): JSX.Element {
               label="Markdown snippets"
               description="Auto-close markdown as you type: ** / __ / ~~ / ` / == / [[ / %% then Space wrap the cursor, and ``` / ~~~ / $$ then Enter expand a fenced block. In Vim mode this only applies in insert mode."
               value={markdownSnippets}
-              settingId="markdown-snippets"
+              settingId="markdown-overrides"
               onChange={setMarkdownSnippets}
             />
             <ToggleRow
@@ -1833,6 +2309,12 @@ export function SettingsModal(): JSX.Element {
           keywords: ['primary notes', 'inbox', 'vault root']
         },
         {
+          id: 'view-settings-scope',
+          title: 'View settings',
+          description: 'Apply note-list & view preferences (sort, grouping, the Tasks view) the same everywhere, or independently per vault.',
+          keywords: ['view', 'per vault', 'global', 'sort', 'group', 'scope', 'tasks view']
+        },
+        {
           id: 'enable-daily-notes',
           title: 'Enable daily notes',
           description: 'Adds a dedicated daily-notes workflow without changing ordinary note creation.',
@@ -2172,6 +2654,22 @@ export function SettingsModal(): JSX.Element {
                   primaryNotesLocation
                 })
               }
+            />
+          </Section>
+          <Section
+            title="View settings"
+            description="Whether note-list & view preferences are shared across all vaults or kept per vault."
+          >
+            <SegmentedRow
+              label="Apply view settings"
+              description="`Global` uses one set of view preferences (sort order, grouping, the Tasks view, kanban columns, …) everywhere. `Per vault` lets each vault keep its own, saved in its `.zennotes/`."
+              value={viewSettingsScope}
+              settingId="view-settings-scope"
+              options={[
+                { value: 'global', label: 'Global' },
+                { value: 'vault', label: 'Per vault' }
+              ]}
+              onChange={(next) => setViewSettingsScope(next as 'global' | 'vault')}
             />
           </Section>
 
@@ -3314,6 +3812,7 @@ function KeymapSettings({
                 {group.items.map((definition) => {
                   const current = getKeymapBinding(overrides, definition.id)
                   const custom = !!overrides[definition.id]
+                  const conflict = findKeymapConflict(overrides, definition.id, current)
                   const inactive =
                     (definition.vimOnly && !vimMode) ||
                     (definition.nonVimOnly && vimMode)
@@ -3335,6 +3834,14 @@ function KeymapSettings({
                           {custom && (
                             <span className="rounded-full border border-accent/25 bg-accent/10 px-2 py-0.5 text-2xs font-medium uppercase tracking-[0.14em] text-accent">
                               Custom
+                            </span>
+                          )}
+                          {conflict && (
+                            <span
+                              className="rounded-full border border-danger/35 bg-danger/10 px-2 py-0.5 text-2xs font-medium uppercase tracking-[0.14em] text-danger"
+                              title={`Also bound to “${conflict.title}”. Two global shortcuts on one key means one is ignored — reassign one to resolve.`}
+                            >
+                              Conflicts with {conflict.title}
                             </span>
                           )}
                         </div>
@@ -3382,6 +3889,7 @@ function KeymapSettings({
       {recording && (
         <KeymapRecorderModal
           definition={recording}
+          overrides={overrides}
           currentBinding={getKeymapBinding(overrides, recording.id)}
           onClose={() => setRecording(null)}
           onSave={(binding) => {
@@ -3396,17 +3904,21 @@ function KeymapSettings({
 
 function KeymapRecorderModal({
   definition,
+  overrides,
   currentBinding,
   onClose,
   onSave
 }: {
   definition: KeymapDefinition
+  overrides: KeymapOverrides
   currentBinding: string
   onClose: () => void
   onSave: (binding: string) => void
 }): JSX.Element {
   const [binding, setBinding] = useState(currentBinding)
   const mac = isMacPlatform()
+  // Block saving a global shortcut that another action already owns (#298).
+  const conflict = binding ? findKeymapConflict(overrides, definition.id, binding) : null
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -3478,6 +3990,15 @@ function KeymapRecorderModal({
                 : `Press the sequence you want. Backspace removes the last token, and multi-step sequences stop at ${definition.maxTokens ?? 2} key${(definition.maxTokens ?? 2) === 1 ? '' : 's'}.`}
             </div>
           </div>
+          {conflict && (
+            <div className="mt-3 flex items-start gap-2 rounded-xl border border-danger/35 bg-danger/10 px-3 py-2.5 text-xs leading-5 text-danger">
+              <span aria-hidden>⚠</span>
+              <span>
+                Already used by <strong className="font-semibold">{conflict.title}</strong>.
+                Two global shortcuts can’t share a key — reset or reassign that one first.
+              </span>
+            </div>
+          )}
           <div className="mt-3 text-xs text-ink-500">
             Current: {formatKeymapBinding(currentBinding, definition.kind)}
           </div>
@@ -3504,7 +4025,7 @@ function KeymapRecorderModal({
             <Button
               variant="primary"
               size="sm"
-              disabled={binding === currentBinding}
+              disabled={binding === currentBinding || !!conflict}
               onClick={() => onSave(binding)}
             >
               Save
@@ -4008,6 +4529,106 @@ function TemplateSelectRow({
   // A configured template that no longer exists (deleted) shows as missing so
   // the user can pick a replacement; daily/weekly creation falls back to blank.
   const missing = !!value && !templates.some((t) => t.id === value)
+  const selected = templates.find((t) => t.id === value)
+  const triggerLabel = missing
+    ? '[Missing template]'
+    : selected
+      ? `${selected.category} — ${selected.name}`
+      : 'None (blank note)'
+
+  // Custom dropdown (not a native <select>): native popups don't reliably
+  // commit a click on Electron/Linux, so picking a template silently failed
+  // there (#275). This mirrors the rest of Settings (e.g. the font picker).
+  const [open, setOpen] = useState(false)
+  const [activeIdx, setActiveIdx] = useState(0)
+  const buttonRef = useRef<HTMLButtonElement | null>(null)
+  const listRef = useRef<HTMLDivElement | null>(null)
+  const [rect, setRect] = useState<{ left: number; top: number; width: number } | null>(null)
+
+  // Row 0 is "None (blank note)" (null), then each template in order.
+  const items = useMemo<Array<NoteTemplate | null>>(() => [null, ...templates], [templates])
+
+  // Highlight the current selection when the menu opens.
+  useEffect(() => {
+    if (!open) return
+    const current = value ? items.findIndex((t) => t?.id === value) : 0
+    setActiveIdx(current >= 0 ? current : 0)
+  }, [open, items, value])
+
+  // Close on an outside click.
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent): void => {
+      const target = e.target as Node
+      if (buttonRef.current?.contains(target)) return
+      if (document.getElementById('zen-template-portal')?.contains(target)) return
+      setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  // Position the popover below the trigger; track scroll/resize.
+  useLayoutEffect(() => {
+    if (!open) return
+    const update = (): void => {
+      const el = buttonRef.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      setRect({ left: r.left, top: r.bottom + 4, width: Math.max(260, r.width) })
+    }
+    update()
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+    }
+  }, [open])
+
+  // Keep the keyboard-highlighted row in view.
+  useEffect(() => {
+    if (!open || !listRef.current) return
+    listRef.current
+      .querySelector<HTMLElement>(`[data-idx="${activeIdx}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [activeIdx, open])
+
+  const commit = (templateId: string | undefined): void => {
+    onChange(templateId)
+    setOpen(false)
+    buttonRef.current?.focus()
+  }
+
+  const onTriggerKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>): void => {
+    if (!open) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        setOpen(true)
+      }
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveIdx((i) => Math.min(items.length - 1, i + 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveIdx((i) => Math.max(0, i - 1))
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      commit(items[activeIdx]?.id)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setOpen(false)
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      setActiveIdx(0)
+    } else if (e.key === 'End') {
+      e.preventDefault()
+      setActiveIdx(items.length - 1)
+    }
+  }
+
   return (
     <div
       className="flex items-center justify-between gap-5 px-5 py-4"
@@ -4017,23 +4638,71 @@ function TemplateSelectRow({
         <div className="text-sm font-medium text-ink-900">{label}</div>
         {description && <div className="mt-1 text-xs leading-5 text-ink-500">{description}</div>}
       </div>
-      <select
-        value={missing ? '__missing__' : value ?? ''}
-        onChange={(e) => onChange(e.target.value ? e.target.value : undefined)}
-        className="w-[23rem] max-w-[50vw] rounded-xl border border-paper-300/70 bg-paper-100/80 px-3 py-2 text-sm text-ink-900 outline-none focus:border-accent/45"
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={onTriggerKeyDown}
+        className="flex w-[23rem] max-w-[50vw] shrink-0 items-center justify-between gap-2 rounded-xl border border-paper-300/70 bg-paper-100/80 px-3 py-2 text-left text-sm text-ink-900 outline-none transition-colors hover:bg-paper-200 focus:border-accent/45"
       >
-        <option value="">None (blank note)</option>
-        {missing && (
-          <option value="__missing__" disabled>
-            [Missing template]
-          </option>
+        <span className={`truncate ${missing ? 'text-ink-500' : ''}`}>{triggerLabel}</span>
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="shrink-0 text-ink-500"
+          aria-hidden="true"
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+
+      {open &&
+        rect &&
+        createPortal(
+          <div
+            id="zen-template-portal"
+            role="listbox"
+            className="fixed z-popover flex max-h-[320px] flex-col overflow-hidden rounded-xl border border-paper-300 bg-paper-100 shadow-float"
+            style={{ left: rect.left, top: rect.top, width: rect.width }}
+          >
+            <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-1">
+              {items.map((tpl, idx) => {
+                const isSelected = tpl ? tpl.id === value : !value && !missing
+                const text = tpl ? `${tpl.category} — ${tpl.name}` : 'None (blank note)'
+                return (
+                  <button
+                    key={tpl?.id ?? '__none__'}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    data-idx={idx}
+                    onClick={() => commit(tpl?.id)}
+                    onMouseMove={() => setActiveIdx(idx)}
+                    className={[
+                      'flex w-full items-center px-3 py-1.5 text-left text-sm',
+                      activeIdx === idx
+                        ? 'bg-paper-200 text-ink-900'
+                        : isSelected
+                          ? 'text-ink-900'
+                          : 'text-ink-700'
+                    ].join(' ')}
+                  >
+                    <span className="truncate">{text}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>,
+          document.body
         )}
-        {templates.map((template) => (
-          <option key={template.id} value={template.id}>
-            {template.category} — {template.name}
-          </option>
-        ))}
-      </select>
     </div>
   )
 }

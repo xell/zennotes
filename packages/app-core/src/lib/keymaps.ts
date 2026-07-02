@@ -31,6 +31,7 @@ export type KeymapId =
   | "global.modeDiff"
   | "global.toggleZenMode"
   | "global.closeActiveTab"
+  | "global.reopenClosedTab"
   | "global.toggleWordWrap"
   | "global.exportNotePdf"
   | "global.zoomIn"
@@ -318,6 +319,15 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Close active tab",
     description: "Close the current note or virtual tab.",
     defaultBinding: "Mod+W",
+  },
+  {
+    id: "global.reopenClosedTab",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Reopen closed tab",
+    description: "Reopen the most recently closed tab.",
+    defaultBinding: "Shift+Mod+T",
   },
   {
     id: "global.toggleWordWrap",
@@ -1370,6 +1380,33 @@ export function normalizeKeymapBinding(
     }
   }
   return normalized;
+}
+
+/**
+ * Global shortcuts share one always-active namespace, so two actions bound to
+ * the same combination silently shadow each other (#298). Return the OTHER
+ * global-shortcut definition that `binding` would collide with under the given
+ * overrides, or null when there's no conflict.
+ *
+ * Only `app`-scope shortcuts are checked: the sequence-based groups (vim / nav /
+ * view) reuse keys by design — disambiguated at runtime by the focused surface
+ * (e.g. `x` deletes in Trash but toggles a task in Tasks) — so a shared key
+ * there is not a conflict and the shipped defaults must not be flagged.
+ */
+export function findKeymapConflict(
+  overrides: KeymapOverrides | null | undefined,
+  id: KeymapId,
+  binding: string,
+): KeymapDefinition | null {
+  const definition = getKeymapDefinition(id);
+  if (definition.scope !== "app") return null;
+  const normalized = normalizeKeymapBinding(id, binding);
+  if (!normalized) return null;
+  for (const other of KEYMAP_DEFINITIONS) {
+    if (other.id === id || other.scope !== "app") continue;
+    if (getKeymapBinding(overrides, other.id) === normalized) return other;
+  }
+  return null;
 }
 
 export function normalizeKeymapOverrides(input: unknown): KeymapOverrides {

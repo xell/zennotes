@@ -1,6 +1,14 @@
 import { lazy, Suspense, useEffect, useMemo, useRef } from 'react'
-import { useStore, initConfigSync } from './store'
-import { resolveAuto } from './lib/themes'
+import { useStore, initConfigSync, initCustomThemes, initOverrides } from './store'
+import { resolveAuto, findTheme } from './lib/themes'
+import {
+  injectActiveTheme,
+  injectOverrides,
+  injectTweaks,
+  isCustomThemeId,
+  customThemeSlugFromId,
+  resolveCustomThemeMode
+} from './lib/custom-themes'
 import { Sidebar } from './components/Sidebar'
 import { NoteList } from './components/NoteList'
 import { TitleBar } from './components/TitleBar'
@@ -8,7 +16,7 @@ import { PromptHost } from './components/PromptHost'
 import { ConfirmHost } from './components/ConfirmHost'
 import { ServerDirectoryPickerHost } from './components/ServerDirectoryPickerHost'
 import { resolveQuickNoteTitle } from './lib/quick-note-title'
-import { matchesShortcut, matchesSequenceToken } from './lib/keymaps'
+import { isMacPlatform, matchesShortcut, matchesSequenceToken } from './lib/keymaps'
 import { focusPaneOrEdgePanel } from './lib/pane-nav'
 import { requestPaneMode } from './lib/pane-mode'
 import { recordRendererPerf } from './lib/perf'
@@ -265,6 +273,10 @@ function App(): JSX.Element {
   const themeId = useStore((s) => s.themeId)
   const themeFamily = useStore((s) => s.themeFamily)
   const themeMode = useStore((s) => s.themeMode)
+  const customThemes = useStore((s) => s.customThemes)
+  const overrides = useStore((s) => s.overrides)
+  const enabledOverrides = useStore((s) => s.enabledOverrides)
+  const themeTweaks = useStore((s) => s.themeTweaks)
   const editorFontSize = useStore((s) => s.editorFontSize)
   const editorZoomDelta = useStore((s) => s.editorZoomDelta)
   const editorLineHeight = useStore((s) => s.editorLineHeight)
@@ -333,6 +345,8 @@ function App(): JSX.Element {
   // edits (synced dotfile / hand-edit). Desktop-only; a no-op on web.
   useEffect(() => {
     initConfigSync()
+    initCustomThemes()
+    initOverrides()
   }, [])
 
   // Drag a markdown file from the OS onto the window to open it. Desktop
@@ -407,18 +421,27 @@ function App(): JSX.Element {
     return () => window.removeEventListener('beforeunload', flush)
   }, [flushDirtyNotes])
 
-  // Apply theme: set html[data-theme=...] based on mode/family/id.
-  // When mode === 'auto', we mirror `prefers-color-scheme` and also
-  // react to changes while the app is running.
+  // Apply theme: set html[data-theme=...] + html[data-theme-mode=...] based on
+  // mode/family/id. Custom themes keep one id (`custom-<slug>`) and express
+  // light/dark via `data-theme-mode`; built-ins encode mode in their id but we
+  // mirror it onto `data-theme-mode` too so overrides/custom CSS can rely on it
+  // universally. When mode === 'auto' we mirror `prefers-color-scheme` live.
   useEffect(() => {
     const html = document.documentElement
     const mql = window.matchMedia('(prefers-color-scheme: dark)')
     const apply = (): void => {
-      let id = themeId
-      if (themeMode === 'auto') {
-        id = resolveAuto(themeFamily, mql.matches, themeId)
+      const prefersDark = mql.matches
+      if (isCustomThemeId(themeId)) {
+        const slug = customThemeSlugFromId(themeId)
+        const theme = customThemes.find((t) => t.slug === slug)
+        const wantDark = themeMode === 'auto' ? prefersDark : themeMode === 'dark'
+        html.dataset.theme = themeId
+        html.dataset.themeMode = resolveCustomThemeMode(theme, wantDark)
+      } else {
+        const id = themeMode === 'auto' ? resolveAuto(themeFamily, prefersDark, themeId) : themeId
+        html.dataset.theme = id
+        html.dataset.themeMode = findTheme(id).mode
       }
-      html.dataset.theme = id
     }
     apply()
     if (themeMode === 'auto') {
@@ -426,7 +449,23 @@ function App(): JSX.Element {
       return () => mql.removeEventListener('change', apply)
     }
     return undefined
-  }, [themeId, themeFamily, themeMode])
+  }, [themeId, themeFamily, themeMode, customThemes])
+
+  // Inject the active custom theme's raw CSS (built-ins clear it). Reacts to
+  // theme switches and to live edits arriving via the file watcher.
+  useEffect(() => {
+    injectActiveTheme(themeId, customThemes)
+  }, [themeId, customThemes])
+
+  // Inject enabled CSS overrides on top of the active theme.
+  useEffect(() => {
+    injectOverrides(overrides, enabledOverrides)
+  }, [overrides, enabledOverrides])
+
+  // Inject the visual color tweaks (the picker UI) as the topmost layer.
+  useEffect(() => {
+    injectTweaks(themeTweaks)
+  }, [themeTweaks])
 
   // Apply editor font size + line height + all three font families as
   // CSS variables. Each family has its own fallback stack so leaving it
@@ -562,13 +601,24 @@ function App(): JSX.Element {
         state.setEditorZoomDelta(0)
         return
       }
-      if (matchesShortcut(e, overrides, 'global.historyBack')) {
+      // On macOS ⌥←/→ moves by word inside text fields; don't let note-history
+      // nav hijack it while editing — that broke word-motion in insert mode
+      // (#302). History nav still works outside text fields, on other platforms,
+      // and via Vim's Ctrl+O / Ctrl+I.
+      const isMacWordMotion =
+        isMacPlatform() &&
+        e.altKey &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        (e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+        isEditableShortcutTarget(e.target)
+      if (!isMacWordMotion && matchesShortcut(e, overrides, 'global.historyBack')) {
         // Back in note navigation history (works in any mode).
         e.preventDefault()
         void state.jumpToPreviousNote()
         return
       }
-      if (matchesShortcut(e, overrides, 'global.historyForward')) {
+      if (!isMacWordMotion && matchesShortcut(e, overrides, 'global.historyForward')) {
         e.preventDefault()
         void state.jumpToNextNote()
         return
@@ -614,6 +664,11 @@ function App(): JSX.Element {
           // (macOS) / Ctrl+W behavior even with vim mode on (#192).
           window.zen.windowClose()
         }
+        return
+      }
+      if (matchesShortcut(e, overrides, 'global.reopenClosedTab')) {
+        e.preventDefault()
+        void state.reopenLastClosedTab()
         return
       }
       if (e.key === 'Escape' && state.searchOpen) {

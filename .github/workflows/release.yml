@@ -44,8 +44,13 @@ jobs:
           - name: Windows
             os: windows-latest
             command: npm run dist:win
-          - name: Linux
+          - name: Linux x64
             os: ubuntu-latest
+            command: npm run dist:linux
+          - name: Linux arm64
+            # GitHub's free arm64 Linux runner for public repos. This should 
+            # produce native aarch64 artifacts with no cross-compilation.
+            os: ubuntu-24.04-arm
             command: npm run dist:linux
     env:
       NODE_OPTIONS: "--max-old-space-size=12288"
@@ -85,9 +90,10 @@ jobs:
           done
 
       - name: Install Linux packaging tools
-        if: matrix.name == 'Linux'
+        if: startsWith(matrix.name, 'Linux')
         # `bsdtar` (libarchive-tools) is required by electron-builder's pacman
-        # target to generate the package .MTREE; it isn't on ubuntu-latest.
+        # target to generate the package .MTREE; it isn't on the GitHub Ubuntu
+        # runners (x64 or arm64).
         run: sudo apt-get update && sudo apt-get install -y libarchive-tools
 
       - name: Build release artifacts

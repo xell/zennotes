@@ -71,6 +71,31 @@ describe('rootContentHiddenByInboxMode (#195)', () => {
   })
 })
 
+describe('daily-notes task settings round-trip (#288)', () => {
+  it('persists tasksDueOnNoteDate + rolloverUnfinishedTasks through set/get', async () => {
+    const root = await makeTempDir('zennotes-vault-dailytasks-')
+    await mkdir(root, { recursive: true })
+    const base = await getVaultSettings(root)
+    // Flip both away from their defaults (true / false). Before the fix the
+    // main process dropped these fields on save, so they snapped back.
+    await setVaultSettings(root, {
+      ...base,
+      dailyNotes: { ...base.dailyNotes, tasksDueOnNoteDate: false, rolloverUnfinishedTasks: true }
+    })
+    const saved = await getVaultSettings(root)
+    expect(saved.dailyNotes.tasksDueOnNoteDate).toBe(false)
+    expect(saved.dailyNotes.rolloverUnfinishedTasks).toBe(true)
+  })
+
+  it('defaults tasksDueOnNoteDate=true, rolloverUnfinishedTasks=false when unset', async () => {
+    const root = await makeTempDir('zennotes-vault-dailydefaults-')
+    await mkdir(root, { recursive: true })
+    const settings = await getVaultSettings(root)
+    expect(settings.dailyNotes.tasksDueOnNoteDate).toBe(true)
+    expect(settings.dailyNotes.rolloverUnfinishedTasks).toBe(false)
+  })
+})
+
 describe('absolutePath', () => {
   it('rejects sibling-prefix escapes outside the vault root', async () => {
     const parent = await makeTempDir('zennotes-vault-parent-')
@@ -457,6 +482,22 @@ describe('searchVaultText', () => {
 })
 
 describe('listNotes metadata parsing', () => {
+  it('does not index #tags inside a fenced code block nested under a list item (#293)', async () => {
+    const root = await makeTempDir('zennotes-meta-fence-')
+    await ensureVaultLayout(root)
+    const rel = 'inbox/code.md'
+    await writeFile(
+      path.join(root, rel),
+      '# Notes\n\n- a list item with a code block:\n\n  ```c\n  #include <stdio.h>\n  ```\n\n#realtag\n',
+      'utf8'
+    )
+
+    const notes = await listNotes(root)
+    const note = notes.find((n) => n.path === rel)
+    // `#include` lives inside the indented fence → not a tag; `#realtag` is.
+    expect(note?.tags).toEqual(['realtag'])
+  })
+
   it('detects only local asset references as attachments', async () => {
     const root = await makeTempDir('zennotes-meta-assets-')
     await ensureVaultLayout(root)
@@ -761,5 +802,28 @@ describe('archive / trash round-trips', () => {
     const restored = await unarchiveNote(root, archived.path)
     expect(restored.path).toBe('projects/Plan.md')
     await expect(readFile(path.join(root, 'projects', 'Plan.md'), 'utf8')).resolves.toBe('# Plan\n')
+  })
+})
+
+describe('per-vault view settings round-trip (#292)', () => {
+  it('persists the view block and drops unknown keys through set/get', async () => {
+    const root = await makeTempDir('zennotes-vault-view-')
+    await ensureVaultLayout(root)
+    const base = await getVaultSettings(root)
+    await setVaultSettings(root, {
+      ...base,
+      view: { noteSortOrder: 'name-asc', groupByKind: false, tasksViewMode: 'kanban', bogus: 'x' }
+    } as Awaited<ReturnType<typeof getVaultSettings>>)
+    const saved = await getVaultSettings(root)
+    expect(saved.view?.noteSortOrder).toBe('name-asc')
+    expect(saved.view?.groupByKind).toBe(false)
+    expect(saved.view?.tasksViewMode).toBe('kanban')
+    expect((saved.view as Record<string, unknown> | undefined)?.bogus).toBeUndefined()
+  })
+
+  it('omits the view block when there are no overrides', async () => {
+    const root = await makeTempDir('zennotes-vault-noview-')
+    await ensureVaultLayout(root)
+    expect((await getVaultSettings(root)).view).toBeUndefined()
   })
 })

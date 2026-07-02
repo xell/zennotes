@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import {
+  extractWikilinkTargets,
+  isSameFileHeadingLink,
   parseCreateNotePath,
   resolveWikilinkTarget,
   stripWikilinkAnchor,
   suggestCreateNotePath,
   wikilinkHeadingAnchor
 } from './wikilinks'
+
+describe('extractWikilinkTargets — code fences are not scanned (#293)', () => {
+  it('ignores [[links]] inside a fence indented under a list item', () => {
+    const body = '- item:\n\n  ```\n  see [[Secret Note]] here\n  ```\n\n[[Real Link]]'
+    expect(extractWikilinkTargets(body)).toEqual(['Real Link'])
+  })
+})
 
 const notes = [
   { path: 'inbox/My Document.md', title: 'My Document', folder: 'inbox' as const },
@@ -38,6 +47,24 @@ describe('wikilinkHeadingAnchor (#196)', () => {
   it('is null without a heading anchor', () => {
     expect(wikilinkHeadingAnchor('My Document')).toBeNull()
     expect(wikilinkHeadingAnchor('My Document^block')).toBeNull()
+  })
+})
+
+describe('isSameFileHeadingLink (#291)', () => {
+  it('is true for a heading link with no note part', () => {
+    expect(isSameFileHeadingLink('#My Heading')).toBe(true)
+    expect(isSameFileHeadingLink('#heading')).toBe(true)
+  })
+
+  it('is false when a note part is present', () => {
+    expect(isSameFileHeadingLink('Doc#My Heading')).toBe(false)
+    expect(isSameFileHeadingLink('projects/Spec#design')).toBe(false)
+  })
+
+  it('is false without a heading anchor (plain note, empty, or block ref)', () => {
+    expect(isSameFileHeadingLink('Doc')).toBe(false)
+    expect(isSameFileHeadingLink('#')).toBe(false)
+    expect(isSameFileHeadingLink('^block')).toBe(false)
   })
 })
 

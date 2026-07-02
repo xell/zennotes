@@ -27,6 +27,7 @@ import { extractTags } from "../lib/tags";
 import type { AssetMeta, FolderColorId, FolderEntry, FolderIconId, NoteFolder, NoteMeta } from "@shared/ipc";
 import type { NoteSortOrder } from "../store";
 import { isArchiveTabPath } from "@shared/archive";
+import { DENSITY, densityFromTweaks } from "@shared/overrides";
 import { isTrashTabPath } from "@shared/trash";
 import { isQuickNotesTabPath } from "@shared/quick-notes";
 import {
@@ -3585,9 +3586,10 @@ export function Sidebar(): JSX.Element {
             />
           )}
 
-          {/* Tags flow with the content, right after the notes tree. */}
+          {/* Tags pinned to the bottom of the tree, directly above System
+              (mt-auto absorbs the free space above them). */}
           {tags.length > 0 && (
-            <div className="pt-4">
+            <div className="mt-auto pt-4">
               <button
                 type="button"
                 onClick={() => setTagsCollapsed(!tagsCollapsed)}
@@ -3655,8 +3657,9 @@ export function Sidebar(): JSX.Element {
             </div>
             )}
 
-          {/* System (Archive / Trash / Assets) pinned to the bottom. */}
-          <div className="mt-auto pt-4">
+          {/* System (Archive / Trash / Assets) sits just below Tags. When there
+              are no tags above it, it carries the bottom-anchoring itself. */}
+          <div className={tags.length > 0 ? "pt-4" : "mt-auto pt-4"}>
             <SidebarSectionHeading label="System" />
               <SystemRow
                 icon={resolveFolderIconOption("archive", "", vaultSettings.folderIcons).icon}
@@ -3893,8 +3896,8 @@ function treeRenderEntryPath(entry: TreeRenderEntry): string | null {
 // placeholder of the SAME height that still carries the exact data-* attributes
 // the keyboard-nav / range-select / cursor machinery reads from the DOM. Because
 // every row stays in the DOM (just cheap when off-screen) none of that logic
-// changes — only the rendering cost does. Leaf rows are a fixed 36px (`h-9`).
-const SIDEBAR_LEAF_ROW_HEIGHT = 36;
+// changes — only the rendering cost does. Leaf rows track the Density tweak
+// (default 36px = h-9); the windowed list reads the matching DENSITY number.
 const SIDEBAR_WINDOW_OVERSCAN = 10;
 // Provides the scroll container so a windowed list can read scrollTop/height
 // and react to scroll without re-rendering the whole sidebar.
@@ -3925,7 +3928,7 @@ const SidebarLeafPlaceholder = memo(function SidebarLeafPlaceholder({
   // a cheap leaf even at thousands of rows.
   return (
     <div
-      className="h-9 w-full shrink-0"
+      className="h-[var(--z-sidebar-row-h)] w-full shrink-0"
       data-sidebar-idx={sidebarIdx}
       data-sidebar-type={type}
       data-sidebar-path={path}
@@ -3980,6 +3983,10 @@ function WindowedLeafEntries({
 }: WindowedLeafEntriesProps): JSX.Element {
   const scrollerRef = useContext(SidebarScrollerContext);
   const total = entries.length;
+  // One subscription per windowed list (never per-row): the leaf row height
+  // tracks the Density tweak and feeds the virtualizer's itemSize, so the
+  // windowing math matches the CSS-var-driven heights that get painted.
+  const sidebarRowH = useStore((s) => DENSITY[densityFromTweaks(s.themeTweaks)].sidebarRow);
   const [range, setRange] = useState<{ start: number; end: number }>(() => ({
     start: 0,
     end: Math.min(total, 80),
@@ -3999,7 +4006,7 @@ function WindowedLeafEntries({
     const listTop = firstRect.top - scrollerRect.top + scroller.scrollTop;
     const next = getVirtualRange({
       itemCount: total,
-      itemSize: SIDEBAR_LEAF_ROW_HEIGHT,
+      itemSize: sidebarRowH,
       scrollTop: scroller.scrollTop - listTop,
       viewportHeight: scroller.clientHeight,
       overscan: SIDEBAR_WINDOW_OVERSCAN,
@@ -4007,7 +4014,7 @@ function WindowedLeafEntries({
     setRange((prev) =>
       prev.start === next.start && prev.end === next.end ? prev : { start: next.start, end: next.end },
     );
-  }, [scrollerRef, baseIdx, total]);
+  }, [scrollerRef, baseIdx, total, sidebarRowH]);
 
   useLayoutEffect(() => {
     recompute();
@@ -5279,7 +5286,7 @@ const NoteLeaf = memo(function NoteLeaf({
       draggable
       onDragStart={handleDragStart}
       className={[
-        "group relative flex h-9 w-full items-center gap-1.5 rounded-lg px-1 text-left text-sm outline-none transition-colors focus:outline-none",
+        "group relative flex h-[var(--z-sidebar-row-h)] w-full items-center gap-1.5 rounded-lg px-1 text-left text-sm outline-none transition-colors focus:outline-none",
         active
           ? colorClass
             ? `bg-accent/20 ring-1 ring-inset ring-accent/60${vimHighlight ? " vim-cursor-on-active" : ""}`
@@ -5457,7 +5464,7 @@ function AssetLeaf({
       draggable
       onDragStart={handleDragStart}
       className={[
-        "group flex h-9 w-full items-center gap-1.5 rounded-lg px-1 text-left text-sm outline-none transition-colors focus:outline-none",
+        "group flex h-[var(--z-sidebar-row-h)] w-full items-center gap-1.5 rounded-lg px-1 text-left text-sm outline-none transition-colors focus:outline-none",
         vimHighlight ? "vim-cursor" : "text-ink-700 hover:bg-paper-200/70",
       ].join(" ")}
       style={{ paddingLeft: 4 + depth * 14 }}
@@ -5586,7 +5593,7 @@ function TreeRow({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       className={[
-        "group relative flex h-9 w-full items-center gap-1.5 rounded-lg px-1 text-left text-sm outline-none transition-colors focus:outline-none",
+        "group relative flex h-[var(--z-sidebar-row-h)] w-full items-center gap-1.5 rounded-lg px-1 text-left text-sm outline-none transition-colors focus:outline-none",
         active
           ? glyphColorClass
             ? // Colored folder: a saturated accent fill would put same-hue text on
@@ -5758,7 +5765,7 @@ function TaskSidebarRow({
         }
       }}
       className={[
-        "group flex h-9 items-center gap-1.5 rounded-lg px-1 text-left text-sm outline-none transition-colors focus:outline-none",
+        "group flex h-[var(--z-sidebar-row-h)] items-center gap-1.5 rounded-lg px-1 text-left text-sm outline-none transition-colors focus:outline-none",
         active
           ? vimHighlight
             ? "vim-cursor-on-active bg-paper-300/70 text-ink-900 font-medium"
@@ -5823,7 +5830,7 @@ function FavoriteRow({
       }}
       onContextMenu={onContextMenu}
       className={[
-        "group select-none flex h-9 items-center gap-1.5 rounded-lg px-1 text-left text-sm outline-none transition-colors focus:outline-none",
+        "group select-none flex h-[var(--z-sidebar-row-h)] items-center gap-1.5 rounded-lg px-1 text-left text-sm outline-none transition-colors focus:outline-none",
         active
           ? vimHighlight
             ? "vim-cursor-on-active bg-paper-300/70 text-ink-900 font-medium"
@@ -5890,7 +5897,7 @@ function SystemRow({
       }}
       onContextMenu={onContextMenu}
       className={[
-        "group select-none flex h-9 items-center gap-1.5 rounded-lg px-1 text-left text-sm outline-none transition-colors focus:outline-none",
+        "group select-none flex h-[var(--z-sidebar-row-h)] items-center gap-1.5 rounded-lg px-1 text-left text-sm outline-none transition-colors focus:outline-none",
         active
           ? vimHighlight
             ? "vim-cursor-on-active bg-paper-300/70 text-ink-900 font-medium"
@@ -5956,7 +5963,7 @@ function SidebarRow({
     <button
       onClick={onClick}
       className={[
-        "group flex h-9 items-center gap-2 rounded-lg px-2 text-sm outline-none transition-colors focus:outline-none",
+        "group flex h-[var(--z-sidebar-row-h)] items-center gap-2 rounded-lg px-2 text-sm outline-none transition-colors focus:outline-none",
         active
           ? vimHighlight
             ? "vim-cursor-on-active bg-paper-300/70 text-ink-900 font-medium"

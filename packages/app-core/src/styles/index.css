@@ -181,6 +181,30 @@
 }
 
 /* ===========================================================================
+ * Layout tokens — non-theme dimensions, overridable via Quick tweaks.
+ * =======================================================================*/
+:root {
+  --z-tab-height: 2.5rem; /* editor tab strip height (default = h-10) */
+  --z-tab-pad-x: 0.5rem; /* editor tab horizontal padding (default = px-2) */
+  --z-radius-scale: 1; /* global corner-radius multiplier; 0 = square corners */
+  --z-sidebar-row-h: 36px; /* every sidebar row (default = h-9); = DENSITY.default.sidebarRow */
+  --z-note-row-h: 76px; /* note-list row slot height; = DENSITY.default.noteRow */
+}
+
+/* ===========================================================================
+ * Custom (user-authored) themes — color-scheme follows the resolved mode.
+ * Built-ins set color-scheme per data-theme id; custom themes use one id
+ * (custom-<slug>) plus data-theme-mode, so map it here as a fallback for
+ * hand-authored themes that don't set color-scheme themselves.
+ * =======================================================================*/
+:root[data-theme^='custom-'][data-theme-mode='light'] {
+  color-scheme: light;
+}
+:root[data-theme^='custom-'][data-theme-mode='dark'] {
+  color-scheme: dark;
+}
+
+/* ===========================================================================
  * Apple — clean macOS-style system palette (default theme family)
  * =======================================================================*/
 
@@ -337,6 +361,8 @@
 :root[data-theme="tokyo-night-storm"],
 :root[data-theme="kanagawa-wave"],
 :root[data-theme="kanagawa-dragon"],
+:root[data-theme="rose-pine-main"],
+:root[data-theme="rose-pine-moon"],
 :root[data-theme="black-metal"] {
   --z-glass-a1: 0.58;
   --z-glass-a2: 0.46;
@@ -463,6 +489,88 @@
   --z-purple: 203 166 247; /* mauve   #cba6f7 */
   --z-aqua: 148 226 213; /* teal    #94e2d5 */
   --z-shadow: 0 0 0;
+}
+
+/* --- Rosé Pine (rose-pine/neovim) ------------------------------------------
+   Official palettes. Rosé Pine has no green, so foam/pine fill the cool slots;
+   the accent is iris, the signature soft purple. */
+:root[data-theme="rose-pine-main"] {
+  color-scheme: dark;
+  --z-bg: 25 23 36; /* base #191724 */
+  --z-bg-softer: 20 19 30; /* derived chrome, just under base */
+  --z-bg-1: 31 29 46; /* surface #1f1d2e */
+  --z-bg-2: 38 35 58; /* overlay #26233a */
+  --z-bg-3: 64 61 82; /* highlight med #403d52 */
+  --z-bg-4: 82 79 103; /* highlight high #524f67 */
+  --z-fg: 224 222 244; /* text #e0def4 */
+  --z-fg-1: 144 140 170; /* subtle #908caa */
+  --z-fg-2: 110 106 134; /* muted #6e6a86 */
+  --z-grey-2: 144 140 170; /* subtle */
+  --z-grey-1: 110 106 134; /* muted */
+  --z-grey-0: 82 79 103; /* highlight high */
+  --z-grey-dim: 64 61 82; /* highlight med */
+  --z-accent: 196 167 231; /* iris #c4a7e7 */
+  --z-accent-soft: 235 188 186; /* rose #ebbcba */
+  --z-accent-muted: 156 207 216; /* foam #9ccfd8 */
+  --z-red: 235 111 146; /* love #eb6f92 */
+  --z-green: 156 207 216; /* foam #9ccfd8 (palette has no green) */
+  --z-yellow: 246 193 119; /* gold #f6c177 */
+  --z-blue: 49 116 143; /* pine #31748f */
+  --z-purple: 196 167 231; /* iris #c4a7e7 */
+  --z-aqua: 156 207 216; /* foam #9ccfd8 */
+  --z-shadow: 0 0 0;
+}
+:root[data-theme="rose-pine-moon"] {
+  color-scheme: dark;
+  --z-bg: 35 33 54; /* base #232136 */
+  --z-bg-softer: 29 27 44; /* derived chrome, just under base */
+  --z-bg-1: 42 39 63; /* surface #2a273f */
+  --z-bg-2: 57 53 82; /* overlay #393552 */
+  --z-bg-3: 68 65 90; /* highlight med #44415a */
+  --z-bg-4: 86 82 110; /* highlight high #56526e */
+  --z-fg: 224 222 244; /* text #e0def4 */
+  --z-fg-1: 144 140 170; /* subtle #908caa */
+  --z-fg-2: 110 106 134; /* muted #6e6a86 */
+  --z-grey-2: 144 140 170;
+  --z-grey-1: 110 106 134;
+  --z-grey-0: 86 82 110;
+  --z-grey-dim: 68 65 90;
+  --z-accent: 196 167 231; /* iris #c4a7e7 */
+  --z-accent-soft: 234 154 151; /* rose #ea9a97 */
+  --z-accent-muted: 156 207 216; /* foam #9ccfd8 */
+  --z-red: 235 111 146; /* love #eb6f92 */
+  --z-green: 156 207 216; /* foam #9ccfd8 */
+  --z-yellow: 246 193 119; /* gold #f6c177 */
+  --z-blue: 62 143 176; /* pine #3e8fb0 */
+  --z-purple: 196 167 231; /* iris #c4a7e7 */
+  --z-aqua: 156 207 216; /* foam #9ccfd8 */
+  --z-shadow: 0 0 0;
+}
+:root[data-theme="rose-pine-dawn"] {
+  color-scheme: light;
+  --z-bg: 250 244 237; /* base #faf4ed */
+  --z-bg-softer: 244 237 230; /* derived, just under base */
+  --z-bg-1: 242 233 225; /* overlay #f2e9e1 */
+  --z-bg-2: 223 218 217; /* highlight med #dfdad9 */
+  --z-bg-3: 206 202 205; /* highlight high #cecacd */
+  --z-bg-4: 184 179 190; /* derived darker grey */
+  --z-fg: 87 82 121; /* text #575279 */
+  --z-fg-1: 121 117 147; /* subtle #797593 */
+  --z-fg-2: 152 147 165; /* muted #9893a5 */
+  --z-grey-2: 121 117 147; /* subtle */
+  --z-grey-1: 152 147 165; /* muted */
+  --z-grey-0: 182 177 191; /* derived light grey */
+  --z-grey-dim: 206 202 205; /* highlight high */
+  --z-accent: 144 122 169; /* iris #907aa9 */
+  --z-accent-soft: 215 130 126; /* rose #d7827e */
+  --z-accent-muted: 86 148 159; /* foam #56949f */
+  --z-red: 180 99 122; /* love #b4637a */
+  --z-green: 86 148 159; /* foam #56949f */
+  --z-yellow: 234 157 52; /* gold #ea9d34 */
+  --z-blue: 40 105 131; /* pine #286983 */
+  --z-purple: 144 122 169; /* iris #907aa9 */
+  --z-aqua: 86 148 159; /* foam #56949f */
+  --z-shadow: 42 38 32;
 }
 
 /* ===========================================================================
@@ -2506,11 +2614,47 @@ textarea,
   margin: var(--z-prose-block-gap) 0;
   font-size: 0.94em;
 }
+/* A table with persisted column widths (#294): honor the <colgroup> exactly via
+   fixed layout (sizes to the columns' sum) instead of stretching to 100%. */
+.prose-zen table.zen-has-col-widths {
+  table-layout: fixed;
+  width: auto;
+  max-width: 100%;
+}
+.prose-zen table.zen-has-col-widths th,
+.prose-zen table.zen-has-col-widths td {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .prose-zen th,
 .prose-zen td {
   border: 1px solid theme("colors.paper.300");
   padding: 0.5em 0.75em;
   text-align: left;
+}
+/* PDF/print: let long cell content wrap so wide tables fit the page instead of
+   overflowing (or rendering scrambled). (#294) */
+@media print {
+  .prose-zen table {
+    max-width: 100%;
+  }
+  .prose-zen th,
+  .prose-zen td {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  /* Fenced code: the editor/preview scrolls a long line horizontally
+     (`overflow-x: auto` + `white-space: pre`), but the PDF can't scroll, so the
+     line gets clipped off the right edge. In print, wrap it instead. (#297) */
+  .prose-zen pre {
+    overflow-x: visible;
+  }
+  .prose-zen pre,
+  .prose-zen pre code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
 }
 /* GFM column alignment (`:--`, `:-:`, `--:`) is emitted as the `align`
    attribute, a low-specificity presentational hint that the rule above
@@ -3714,9 +3858,11 @@ textarea,
      The negative LEFT margin cancels the left padding so the table content
      still lines up with the body text (and matches Preview) instead of sitting
      ~2 chars indented. Horizontal margin is safe — only vertical margin breaks
-     the height measurement. */
+     the height measurement.
+     Right/bottom are kept tight (#294): they only host the thin hover add-rails,
+     so a big reserve there just read as dead padding around idle tables. */
   margin: 0 0 0 -16px;
-  padding: 16px;
+  padding: 14px 9px 9px 16px;
   overflow-x: auto;
   white-space: normal;
   font-family: var(
@@ -3740,6 +3886,48 @@ textarea,
 .cm-table-widget table {
   border-collapse: collapse;
   border-spacing: 0;
+}
+/* Once any column has an explicit width (#294), fixed layout makes the <col>
+   widths authoritative; the table sizes to their sum and scrolls if wide. */
+.cm-table-widget table.cm-table-fixed {
+  table-layout: fixed;
+}
+.cm-table-widget table.cm-table-fixed .cm-table-cell {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+/* Drag-to-resize grip straddling a header cell's right border. (#294) */
+.cm-table-widget .cm-table-col-resize {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 3;
+  user-select: none;
+  touch-action: none;
+}
+.cm-table-widget .cm-table-col-resize::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 3px;
+  width: 2px;
+  height: 100%;
+  background: rgb(var(--z-accent) / 0);
+  transition: background 0.12s ease;
+}
+.cm-table-widget th:hover .cm-table-col-resize::after,
+.cm-table-widget .cm-table-col-resize:hover::after,
+.cm-table-widget.is-col-resizing .cm-table-col-resize::after {
+  background: rgb(var(--z-accent) / 0.55);
+}
+.cm-table-widget.is-col-resizing {
+  cursor: col-resize;
+}
+.cm-table-widget.is-col-resizing .cm-table-cell {
+  user-select: none;
 }
 .cm-table-widget th,
 .cm-table-widget td {
@@ -3869,15 +4057,15 @@ textarea,
 .cm-table-widget .cm-table-add-col {
   top: 0;
   right: 0;
-  width: 13px;
+  width: 9px;
   height: 100%;
 }
 .cm-table-widget .cm-table-add-row {
   left: 0;
   bottom: 0;
-  height: 13px;
+  height: 9px;
   /* Span the grid, not the button rail on the right. */
-  width: calc(100% - 14px);
+  width: calc(100% - 10px);
 }
 
 /* Drag-to-reorder grips: row grip left of each body row, column grip above
