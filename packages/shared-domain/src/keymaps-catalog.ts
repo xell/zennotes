@@ -44,6 +44,7 @@ export const KEYMAP_CATALOG: KeymapCatalogEntry[] = [
   { id: "global.modeEdit", group: "global", defaultBinding: "Mod+4", title: "Switch to editor mode" },
   { id: "global.modeSplit", group: "global", defaultBinding: "Mod+5", title: "Switch to split mode" },
   { id: "global.modePreview", group: "global", defaultBinding: "Mod+6", title: "Switch to preview mode" },
+  { id: "global.modeDiff", group: "global", defaultBinding: "Mod+7", title: "Switch to diff mode" },
   { id: "global.toggleZenMode", group: "global", defaultBinding: "Mod+.", title: "Toggle Zen mode" },
   { id: "global.closeActiveTab", group: "global", defaultBinding: "Mod+W", title: "Close active tab" },
   { id: "global.reopenClosedTab", group: "global", defaultBinding: "Shift+Mod+T", title: "Reopen closed tab" },
