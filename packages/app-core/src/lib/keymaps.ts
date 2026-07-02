@@ -92,6 +92,8 @@ export type KeymapId =
   | "nav.back"
   | "nav.toggleFolder"
   | "nav.filter"
+  | "nav.filterNext"
+  | "nav.filterPrev"
   | "nav.contextMenu"
   | "nav.peekPreview"
   | "nav.restore"
@@ -958,6 +960,26 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
       "Focus the local filter or open note search from panel navigation.",
     defaultBinding: "/",
     maxTokens: 1,
+  },
+  {
+    id: "nav.filterNext",
+    kind: "shortcut",
+    scope: "lists",
+    group: "navigation",
+    title: "Filter: next result",
+    description:
+      "Move the selection down through the sidebar filter results (letters type into the filter).",
+    defaultBinding: "Ctrl+N",
+  },
+  {
+    id: "nav.filterPrev",
+    kind: "shortcut",
+    scope: "lists",
+    group: "navigation",
+    title: "Filter: previous result",
+    description:
+      "Move the selection up through the sidebar filter results (letters type into the filter).",
+    defaultBinding: "Ctrl+P",
   },
   {
     id: "nav.contextMenu",

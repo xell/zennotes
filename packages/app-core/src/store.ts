@@ -2310,6 +2310,28 @@ interface Store {
   /** Vim navigation: which panel is keyboard-focused. */
   focusedPanel: Panel | null
   sidebarCursorIndex: number
+  /**
+   * Sidebar incremental filter (the `/` prune-in-place filter). `active` means
+   * the input row is open; `query` drives the visible-set prune in `Sidebar`.
+   * Session-only — never persisted to the workspace snapshot. An empty `query`
+   * with `active: true` shows the whole tree (input open, nothing typed yet).
+   */
+  sidebarFilter: { active: boolean; query: string }
+  /**
+   * Bumped every time `openSidebarFilter` runs — including when the filter is
+   * already active (e.g. `/` pressed again after the first Escape blurred the
+   * input to the panel). The sidebar's focus effect watches this so `/` always
+   * re-focuses the input, not just on the open→close transition.
+   */
+  sidebarFilterFocusTick: number
+  /**
+   * One-shot request to reveal + center a note/asset path in the sidebar tree,
+   * set when exiting the filter so the row you picked stays selected and lands
+   * mid-viewport in the restored, unfiltered tree. The sidebar consumes it and
+   * clears it back to null. Carries the *path* (not an index) because row
+   * indices renumber the moment the full tree re-renders.
+   */
+  sidebarRevealRequest: string | null
   noteListCursorIndex: number
   connectionsCursorIndex: number
   connectionPreview: ConnectionPreviewState | null
@@ -2673,6 +2695,15 @@ interface Store {
   restartOnboarding: () => void
   setFocusedPanel: (panel: Panel | null) => void
   setSidebarCursorIndex: (idx: number) => void
+  /** Open the sidebar filter input (keeps any existing query). */
+  openSidebarFilter: () => void
+  /** Update the live filter query. Resets the sidebar cursor to the first
+   *  visible row so Ctrl+N always starts from the top of the results. */
+  setSidebarFilterQuery: (query: string) => void
+  /** Exit filter mode entirely (clears query, restores the full tree). */
+  closeSidebarFilter: () => void
+  /** Ask the sidebar to reveal + center a path (or clear the request). */
+  requestSidebarReveal: (path: string | null) => void
   setNoteListCursorIndex: (idx: number) => void
   setConnectionsCursorIndex: (idx: number) => void
   setConnectionPreview: (preview: ConnectionPreviewState | null) => void
@@ -3742,6 +3773,9 @@ export const useStore = create<Store>((set, get) => {
   tagMatchMode: 'all',
   focusedPanel: null,
   sidebarCursorIndex: 0,
+  sidebarFilter: { active: false, query: '' },
+  sidebarFilterFocusTick: 0,
+  sidebarRevealRequest: null,
   noteListCursorIndex: 0,
   connectionsCursorIndex: 0,
   connectionPreview: null,
@@ -6365,6 +6399,15 @@ export const useStore = create<Store>((set, get) => {
   },
   setFocusedPanel: (panel) => set({ focusedPanel: panel }),
   setSidebarCursorIndex: (idx) => set({ sidebarCursorIndex: idx }),
+  openSidebarFilter: () =>
+    set((s) => ({
+      sidebarFilter: { active: true, query: s.sidebarFilter.query },
+      sidebarFilterFocusTick: s.sidebarFilterFocusTick + 1,
+    })),
+  setSidebarFilterQuery: (query) =>
+    set({ sidebarFilter: { active: true, query }, sidebarCursorIndex: 0 }),
+  closeSidebarFilter: () => set({ sidebarFilter: { active: false, query: '' } }),
+  requestSidebarReveal: (path) => set({ sidebarRevealRequest: path }),
   setNoteListCursorIndex: (idx) => set({ noteListCursorIndex: idx }),
   setConnectionsCursorIndex: (idx) => set({ connectionsCursorIndex: idx }),
   setConnectionPreview: (preview) => set({ connectionPreview: preview }),

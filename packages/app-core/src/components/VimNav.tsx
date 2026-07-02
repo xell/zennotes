@@ -1118,11 +1118,30 @@ export function VimNav(): JSX.Element | null {
       return
     }
     if (key === 'Escape') {
+      // Second Escape while the filter is open (input already blurred to the
+      // panel by the first Escape): exit and keep the picked row centered in
+      // the restored tree. Otherwise Escape leaves the sidebar for the editor.
+      const filter = state.sidebarFilter
+      if (filter.active && filter.query.trim() !== '') {
+        const el = items[currentPos]
+        const type = el?.dataset.sidebarType
+        const path =
+          (type === 'note' || type === 'asset') && el?.dataset.sidebarPath
+            ? el.dataset.sidebarPath
+            : null
+        state.requestSidebarReveal(path)
+        state.closeSidebarFilter()
+        state.setFocusedPanel('sidebar')
+        return
+      }
       focusEditor()
       return
     }
     if (matchesSequenceToken(e, overrides, 'nav.filter')) {
-      state.setSearchOpen(true)
+      // `/` opens (or re-focuses) the sidebar's own incremental filter. Global
+      // search stays on Mod+P and the leader. The focus effect in Sidebar moves
+      // focus into the input.
+      state.openSidebarFilter()
       return
     }
     if (wantsContextMenu) {

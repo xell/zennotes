@@ -109,6 +109,8 @@ export const KEYMAP_CATALOG: KeymapCatalogEntry[] = [
   { id: "nav.back", group: "navigation", defaultBinding: "h", title: "Back out" },
   { id: "nav.toggleFolder", group: "navigation", defaultBinding: "o", title: "Toggle folder" },
   { id: "nav.filter", group: "navigation", defaultBinding: "/", title: "Focus filter or search" },
+  { id: "nav.filterNext", group: "navigation", defaultBinding: "Ctrl+N", title: "Filter: next result" },
+  { id: "nav.filterPrev", group: "navigation", defaultBinding: "Ctrl+P", title: "Filter: previous result" },
   { id: "nav.contextMenu", group: "view-actions", defaultBinding: "m", title: "Open context menu" },
   { id: "nav.peekPreview", group: "view-actions", defaultBinding: "p", title: "Peek preview" },
   { id: "nav.restore", group: "view-actions", defaultBinding: "r", title: "Restore trashed note" },
