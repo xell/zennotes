@@ -2350,6 +2350,9 @@ interface Store {
    * re-focuses the input, not just on the open→close transition.
    */
   sidebarFilterFocusTick: number
+  /** Bumped by `focusSidebar` so the Sidebar can grab real DOM focus (moving it
+   *  off the terminal/editor/palette), not just flip `focusedPanel`. */
+  sidebarFocusTick: number
   /**
    * One-shot request to reveal + center a note/asset/folder in the sidebar tree,
    * set when exiting the filter so the row you picked stays selected and lands
@@ -2730,6 +2733,9 @@ interface Store {
   /** Re-open the first-run onboarding wizard. Persists. */
   restartOnboarding: () => void
   setFocusedPanel: (panel: Panel | null) => void
+  /** Focus the sidebar, opening it first if closed. Pure focus: never closes
+   *  it and runs no other action. */
+  focusSidebar: () => void
   setSidebarCursorIndex: (idx: number) => void
   /** Open the sidebar filter input (keeps any existing query). */
   openSidebarFilter: () => void
@@ -3821,6 +3827,7 @@ export const useStore = create<Store>((set, get) => {
   sidebarCursorIndex: 0,
   sidebarFilter: { active: false, query: '' },
   sidebarFilterFocusTick: 0,
+  sidebarFocusTick: 0,
   sidebarRevealRequest: null,
   isolatedRoot: null,
   noteListCursorIndex: 0,
@@ -6445,6 +6452,12 @@ export const useStore = create<Store>((set, get) => {
     savePrefs(collectPrefs(get()))
   },
   setFocusedPanel: (panel) => set({ focusedPanel: panel }),
+  focusSidebar: () =>
+    set((s) => ({
+      sidebarOpen: true,
+      focusedPanel: 'sidebar',
+      sidebarFocusTick: s.sidebarFocusTick + 1,
+    })),
   setSidebarCursorIndex: (idx) => set({ sidebarCursorIndex: idx }),
   openSidebarFilter: () =>
     set((s) => ({

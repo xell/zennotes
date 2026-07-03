@@ -1676,6 +1676,31 @@ export function Sidebar(): JSX.Element {
     };
   }, [sidebarFilter.active, sidebarFilterFocusTick]);
 
+  // `focusSidebar` (the "Focus sidebar" shortcut/command) flips focusedPanel,
+  // but that alone doesn't move DOM focus — so a shortcut fired from the
+  // terminal or editor leaves keystrokes going there and VimNav's focused-input
+  // bail (INPUT/TEXTAREA target) never routes to the sidebar. Grab real DOM
+  // focus onto the scroll container so the terminal is blurred and sidebar keys
+  // take over. Retry over a few frames to win the command-palette Modal's
+  // focus-restore race. Skip if focus is already inside the sidebar.
+  const sidebarFocusTick = useStore((s) => s.sidebarFocusTick);
+  useEffect(() => {
+    if (sidebarFocusTick === 0) return;
+    let timer = 0;
+    const grab = (remaining: number): void => {
+      const container = sidebarScrollRef.current;
+      if (container && !container.contains(document.activeElement)) {
+        container.focus({ preventScroll: true });
+      }
+      if (remaining > 1) timer = window.setTimeout(() => grab(remaining - 1), 16);
+    };
+    const raf = requestAnimationFrame(() => grab(6));
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+    };
+  }, [sidebarFocusTick]);
+
   // Whenever the query changes, park the cursor on the first result row so
   // Ctrl+N starts from the top of the matches (not the vault header).
   useEffect(() => {
@@ -3774,7 +3799,10 @@ export function Sidebar(): JSX.Element {
       {/* Main scrollable tree area */}
       <div
         ref={sidebarScrollRef}
-        className="mt-3 min-h-0 flex-1 overflow-y-auto px-3"
+        // Programmatically focusable (not in the Tab order) so `focusSidebar`
+        // can pull real DOM focus here, off the terminal/editor.
+        tabIndex={-1}
+        className="mt-3 min-h-0 flex-1 overflow-y-auto px-3 outline-none"
         onDragOver={handleTreeDragOver}
         onDrop={handleTreeDrop}
         onDragLeave={handleTreeDragLeave}

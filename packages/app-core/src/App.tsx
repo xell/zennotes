@@ -709,6 +709,13 @@ function App(): JSX.Element {
         state.toggleSidebar()
         return
       }
+      // Pure focus-sidebar (opens if closed, never closes, no other action).
+      // Unbound by default — pick a binding in Settings.
+      if (matchesShortcut(e, overrides, 'global.focusSidebar')) {
+        e.preventDefault()
+        state.focusSidebar()
+        return
+      }
       // Open the sidebar's incremental filter from anywhere. Unbound by default:
       // inside the sidebar `/` already opens it, but in the editor `/` is Vim
       // search, so a global binding is left for the user to choose in Settings.

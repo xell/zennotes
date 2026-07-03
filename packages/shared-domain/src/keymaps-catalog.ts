@@ -32,6 +32,7 @@ export const KEYMAP_CATALOG: KeymapCatalogEntry[] = [
   { id: "global.newQuickNote", group: "global", defaultBinding: "Shift+Mod+N", title: "New quick note" },
   { id: "global.openSettings", group: "global", defaultBinding: "Mod+,", title: "Open settings" },
   { id: "global.toggleSidebar", group: "global", defaultBinding: "Mod+1", title: "Toggle sidebar" },
+  { id: "global.focusSidebar", group: "global", defaultBinding: "", title: "Focus sidebar" },
   { id: "global.filterSidebar", group: "global", defaultBinding: "", title: "Filter sidebar" },
   { id: "view.isolateFolder", group: "global", defaultBinding: "Shift+Mod+I", title: "Isolate folder in sidebar" },
   { id: "global.toggleConnections", group: "global", defaultBinding: "Mod+2", title: "Toggle connections panel" },

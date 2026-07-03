@@ -15,6 +15,7 @@ export type KeymapId =
   | "global.newQuickNote"
   | "global.openSettings"
   | "global.toggleSidebar"
+  | "global.focusSidebar"
   | "global.filterSidebar"
   | "global.toggleConnections"
   | "global.toggleOutlinePanel"
@@ -180,6 +181,16 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Toggle sidebar",
     description: "Hide or show the left sidebar.",
     defaultBinding: "Mod+1",
+  },
+  {
+    id: "global.focusSidebar",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Focus sidebar",
+    description:
+      "Move keyboard focus to the sidebar from anywhere, opening it first if it's closed. Pure focus — never closes the sidebar and runs no other action, unlike Toggle sidebar. Unbound by default; pick a binding here.",
+    defaultBinding: "",
   },
   {
     id: "global.filterSidebar",

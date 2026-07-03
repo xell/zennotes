@@ -957,11 +957,9 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       id: 'nav.focus.sidebar',
       title: 'Focus Sidebar',
       category: 'Go',
-      run: () => {
-        const st = getState()
-        if (!st.sidebarOpen) st.toggleSidebar()
-        st.setFocusedPanel('sidebar')
-      }
+      shortcut: shortcut('global.focusSidebar'),
+      keywords: 'focus sidebar panel navigate reveal',
+      run: () => getState().focusSidebar()
     },
     {
       id: 'nav.focus.editor',
