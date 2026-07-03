@@ -41,7 +41,7 @@ import { vimImeControl } from '../lib/cm-vim-ime'
 import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
 import { syntaxHighlighting, HighlightStyle, defaultHighlightStyle } from '@codemirror/language'
 import { tags as t } from '@lezer/highlight'
-import { searchKeymap } from '@codemirror/search'
+import { editorFindKeymap } from '../lib/editor-search-keymap'
 import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
 import { useStore } from '../store'
 import type { LineNumberMode } from '../store'
@@ -287,7 +287,7 @@ export function PinnedReferencePane(): JSX.Element | null {
             indentWithTab,
             ...vimAwareDefaultKeymap(s0.vimMode),
             ...historyKeymap,
-            ...searchKeymap,
+            ...editorFindKeymap(s0.keymapOverrides),
             ...completionKeymap
           ]),
           EditorView.updateListener.of((upd) => {

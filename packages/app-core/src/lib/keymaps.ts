@@ -106,7 +106,8 @@ export type KeymapId =
   | "tasks.moveTaskUp"
   | "tasks.moveTaskDown"
   | "editor.moveLineUp"
-  | "editor.moveLineDown";
+  | "editor.moveLineDown"
+  | "editor.find";
 
 export type KeymapOverrides = Partial<Record<KeymapId, string>>;
 
@@ -1084,6 +1085,16 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     description:
       "Move the current line (or selected lines) down in the note editor — reorders the markdown, so it sticks in the file. Works with Vim mode on or off.",
     defaultBinding: "Alt+ArrowDown",
+  },
+  {
+    id: "editor.find",
+    kind: "shortcut",
+    scope: "vim-editor",
+    group: "view-actions",
+    title: "Find in note",
+    description:
+      "Open the in-editor find/replace panel (CodeMirror search) for the current note. Clear it to free the key, or rebind it. In non-Vim mode Cmd/Ctrl+F opens the vault note-search palette instead (see \"Search notes in non-Vim mode\").",
+    defaultBinding: "Mod+F",
   },
   {
     id: "nav.localEx",

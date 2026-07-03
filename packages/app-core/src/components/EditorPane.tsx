@@ -67,7 +67,7 @@ import {
 import { syntaxHighlighting, HighlightStyle, defaultHighlightStyle } from '@codemirror/language'
 import { headingFolding } from '../lib/cm-heading-fold'
 import { tags as t } from '@lezer/highlight'
-import { searchKeymap } from '@codemirror/search'
+import { editorFindKeymap, toCmKey } from '../lib/editor-search-keymap'
 import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
 import { useStore } from '../store'
 import type { LineNumberMode } from '../store'
@@ -241,14 +241,6 @@ const LARGE_DOC_EDITOR_HYDRATE_DELAY_MS = 180
 
 /** Convert a ZenNotes binding string ("Alt+ArrowUp", "Mod+K") to a CodeMirror
  *  key string ("Alt-ArrowUp", "Mod-k"). */
-function toCmKey(binding: string): string {
-  const parts = binding.split('+')
-  const base = parts.pop() ?? ''
-  const mods = parts.join('-')
-  const baseOut = base.length === 1 ? base.toLowerCase() : base
-  return mods ? `${mods}-${baseOut}` : baseOut
-}
-
 // The editor keymap depends on Vim mode: in Vim mode the macOS emacs-style
 // chords are stripped from `defaultKeymap` so Vim's `<C-d>` & co. work (see
 // cm-vim-default-keymap). Built behind a compartment and reconfigured on Vim
@@ -272,7 +264,7 @@ function buildEditorKeymap(vimMode: boolean, overrides: KeymapOverrides): Extens
     indentWithTab,
     ...vimAwareDefaultKeymap(vimMode),
     ...historyKeymap,
-    ...searchKeymap,
+    ...editorFindKeymap(overrides),
     ...completionKeymap
   ])
 }
