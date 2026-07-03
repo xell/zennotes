@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { EditorView } from '@codemirror/view'
-import { isTagsViewActive, isTasksViewActive, useStore } from '../store'
+import { isTagsViewActive, isTasksViewActive, useStore, type SidebarRevealTarget } from '../store'
 import { HintOverlay } from './HintOverlay'
 import { WhichKeyOverlay, type WhichKeyItem } from './WhichKeyOverlay'
 import {
@@ -1125,11 +1125,17 @@ export function VimNav(): JSX.Element | null {
       if (filter.active && filter.query.trim() !== '') {
         const el = items[currentPos]
         const type = el?.dataset.sidebarType
-        const path =
-          (type === 'note' || type === 'asset') && el?.dataset.sidebarPath
-            ? el.dataset.sidebarPath
-            : null
-        state.requestSidebarReveal(path)
+        let reveal: SidebarRevealTarget | null = null
+        if ((type === 'note' || type === 'asset') && el?.dataset.sidebarPath) {
+          reveal = { kind: 'leaf', path: el.dataset.sidebarPath }
+        } else if (type === 'folder' && el?.dataset.sidebarFolder != null) {
+          reveal = {
+            kind: 'folder',
+            folder: el.dataset.sidebarFolder,
+            subpath: el.dataset.sidebarSubpath ?? ''
+          }
+        }
+        state.requestSidebarReveal(reveal)
         state.closeSidebarFilter()
         state.setFocusedPanel('sidebar')
         return

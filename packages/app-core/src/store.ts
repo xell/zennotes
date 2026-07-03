@@ -323,6 +323,16 @@ const VALID_CALENDAR_WEEK_STARTS: CalendarWeekStart[] = ['monday', 'sunday', 'lo
 
 /** The editor-pane right-side panels whose width the user can drag-resize. */
 export type RightPanelId = 'outline' | 'connections' | 'comments' | 'calendar' | 'terminal'
+
+/**
+ * A sidebar row to reveal + center after exiting the filter. Identified by
+ * stable identity (path / folder+subpath), never by row index — indices
+ * renumber the moment the full tree re-renders.
+ */
+export type SidebarRevealTarget =
+  | { kind: 'leaf'; path: string }
+  | { kind: 'folder'; folder: string; subpath: string }
+
 export interface PanelWidths {
   terminal: number
   outline: number
@@ -2325,13 +2335,13 @@ interface Store {
    */
   sidebarFilterFocusTick: number
   /**
-   * One-shot request to reveal + center a note/asset path in the sidebar tree,
+   * One-shot request to reveal + center a note/asset/folder in the sidebar tree,
    * set when exiting the filter so the row you picked stays selected and lands
-   * mid-viewport in the restored, unfiltered tree. The sidebar consumes it and
-   * clears it back to null. Carries the *path* (not an index) because row
-   * indices renumber the moment the full tree re-renders.
+   * mid-viewport in the restored, unfiltered tree. The sidebar consumes it
+   * (expands ancestors, then selects + centers once the row renders) and clears
+   * it back to null.
    */
-  sidebarRevealRequest: string | null
+  sidebarRevealRequest: SidebarRevealTarget | null
   noteListCursorIndex: number
   connectionsCursorIndex: number
   connectionPreview: ConnectionPreviewState | null
@@ -2702,8 +2712,8 @@ interface Store {
   setSidebarFilterQuery: (query: string) => void
   /** Exit filter mode entirely (clears query, restores the full tree). */
   closeSidebarFilter: () => void
-  /** Ask the sidebar to reveal + center a path (or clear the request). */
-  requestSidebarReveal: (path: string | null) => void
+  /** Ask the sidebar to reveal + center a target row (or clear the request). */
+  requestSidebarReveal: (target: SidebarRevealTarget | null) => void
   setNoteListCursorIndex: (idx: number) => void
   setConnectionsCursorIndex: (idx: number) => void
   setConnectionPreview: (preview: ConnectionPreviewState | null) => void
@@ -6412,7 +6422,7 @@ export const useStore = create<Store>((set, get) => {
   setSidebarFilterQuery: (query) =>
     set({ sidebarFilter: { active: true, query }, sidebarCursorIndex: 0 }),
   closeSidebarFilter: () => set({ sidebarFilter: { active: false, query: '' } }),
-  requestSidebarReveal: (path) => set({ sidebarRevealRequest: path }),
+  requestSidebarReveal: (target) => set({ sidebarRevealRequest: target }),
   setNoteListCursorIndex: (idx) => set({ noteListCursorIndex: idx }),
   setConnectionsCursorIndex: (idx) => set({ connectionsCursorIndex: idx }),
   setConnectionPreview: (preview) => set({ connectionPreview: preview }),

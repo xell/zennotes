@@ -1560,25 +1560,6 @@ export function Sidebar(): JSX.Element {
     }
   }, [handleSelectNote, openAssetInTab, setFocusedPanel, toggleCollapse]);
 
-  // Exit the filter, then keep the picked row selected and centered in the
-  // restored tree (the payoff of the whole workflow — see data/sidebar.md).
-  const exitSidebarFilterCentered = useCallback((): void => {
-    const container = sidebarScrollRef.current;
-    const cur = useStore.getState().sidebarCursorIndex;
-    const row = container?.querySelector<HTMLElement>(
-      `[data-sidebar-idx="${cur}"]`,
-    );
-    const type = row?.dataset.sidebarType;
-    const path =
-      (type === "note" || type === "asset") && row?.dataset.sidebarPath
-        ? row.dataset.sidebarPath
-        : null;
-    requestSidebarReveal(path);
-    closeSidebarFilter();
-    setFocusedPanel("sidebar");
-    sidebarFilterInputRef.current?.blur();
-  }, [closeSidebarFilter, requestSidebarReveal, setFocusedPanel]);
-
   const onSidebarFilterInputKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>): void => {
       // IME: never steal keys mid-composition (CJK etc.).
@@ -1675,18 +1656,58 @@ export function Sidebar(): JSX.Element {
   }, [filtering, filterQuery, filterVisibility.matchCount, sidebarResultRows]);
 
   // Consume a reveal request (set when exiting the filter): expand the picked
-  // path's ancestor folders, then select + center its row in the restored tree.
+  // item's ancestor folders, then select + center its row in the restored tree.
+  //
+  // The row usually isn't in the DOM on the first frame — expanding ancestors
+  // schedules a re-render that commits a frame or two later — so we retry the
+  // lookup instead of querying once (that single-shot version silently missed
+  // and left the cursor stale on a bottom row). Works for a note/asset leaf or a
+  // folder row.
   useEffect(() => {
-    if (!sidebarRevealRequest) return;
-    const path = sidebarRevealRequest;
-    const parts = path.split("/");
-    const folder = parts[0] as NoteFolder;
-    const ancestors: string[] = [`${folder}:`];
-    let acc = "";
-    for (let i = 1; i < parts.length - 1; i++) {
-      acc = acc ? `${acc}/${parts[i]}` : parts[i];
-      ancestors.push(`${folder}:${acc}`);
+    const target = sidebarRevealRequest;
+    if (!target) return;
+
+    // Ancestor collapse-keys to expand, and the DOM selector for the row.
+    let ancestors: string[];
+    let selector: string;
+    if (target.kind === "leaf") {
+      // Resolve the real top-level folder + subpath from metadata rather than
+      // parsing the path: in "notes at vault root" mode a nested note's path
+      // has no top-level-folder prefix (e.g. "projects/x.md" lives under folder
+      // "inbox", collapse-keyed "inbox:projects", not "projects:").
+      const s = useStore.getState();
+      const noteMeta = s.notes.find((n) => n.path === target.path);
+      const assetMeta = noteMeta
+        ? undefined
+        : s.assetFiles.find((a) => a.path === target.path);
+      const folder = noteMeta
+        ? noteMeta.folder
+        : folderForVaultRelativePath(target.path, s.vaultSettings);
+      const subpath = noteMeta
+        ? noteFolderSubpath(noteMeta, s.vaultSettings)
+        : assetMeta
+          ? assetFolderSubpath(assetMeta, s.vaultSettings)
+          : "";
+      ancestors = [`${folder}:`];
+      let acc = "";
+      for (const seg of subpath ? subpath.split("/") : []) {
+        acc = acc ? `${acc}/${seg}` : seg;
+        ancestors.push(`${folder}:${acc}`);
+      }
+      selector = `[data-sidebar-path="${escapeForAttr(target.path)}"]`;
+    } else {
+      const { folder, subpath } = target;
+      // Only the folder's *parents* need expanding for its row to show.
+      ancestors = [`${folder}:`];
+      const segs = subpath ? subpath.split("/") : [];
+      let acc = "";
+      for (let i = 0; i < segs.length - 1; i++) {
+        acc = acc ? `${acc}/${segs[i]}` : segs[i];
+        ancestors.push(`${folder}:${acc}`);
+      }
+      selector = `[data-sidebar-type="folder"][data-sidebar-folder="${folder}"][data-sidebar-subpath="${escapeForAttr(subpath)}"]`;
     }
+
     const nextCollapsed = new Set(useStore.getState().collapsedFolders);
     let changed = false;
     for (const k of ancestors) {
@@ -1696,17 +1717,43 @@ export function Sidebar(): JSX.Element {
       }
     }
     if (changed) setCollapsed(nextCollapsed);
-    requestAnimationFrame(() => {
-      const el = document.querySelector<HTMLElement>(
-        `[data-sidebar-path="${escapeForAttr(path)}"]`,
-      );
-      if (el) {
-        const idx = Number(el.dataset.sidebarIdx);
-        if (Number.isFinite(idx)) useStore.getState().setSidebarCursorIndex(idx);
-        el.scrollIntoView({ block: "center" });
+
+    // Drive it over successive frames, because two things settle late: the
+    // expanded row may not be in the DOM on the first frame, and its
+    // `data-sidebar-idx` is reassigned on every render and keeps changing for a
+    // few frames as sections re-appear. So each frame we re-read the row's
+    // *current* index and pin the cursor to it (re-centering whenever it moves),
+    // until the index holds steady — otherwise the cursor is stranded on
+    // whatever row later inherits the index we first read (a footer button, in
+    // practice). Retries until the row exists, then stops once stable or capped.
+    let raf = 0;
+    let waits = 0; // frames spent waiting for the row to render
+    let frames = 0; // frames spent pinning after it appeared
+    let stableFrames = 0;
+    let lastIdx = -1;
+    const step = (): void => {
+      const el = document.querySelector<HTMLElement>(selector);
+      if (!el) {
+        if (waits++ < 12) raf = requestAnimationFrame(step);
+        else requestSidebarReveal(null);
+        return;
       }
-      requestSidebarReveal(null);
-    });
+      const idx = Number(el.dataset.sidebarIdx);
+      if (Number.isFinite(idx)) {
+        useStore.getState().setSidebarCursorIndex(idx);
+        if (idx !== lastIdx) {
+          el.scrollIntoView({ block: "center" });
+          lastIdx = idx;
+          stableFrames = 0;
+        } else {
+          stableFrames++;
+        }
+      }
+      if (stableFrames < 3 && frames++ < 30) raf = requestAnimationFrame(step);
+      else requestSidebarReveal(null);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
     // setCollapsed is stable enough; deliberately only re-run on request change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sidebarRevealRequest]);
