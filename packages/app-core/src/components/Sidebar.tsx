@@ -42,6 +42,7 @@ import {
   ExcalidrawIcon,
   ExpandAllIcon,
   FilterIcon,
+  IsolateIcon,
   PaperclipIcon,
   FolderPlusIcon,
   NotePlusIcon,
@@ -91,6 +92,10 @@ import {
   type ManualOrderItem,
 } from "../lib/manual-order";
 import { computeTreeVisibility, filterModeForQuery } from "../lib/sidebar-filter";
+import {
+  selectedInboxFolderForIsolation,
+  type IsolationTarget,
+} from "../lib/sidebar-isolation";
 import { matchesShortcut } from "../lib/keymaps";
 import {
   resolveDropTarget,
@@ -418,6 +423,9 @@ export function Sidebar(): JSX.Element {
   const openSidebarFilter = useStore((s) => s.openSidebarFilter);
   const setSidebarFilterQuery = useStore((s) => s.setSidebarFilterQuery);
   const closeSidebarFilter = useStore((s) => s.closeSidebarFilter);
+  const isolatedRoot = useStore((s) => s.isolatedRoot);
+  const enterIsolation = useStore((s) => s.enterIsolation);
+  const exitIsolation = useStore((s) => s.exitIsolation);
   const activeNote = useStore((s) => s.activeNote);
   const activeDirty = useStore((s) => s.activeDirty);
   const vaultSettings = useStore((s) => s.vaultSettings);
@@ -937,6 +945,17 @@ export function Sidebar(): JSX.Element {
     null,
   );
   const [vaultMenu, setVaultMenu] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  const [isolateMenu, setIsolateMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  // The notes/inbox folder the sidebar cursor is currently on (folder click or
+  // vim j/k both drive `sidebarCursorIndex`). Read from the DOM after paint so
+  // the isolate button's enabled state tracks the live selection. Correctness
+  // never depends on this — the click handler re-resolves fresh.
+  const [isolationTarget, setIsolationTarget] = useState<IsolationTarget | null>(
     null,
   );
 
@@ -1462,6 +1481,16 @@ export function Sidebar(): JSX.Element {
     return next;
   }, [notes, allFolders, assetFiles, vaultSettings]);
 
+  // Isolated mode re-roots the Notes area at this node. Undefined when the
+  // isolated folder no longer exists — the effect below then auto-exits.
+  const isolatedNode = useMemo(
+    () => (isolatedRoot ? findTreeNode(trees.inbox, isolatedRoot.subpath) : undefined),
+    [isolatedRoot, trees.inbox],
+  );
+  useEffect(() => {
+    if (isolatedRoot && !isolatedNode) exitIsolation();
+  }, [isolatedRoot, isolatedNode, exitIsolation]);
+
   // Sidebar filter: which rows stay visible for the current query. Computed once
   // here over all four trees and shared down via SidebarFilterContext, so
   // FolderTreeContents/SubTree only prune (never re-sort). `filtering` is false
@@ -1500,6 +1529,16 @@ export function Sidebar(): JSX.Element {
       matchCount: leaves.size,
     };
   }, [filtering, filterQuery, filterMode, trees]);
+
+  // Track which notes/inbox folder the sidebar cursor is on, for the isolate
+  // button's enabled state. Re-read after paint whenever the cursor moves or
+  // the row layout could have changed.
+  useEffect(() => {
+    const raf = requestAnimationFrame(() =>
+      setIsolationTarget(selectedInboxFolderForIsolation(sidebarCursorIndex)),
+    );
+    return () => cancelAnimationFrame(raf);
+  }, [sidebarCursorIndex, notes, allFolders, collapsed, filtering, isolatedRoot]);
 
   // ---- Sidebar filter: input focus, cursor navigation, open, exit ----------
   const sidebarFilterInputRef = useRef<HTMLInputElement | null>(null);
@@ -2402,6 +2441,21 @@ export function Sidebar(): JSX.Element {
         },
       },
     ];
+    // Isolate: notes/inbox sub-folders only (never the vault root or other
+    // top-level areas). Disabled when this folder is already the isolated root.
+    if (folder === "inbox" && subpath) {
+      const isCurrentRoot =
+        isolatedRoot?.folder === "inbox" && isolatedRoot.subpath === subpath;
+      items.push(
+        { kind: "separator" },
+        {
+          label: isCurrentRoot ? "Isolated (current)" : "Isolate folder",
+          icon: <IsolateIcon />,
+          disabled: isCurrentRoot,
+          onSelect: () => enterIsolation("inbox", subpath),
+        },
+      );
+    }
     if (folder === "quick" && isTop) {
       items.push({
         label: "Open as Tab",
@@ -2614,6 +2668,8 @@ export function Sidebar(): JSX.Element {
     toggleFavorite,
     bulkSelectionMenuItems,
     selectedSidebarKeys,
+    isolatedRoot,
+    enterIsolation,
   ]);
 
   // Items for the empty-area (vault root) context menu.
@@ -3521,6 +3577,26 @@ export function Sidebar(): JSX.Element {
             <SearchIcon />
           </IconBtn>
           <IconBtn
+            title={
+              isolatedRoot
+                ? `Isolated: ${isolatedRoot.subpath.split("/").slice(-1)[0]} — click for options`
+                : isolationTarget
+                  ? `Isolate "${isolationTarget.subpath.split("/").slice(-1)[0]}" (⇧⌘I)`
+                  : "Isolate folder — select a folder first"
+            }
+            active={!!isolatedRoot}
+            disabled={!isolatedRoot && !isolationTarget}
+            onClick={(e) => {
+              if (isolatedRoot) {
+                setIsolateMenu({ x: e.clientX, y: e.clientY });
+              } else if (isolationTarget) {
+                enterIsolation(isolationTarget.folder, isolationTarget.subpath);
+              }
+            }}
+          >
+            <IsolateIcon />
+          </IconBtn>
+          <IconBtn
             title="New note (choose folder)"
             onClick={() => {
               const state = useStore.getState();
@@ -3528,9 +3604,14 @@ export function Sidebar(): JSX.Element {
                 state.activeNote,
                 state.vaultSettings,
               );
-              // Prefill the picker with the current context (only the notes
-              // area is pickable, so archive/quick fall back to the root).
-              const initialPath = target.folder === "inbox" ? target.subpath : "";
+              // While isolated, default the picker into the isolated root.
+              // Otherwise prefill from the current context (only the notes area
+              // is pickable, so archive/quick fall back to the root).
+              const initialPath = state.isolatedRoot
+                ? state.isolatedRoot.subpath
+                : target.folder === "inbox"
+                  ? target.subpath
+                  : "";
               void createNoteInChosenFolder({ initialPath });
             }}
           >
@@ -3539,16 +3620,24 @@ export function Sidebar(): JSX.Element {
           <IconBtn
             title="New folder"
             onClick={async () => {
-              const view = useStore.getState().view;
+              const st = useStore.getState();
+              const view = st.view;
               // Quick Notes is intentionally flat — fall back to inbox
               // when the user is currently viewing it.
               const noFolders =
                 view.kind === "folder" &&
                 (view.folder === "trash" || view.folder === "quick");
-              const parentFolder: NoteFolder =
-                view.kind === "folder" && !noFolders ? view.folder : "inbox";
-              const parentSub =
-                view.kind === "folder" && !noFolders ? view.subpath : "";
+              // While isolated, new folders land inside the isolated root.
+              const parentFolder: NoteFolder = st.isolatedRoot
+                ? "inbox"
+                : view.kind === "folder" && !noFolders
+                  ? view.folder
+                  : "inbox";
+              const parentSub = st.isolatedRoot
+                ? st.isolatedRoot.subpath
+                : view.kind === "folder" && !noFolders
+                  ? view.subpath
+                  : "";
               const name = await promptApp({
                 title: "New folder",
                 placeholder: "Folder name",
@@ -3778,14 +3867,26 @@ export function Sidebar(): JSX.Element {
                           vaultSettings.folderIcons,
                         ).icon
                       }
-                      active={isFolderActive(item.folder, item.subpath)}
+                      active={
+                        isolatedRoot?.folder === item.folder &&
+                        isolatedRoot?.subpath === item.subpath
+                          ? true
+                          : isFolderActive(item.folder, item.subpath)
+                      }
                       onClick={() => {
-                        setFocusedPanel("editor");
-                        setView({
-                          kind: "folder",
-                          folder: item.folder,
-                          subpath: item.subpath,
-                        });
+                        // A favorited notes/inbox folder is a one-click isolate
+                        // target (the payoff for favoriting folders). Other
+                        // areas keep the plain "show this folder" behaviour.
+                        if (item.folder === "inbox" && item.subpath) {
+                          enterIsolation("inbox", item.subpath);
+                        } else {
+                          setFocusedPanel("editor");
+                          setView({
+                            kind: "folder",
+                            folder: item.folder,
+                            subpath: item.subpath,
+                          });
+                        }
                       }}
                       onContextMenu={(e) =>
                         openFolderMenu(e, item.folder, item.subpath)
@@ -3797,6 +3898,10 @@ export function Sidebar(): JSX.Element {
                         "data-sidebar-type": "folder",
                         "data-sidebar-folder": item.folder,
                         "data-sidebar-subpath": item.subpath,
+                        // Marks this as a Favorites-section folder row so
+                        // keyboard activation (Enter) isolates it, matching the
+                        // click handler above.
+                        "data-sidebar-favorite": "true",
                       }}
                     />
                   );
@@ -3894,18 +3999,76 @@ export function Sidebar(): JSX.Element {
             />
           )}
 
-          {(!filtering || filterVisibility.sections.inbox) && (
+          {(isolatedNode || !filtering || filterVisibility.sections.inbox) && (
           <>
           <SidebarSectionHeading
-            label="Notes"
+            label={
+              isolatedNode && isolatedRoot
+                ? isolatedRoot.subpath.split("/").slice(-1)[0]
+                : "Notes"
+            }
             onDropPayload={
-              primaryNotesAtRoot
-                ? (payload) => handleDropOnFolder(payload, "inbox", "")
-                : undefined
+              isolatedNode && isolatedRoot
+                ? (payload) =>
+                    handleDropOnFolder(payload, "inbox", isolatedRoot.subpath)
+                : primaryNotesAtRoot
+                  ? (payload) => handleDropOnFolder(payload, "inbox", "")
+                  : undefined
             }
           />
 
-          {primaryNotesAtRoot ? (
+          {isolatedNode && isolatedRoot ? (
+            <>
+              <RootFolderDropTarget
+                onDropPayload={(payload) =>
+                  handleDropOnFolder(payload, "inbox", isolatedRoot.subpath)
+                }
+              >
+                <FolderTreeContents
+                  tree={isolatedNode}
+                  depth={0}
+                  folder="inbox"
+                  vaultSettings={vaultSettings}
+                  isFolderActive={isFolderActive}
+                  collapsed={collapsed}
+                  toggleCollapse={toggleCollapse}
+                  setView={setView}
+                  onContextMenu={openFolderMenu}
+                  // Isolation is a self-contained file list: always show notes
+                  // inline, even for classic (non-unified) sidebar users.
+                  showNotes
+                  selectedPath={selectedPath}
+                  vaultRoot={vault?.root ?? null}
+                  onSelectNote={handleSelectNote}
+                  onOpenAsset={openAssetInTab}
+                  onNoteContextMenu={openNoteMenu}
+                  onAssetContextMenu={openAssetMenu}
+                  sortComparator={treeSortComparator}
+                  onDropOnFolder={handleDropOnFolder}
+                  selectedKeys={selectedSidebarKeys}
+                  onSelectItem={handleSidebarItemSelect}
+                  dragPayloadForItem={dragPayloadForItem}
+                  idxCounter={idxCounter.current}
+                  vimCursor={vimCursor}
+                  sidebarFocused={isSidebarFocused}
+                  groupByKind={groupByKind}
+                  showSidebarChevrons={showSidebarChevrons}
+                />
+              </RootFolderDropTarget>
+              {isTreeNodeEmpty(isolatedNode) && (
+                <div className="px-3 py-2 text-xs text-ink-400">
+                  This folder is empty.{" "}
+                  <button
+                    type="button"
+                    className="underline underline-offset-2 hover:text-ink-600"
+                    onClick={() => exitIsolation()}
+                  >
+                    Exit isolation
+                  </button>
+                </div>
+              )}
+            </>
+          ) : primaryNotesAtRoot ? (
             <RootFolderDropTarget
               onDropPayload={(payload) => handleDropOnFolder(payload, "inbox", "")}
             >
@@ -4303,6 +4466,32 @@ export function Sidebar(): JSX.Element {
             },
           ]}
           onClose={() => setSortMenu(null)}
+        />
+      )}
+      {isolateMenu && (
+        <ContextMenu
+          x={isolateMenu.x}
+          y={isolateMenu.y}
+          items={[
+            ...(isolationTarget &&
+            isolationTarget.subpath !== isolatedRoot?.subpath
+              ? [
+                  {
+                    label: `Isolate "${isolationTarget.subpath.split("/").slice(-1)[0]}"`,
+                    onSelect: () =>
+                      enterIsolation(
+                        isolationTarget.folder,
+                        isolationTarget.subpath,
+                      ),
+                  },
+                ]
+              : []),
+            {
+              label: "Quit isolated mode",
+              onSelect: () => exitIsolation(),
+            },
+          ]}
+          onClose={() => setIsolateMenu(null)}
         />
       )}
 
@@ -5017,6 +5206,34 @@ function countNotesInTree(node: TreeNode): number {
     node.notes.length +
     node.assets.length +
     node.children.reduce((s, c) => s + countNotesInTree(c), 0)
+  );
+}
+
+/**
+ * Walk a built tree down to the node at `subpath` (matching each child's real
+ * `subpath`, so it stays correct in notes-at-root vaults). Returns undefined
+ * when the folder no longer exists (deleted / renamed / moved externally),
+ * which the isolated-mode auto-exit relies on. `subpath === ""` returns root.
+ */
+function findTreeNode(root: TreeNode, subpath: string): TreeNode | undefined {
+  if (!subpath) return root;
+  let node: TreeNode = root;
+  let acc = "";
+  for (const seg of subpath.split("/")) {
+    acc = acc ? `${acc}/${seg}` : seg;
+    const next = node.children.find((c) => c.subpath === acc);
+    if (!next) return undefined;
+    node = next;
+  }
+  return node;
+}
+
+/** No child folders, notes, or assets to render at this node's top level. */
+function isTreeNodeEmpty(node: TreeNode): boolean {
+  return (
+    node.children.length === 0 &&
+    node.notes.length === 0 &&
+    node.assets.length === 0
   );
 }
 
@@ -6623,22 +6840,27 @@ function IconBtn({
   onClick,
   title,
   active,
+  disabled,
 }: {
   children: JSX.Element;
   onClick: (e: React.MouseEvent) => void;
   title: string;
   active?: boolean;
+  disabled?: boolean;
 }): JSX.Element {
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
       aria-label={title}
       className={[
         "group relative flex h-7 w-7 items-center justify-center rounded-md transition-colors",
-        active
-          ? "bg-accent/15 text-accent"
-          : "text-ink-500 hover:bg-paper-200 hover:text-ink-800",
+        disabled
+          ? "cursor-default text-ink-300"
+          : active
+            ? "bg-accent/15 text-accent"
+            : "text-ink-500 hover:bg-paper-200 hover:text-ink-800",
       ].join(" ")}
     >
       <span className="pointer-events-none">{children}</span>

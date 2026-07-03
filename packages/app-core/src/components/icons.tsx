@@ -35,6 +35,16 @@ export const FilterIcon = (p: IconProps): JSX.Element => (
   </I>
 )
 
+export const IsolateIcon = (p: IconProps): JSX.Element => (
+  <I {...p}>
+    <path d="M4 8V6a2 2 0 0 1 2-2h2" />
+    <path d="M16 4h2a2 2 0 0 1 2 2v2" />
+    <path d="M20 16v2a2 2 0 0 1-2 2h-2" />
+    <path d="M8 20H6a2 2 0 0 1-2-2v-2" />
+    <circle cx="12" cy="12" r="2.5" />
+  </I>
+)
+
 export const TableIcon = (p: IconProps): JSX.Element => (
   <I {...p}>
     <rect x="3" y="3" width="18" height="18" rx="2" />

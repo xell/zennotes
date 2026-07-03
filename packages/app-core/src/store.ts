@@ -1833,6 +1833,10 @@ interface WorkspaceSnapshot {
   sidebarOpen: boolean
   noteListOpen: boolean
   selectedTags: string[]
+  /** Isolated ("only this folder") sidebar root, or null. Per-window: lives in
+   *  this snapshot (keyed by window UUID) rather than the vault sidecar, so two
+   *  windows on the same vault keep independent isolation. */
+  isolatedRoot?: { folder: NoteFolder; subpath: string } | null
   /** Epoch ms of the last write — drives newest-wins when the synced file and
    *  the local cache disagree (e.g. after working in this vault on another
    *  machine). (#292) */
@@ -1919,6 +1923,18 @@ function normalizeWorkspaceTags(raw: unknown): string[] {
     tags.push(value)
   }
   return tags
+}
+
+function normalizeIsolatedRoot(
+  raw: unknown
+): { folder: NoteFolder; subpath: string } | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  // Notes/inbox tree only, and never the vault root (empty subpath). A stored
+  // folder that no longer exists is handled by the sidebar's auto-exit effect.
+  if (r.folder !== 'inbox') return null
+  if (typeof r.subpath !== 'string' || r.subpath === '') return null
+  return { folder: 'inbox', subpath: r.subpath }
 }
 
 function normalizeWorkspaceSizes(raw: unknown, length: number): number[] {
@@ -2342,6 +2358,16 @@ interface Store {
    * it back to null.
    */
   sidebarRevealRequest: SidebarRevealTarget | null
+  /**
+   * Isolated ("only this folder") sidebar view. When set, the Notes area is
+   * re-rooted at this folder: only its descendants render, with its first
+   * children lifted to the top indentation level. Always a notes/inbox folder
+   * with a non-empty subpath (the vault root is never "isolable"). A pure view
+   * transform — files, search scope, and every other sidebar section are
+   * untouched. Persisted per-window in the workspace snapshot so each window on
+   * the same vault keeps its own isolation.
+   */
+  isolatedRoot: { folder: NoteFolder; subpath: string } | null
   noteListCursorIndex: number
   connectionsCursorIndex: number
   connectionPreview: ConnectionPreviewState | null
@@ -2714,6 +2740,12 @@ interface Store {
   closeSidebarFilter: () => void
   /** Ask the sidebar to reveal + center a target row (or clear the request). */
   requestSidebarReveal: (target: SidebarRevealTarget | null) => void
+  /** Re-root the sidebar's Notes area at `subpath` (a notes/inbox folder). No-op
+   *  for a non-inbox folder or an empty subpath. Opens + focuses the sidebar. */
+  enterIsolation: (folder: NoteFolder, subpath: string) => void
+  /** Leave isolation and reveal + center the folder that was the isolated root
+   *  back in the restored full tree. No-op when not isolated. */
+  exitIsolation: () => void
   setNoteListCursorIndex: (idx: number) => void
   setConnectionsCursorIndex: (idx: number) => void
   setConnectionPreview: (preview: ConnectionPreviewState | null) => void
@@ -3566,6 +3598,9 @@ export const useStore = create<Store>((set, get) => {
           get().vaultSettings,
           null
         ),
+        // No snapshot for this window/vault — clear any isolation carried over
+        // from a previously-open vault.
+        isolatedRoot: null,
         workspaceRestored: true
       })
       scheduleAssetsRefreshForVault(vault)
@@ -3633,6 +3668,7 @@ export const useStore = create<Store>((set, get) => {
           ? snapshot.noteListOpen
           : get().noteListOpen,
       selectedTags: normalizeWorkspaceTags(snapshot.selectedTags),
+      isolatedRoot: normalizeIsolatedRoot(snapshot.isolatedRoot),
       collapsedFolders,
       workspaceRestored: true,
       ...active
@@ -3786,6 +3822,7 @@ export const useStore = create<Store>((set, get) => {
   sidebarFilter: { active: false, query: '' },
   sidebarFilterFocusTick: 0,
   sidebarRevealRequest: null,
+  isolatedRoot: null,
   noteListCursorIndex: 0,
   connectionsCursorIndex: 0,
   connectionPreview: null,
@@ -6423,6 +6460,33 @@ export const useStore = create<Store>((set, get) => {
     set({ sidebarFilter: { active: true, query }, sidebarCursorIndex: 0 }),
   closeSidebarFilter: () => set({ sidebarFilter: { active: false, query: '' } }),
   requestSidebarReveal: (target) => set({ sidebarRevealRequest: target }),
+  enterIsolation: (folder, subpath) => {
+    // Only real notes/inbox sub-folders are isolable (decision: notes tree
+    // only; the vault root is not a "folder").
+    if (folder !== 'inbox' || !subpath) return
+    set({
+      isolatedRoot: { folder, subpath },
+      sidebarOpen: true,
+      focusedPanel: 'sidebar',
+      sidebarCursorIndex: 0,
+    })
+    get().persistWorkspace()
+  },
+  exitIsolation: () => {
+    const prev = get().isolatedRoot
+    if (!prev) return
+    set({ isolatedRoot: null })
+    // Bring the former isolated root back into view, selected and centered, in
+    // the restored full tree (same reveal machinery the filter exit uses).
+    set({
+      sidebarRevealRequest: {
+        kind: 'folder',
+        folder: prev.folder,
+        subpath: prev.subpath,
+      },
+    })
+    get().persistWorkspace()
+  },
   setNoteListCursorIndex: (idx) => set({ noteListCursorIndex: idx }),
   setConnectionsCursorIndex: (idx) => set({ connectionsCursorIndex: idx }),
   setConnectionPreview: (preview) => set({ connectionPreview: preview }),
@@ -7963,7 +8027,8 @@ export const useStore = create<Store>((set, get) => {
       view: state.view,
       sidebarOpen,
       noteListOpen,
-      selectedTags: state.selectedTags
+      selectedTags: state.selectedTags,
+      isolatedRoot: state.isolatedRoot
     })
   },
 

@@ -14,6 +14,7 @@ import { focusPaneInDirection } from './pane-nav'
 import { findLeaf } from './pane-layout'
 import { requestPaneMode } from './pane-mode'
 import { resolveQuickNoteTitle } from './quick-note-title'
+import { selectedInboxFolderForIsolation } from './sidebar-isolation'
 import { getKeymapDisplay, type KeymapId } from './keymaps'
 import { dispatchKeyboardContextMenu, findTabContextMenuTarget } from './keyboard-context-menu'
 import { resolveSystemFolderLabels } from './system-folder-labels'
@@ -979,6 +980,25 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       shortcut: shortcut('global.filterSidebar'),
       keywords: 'filter sidebar narrow incremental fuzzy find files notes slash',
       run: () => getState().openSidebarFilter()
+    },
+    {
+      id: 'view.isolate.folder',
+      title: 'Isolate Selected Folder',
+      category: 'Go',
+      shortcut: shortcut('view.isolateFolder'),
+      keywords: 'isolate focus only this folder scope narrow sidebar',
+      run: () => {
+        const st = getState()
+        const target = selectedInboxFolderForIsolation(st.sidebarCursorIndex)
+        if (target) st.enterIsolation(target.folder, target.subpath)
+      }
+    },
+    {
+      id: 'view.isolate.exit',
+      title: 'Exit Isolated Mode',
+      category: 'Go',
+      keywords: 'isolate exit quit leave unfold full tree sidebar',
+      run: () => getState().exitIsolation()
     }
   )
 

@@ -1874,6 +1874,11 @@ export function VimNav(): JSX.Element | null {
     if (itemType === 'folder') {
       const folder = el.dataset.sidebarFolder as 'inbox' | 'quick' | 'archive' | 'trash'
       const subpath = el.dataset.sidebarSubpath ?? ''
+      // A favorited inbox folder activates into isolation, matching its click.
+      if (el.dataset.sidebarFavorite === 'true' && folder === 'inbox' && subpath) {
+        state.enterIsolation('inbox', subpath)
+        return
+      }
       state.setView({ kind: 'folder', folder, subpath })
       const collapseKey = el.dataset.sidebarKey
       if (collapseKey && state.collapsedFolders.includes(collapseKey)) {

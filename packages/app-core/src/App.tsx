@@ -17,6 +17,8 @@ import { ConfirmHost } from './components/ConfirmHost'
 import { ServerDirectoryPickerHost } from './components/ServerDirectoryPickerHost'
 import { resolveQuickNoteTitle } from './lib/quick-note-title'
 import { isMacPlatform, matchesShortcut, matchesSequenceToken } from './lib/keymaps'
+import { confirmApp } from './lib/confirm-requests'
+import { selectedInboxFolderForIsolation } from './lib/sidebar-isolation'
 import { focusPaneOrEdgePanel } from './lib/pane-nav'
 import { requestPaneMode } from './lib/pane-mode'
 import { recordRendererPerf } from './lib/perf'
@@ -713,6 +715,26 @@ function App(): JSX.Element {
       if (matchesShortcut(e, overrides, 'global.filterSidebar')) {
         e.preventDefault()
         state.openSidebarFilter()
+        return
+      }
+      // Toggle isolated mode. When isolated, quit from anywhere (confirm, since
+      // this can fire from the editor). When not isolated, enter only if the
+      // sidebar is focused and its cursor is on a notes/inbox folder — so an
+      // enter fired from deep in the editor never acts on a stale selection.
+      if (matchesShortcut(e, overrides, 'view.isolateFolder')) {
+        e.preventDefault()
+        if (state.isolatedRoot) {
+          void confirmApp({
+            title: 'Exit isolated mode?',
+            description: 'Show the full note tree again.',
+            confirmLabel: 'Exit',
+          }).then((ok) => {
+            if (ok) useStore.getState().exitIsolation()
+          })
+        } else if (state.focusedPanel === 'sidebar') {
+          const target = selectedInboxFolderForIsolation(state.sidebarCursorIndex)
+          if (target) state.enterIsolation(target.folder, target.subpath)
+        }
         return
       }
       // ⌘2 — toggle connections

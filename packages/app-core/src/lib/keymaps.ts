@@ -107,7 +107,8 @@ export type KeymapId =
   | "tasks.moveTaskDown"
   | "editor.moveLineUp"
   | "editor.moveLineDown"
-  | "editor.find";
+  | "editor.find"
+  | "view.isolateFolder";
 
 export type KeymapOverrides = Partial<Record<KeymapId, string>>;
 
@@ -189,6 +190,16 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     description:
       "Open the sidebar's incremental filter from anywhere. Unbound by default — inside the sidebar '/' already opens it, but in the editor '/' is Vim search, so choose a global binding here.",
     defaultBinding: "",
+  },
+  {
+    id: "view.isolateFolder",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Isolate folder in sidebar",
+    description:
+      "Toggle isolated mode. With a folder selected in the sidebar, isolates it so the Notes area shows only that folder's contents. When already isolated, quits back to the full tree (asks to confirm, since this can fire from the editor). Narrow onto a sub-folder from the folder's context menu or the toolbar's isolate menu.",
+    defaultBinding: "Shift+Mod+I",
   },
   {
     id: "global.toggleConnections",

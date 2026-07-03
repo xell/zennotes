@@ -1,4 +1,5 @@
 import { useStore } from '../store'
+import { IsolateIcon } from './icons'
 import { isTasksTabPath } from '@shared/tasks'
 import { isTagsTabPath } from '@shared/tags'
 import { isHelpTabPath } from '@shared/help'
@@ -10,6 +11,7 @@ import { resolveSystemFolderLabels } from '../lib/system-folder-labels'
 export function TitleBar(): JSX.Element {
   const vault = useStore((s) => s.vault)
   const activeNote = useStore((s) => s.activeNote)
+  const isolatedRoot = useStore((s) => s.isolatedRoot)
   const selectedPath = useStore((s) => s.selectedPath)
   const systemFolderLabels = useStore((s) => s.systemFolderLabels)
   const workspaceMode = useStore((s) => s.workspaceMode)
@@ -58,6 +60,15 @@ export function TitleBar(): JSX.Element {
       className="drag-region glass-titlebar flex h-11 shrink-0 items-center px-4 text-xs text-ink-500"
       style={{ paddingLeft: isMac ? 80 : 12 }}
     >
+      {isolatedRoot && (
+        <div
+          className="mr-2 flex max-w-[40%] shrink-0 items-center gap-1 rounded-md bg-accent/12 px-2 py-0.5 text-2xs font-medium text-accent"
+          title={`Isolated to ${isolatedRoot.subpath}`}
+        >
+          <IsolateIcon width={12} height={12} />
+          <span className="truncate">{isolatedRoot.subpath}</span>
+        </div>
+      )}
       <div className="flex flex-1 items-center justify-center gap-2 text-center tracking-wide">
         {titleContent}
         {workspaceMode === 'remote' && (
