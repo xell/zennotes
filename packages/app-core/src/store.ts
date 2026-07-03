@@ -2752,6 +2752,11 @@ interface Store {
   /** Leave isolation and reveal + center the folder that was the isolated root
    *  back in the restored full tree. No-op when not isolated. */
   exitIsolation: () => void
+  /** Go up one level in isolated mode. Re-roots at the parent folder and reveals
+   *  the folder you left ('moved'); returns 'would-exit' without changing state
+   *  when the parent is the vault root (the caller confirms, then exits); 'noop'
+   *  when not isolated. */
+  goUpIsolation: () => 'moved' | 'would-exit' | 'noop'
   setNoteListCursorIndex: (idx: number) => void
   setConnectionsCursorIndex: (idx: number) => void
   setConnectionPreview: (preview: ConnectionPreviewState | null) => void
@@ -6499,6 +6504,26 @@ export const useStore = create<Store>((set, get) => {
       },
     })
     get().persistWorkspace()
+  },
+  goUpIsolation: () => {
+    const cur = get().isolatedRoot
+    if (!cur) return 'noop'
+    const i = cur.subpath.lastIndexOf('/')
+    const parent = i < 0 ? '' : cur.subpath.slice(0, i)
+    // Parent is the vault root — going up would exit. Leave state untouched so
+    // the caller can confirm first, then call exitIsolation.
+    if (!parent) return 'would-exit'
+    set({ isolatedRoot: { folder: cur.folder, subpath: parent } })
+    // Reveal + center the folder we just left, now a child in the wider view.
+    set({
+      sidebarRevealRequest: {
+        kind: 'folder',
+        folder: cur.folder,
+        subpath: cur.subpath,
+      },
+    })
+    get().persistWorkspace()
+    return 'moved'
   },
   setNoteListCursorIndex: (idx) => set({ noteListCursorIndex: idx }),
   setConnectionsCursorIndex: (idx) => set({ connectionsCursorIndex: idx }),

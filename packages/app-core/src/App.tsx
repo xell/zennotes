@@ -18,7 +18,7 @@ import { ServerDirectoryPickerHost } from './components/ServerDirectoryPickerHos
 import { resolveQuickNoteTitle } from './lib/quick-note-title'
 import { isMacPlatform, matchesShortcut, matchesSequenceToken } from './lib/keymaps'
 import { confirmApp } from './lib/confirm-requests'
-import { selectedInboxFolderForIsolation } from './lib/sidebar-isolation'
+import { selectedInboxFolderForIsolation, goUpIsolationWithConfirm } from './lib/sidebar-isolation'
 import { focusPaneOrEdgePanel } from './lib/pane-nav'
 import { requestPaneMode } from './lib/pane-mode'
 import { recordRendererPerf } from './lib/perf'
@@ -742,6 +742,13 @@ function App(): JSX.Element {
           const target = selectedInboxFolderForIsolation(state.sidebarCursorIndex)
           if (target) state.enterIsolation(target.folder, target.subpath)
         }
+        return
+      }
+      // Isolated mode: go up one level (unbound by default). Same as the
+      // sidebar's '-' key, but works from anywhere. No-op when not isolated.
+      if (matchesShortcut(e, overrides, 'view.isolateUp')) {
+        e.preventDefault()
+        void goUpIsolationWithConfirm()
         return
       }
       // ⌘2 — toggle connections

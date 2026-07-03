@@ -94,6 +94,8 @@ import {
 import { computeTreeVisibility, filterModeForQuery } from "../lib/sidebar-filter";
 import {
   selectedInboxFolderForIsolation,
+  parentSubpath,
+  goUpIsolationWithConfirm,
   type IsolationTarget,
 } from "../lib/sidebar-isolation";
 import { matchesShortcut } from "../lib/keymaps";
@@ -4514,6 +4516,18 @@ export function Sidebar(): JSX.Element {
                   },
                 ]
               : []),
+            {
+              label: (() => {
+                const parent = isolatedRoot
+                  ? parentSubpath(isolatedRoot.subpath)
+                  : "";
+                if (!parent) return "Go up (exits isolation)";
+                const name = parent.split("/").slice(-1)[0];
+                return `Go up to ${name.length > 20 ? `${name.slice(0, 20)}…` : name}`;
+              })(),
+              onSelect: () => void goUpIsolationWithConfirm(),
+            },
+            { kind: "separator" as const },
             {
               label: "Quit isolated mode",
               onSelect: () => exitIsolation(),

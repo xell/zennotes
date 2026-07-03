@@ -33,6 +33,7 @@ import {
 } from '../lib/keyboard-context-menu'
 import { navigateActiveBuffer } from '../lib/buffer-navigation'
 import { focusEditorNormalMode } from '../lib/editor-focus'
+import { goUpIsolationWithConfirm } from '../lib/sidebar-isolation'
 
 function escapeForAttr(value: string): string {
   if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(value)
@@ -1039,6 +1040,16 @@ export function VimNav(): JSX.Element | null {
     const key = e.key
     const overrides = state.keymapOverrides
     if (state.focusedPanel !== 'sidebar') state.setFocusedPanel('sidebar')
+    // Isolated-mode "go up" ('-' by default). Acts on isolatedRoot, not the
+    // cursor row, so it works from any row and even in an empty isolated folder
+    // — handle it before the item-count guards below. Only claimed when
+    // isolated, so '-' stays free otherwise.
+    if (state.isolatedRoot && matchesSequenceToken(e, overrides, 'nav.isolateUp')) {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      void goUpIsolationWithConfirm()
+      return
+    }
     const items = getIndexedElements('[data-sidebar-idx]', 'sidebarIdx')
     const count = items.length
     const max = count - 1

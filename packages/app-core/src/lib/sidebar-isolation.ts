@@ -27,3 +27,27 @@ export function selectedInboxFolderForIsolation(
   const subpath = el.dataset.sidebarSubpath ?? ''
   return subpath ? { folder: 'inbox', subpath } : null
 }
+
+/** Parent of a folder subpath, or '' when it is a single top-level segment (its
+ *  parent is the vault root, which cannot be isolated). "a/b/c" → "a/b". */
+export function parentSubpath(subpath: string): string {
+  const i = subpath.lastIndexOf('/')
+  return i < 0 ? '' : subpath.slice(0, i)
+}
+
+/** Go up one level in isolated mode. Moves to the parent folder (revealing the
+ *  folder you left), or — when the parent is the vault root — confirms, then
+ *  exits isolation. Shared by the `-` key, the global shortcut, the dropdown,
+ *  and the command so the confirm/exit behaviour lives in one place. */
+export async function goUpIsolationWithConfirm(): Promise<void> {
+  const { useStore } = await import('../store')
+  const { confirmApp } = await import('./confirm-requests')
+  const outcome = useStore.getState().goUpIsolation()
+  if (outcome !== 'would-exit') return
+  const ok = await confirmApp({
+    title: 'Exit isolated mode?',
+    description: 'Going up from here leaves the isolated folder. Show the full note tree again?',
+    confirmLabel: 'Exit',
+  })
+  if (ok) useStore.getState().exitIsolation()
+}

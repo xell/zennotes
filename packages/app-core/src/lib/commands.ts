@@ -14,7 +14,7 @@ import { focusPaneInDirection } from './pane-nav'
 import { findLeaf } from './pane-layout'
 import { requestPaneMode } from './pane-mode'
 import { resolveQuickNoteTitle } from './quick-note-title'
-import { selectedInboxFolderForIsolation } from './sidebar-isolation'
+import { selectedInboxFolderForIsolation, goUpIsolationWithConfirm } from './sidebar-isolation'
 import { getKeymapDisplay, type KeymapId } from './keymaps'
 import { dispatchKeyboardContextMenu, findTabContextMenuTarget } from './keyboard-context-menu'
 import { resolveSystemFolderLabels } from './system-folder-labels'
@@ -990,6 +990,14 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
         const target = selectedInboxFolderForIsolation(st.sidebarCursorIndex)
         if (target) st.enterIsolation(target.folder, target.subpath)
       }
+    },
+    {
+      id: 'view.isolate.up',
+      title: 'Isolate: Go Up One Level',
+      category: 'Go',
+      shortcut: shortcut('view.isolateUp'),
+      keywords: 'isolate go up parent folder level out zoom sidebar',
+      run: () => void goUpIsolationWithConfirm()
     },
     {
       id: 'view.isolate.exit',

@@ -93,6 +93,7 @@ export type KeymapId =
   | "nav.openResult"
   | "nav.back"
   | "nav.toggleFolder"
+  | "nav.isolateUp"
   | "nav.filter"
   | "nav.filterNext"
   | "nav.filterPrev"
@@ -109,7 +110,8 @@ export type KeymapId =
   | "editor.moveLineUp"
   | "editor.moveLineDown"
   | "editor.find"
-  | "view.isolateFolder";
+  | "view.isolateFolder"
+  | "view.isolateUp";
 
 export type KeymapOverrides = Partial<Record<KeymapId, string>>;
 
@@ -211,6 +213,16 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     description:
       "Toggle isolated mode. With a folder selected in the sidebar, isolates it so the Notes area shows only that folder's contents. When already isolated, quits back to the full tree (asks to confirm, since this can fire from the editor). Narrow onto a sub-folder from the folder's context menu or the toolbar's isolate menu.",
     defaultBinding: "Shift+Mod+I",
+  },
+  {
+    id: "view.isolateUp",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Isolated mode: go up one level",
+    description:
+      "Go up one level in isolated mode from anywhere: re-root at the parent folder, or exit isolation (after a confirm) when already at a top-level folder. The sidebar's '-' key does the same. Unbound by default.",
+    defaultBinding: "",
   },
   {
     id: "global.toggleConnections",
@@ -982,6 +994,17 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Toggle folder",
     description: "Expand or collapse the current sidebar folder.",
     defaultBinding: "o",
+    maxTokens: 1,
+  },
+  {
+    id: "nav.isolateUp",
+    kind: "sequence",
+    scope: "lists",
+    group: "navigation",
+    title: "Isolated mode: go up one level",
+    description:
+      "While the sidebar is focused and isolated, re-root at the parent folder (revealing the folder you left). From a top-level folder it exits isolation after a confirm. Does nothing when not isolated. Only fires on the sidebar panel, so it still types a hyphen in the filter input.",
+    defaultBinding: "-",
     maxTokens: 1,
   },
   {
