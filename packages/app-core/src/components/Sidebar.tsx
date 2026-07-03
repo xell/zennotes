@@ -1515,10 +1515,16 @@ export function Sidebar(): JSX.Element {
       return { value: EMPTY_FILTER, sections, matchCount: 0 };
     }
     const startedAt = performance.now();
+    // Count matching folders (bare-row name matches) alongside matching
+    // notes/assets. `folderKeys` also holds ancestor folders shown only for
+    // hierarchy, so it can't be used for the count — `matchedFolders` is the
+    // match-only subset.
+    let matchedFolderCount = 0;
     for (const folder of ["quick", "inbox", "archive", "trash"] as const) {
       const v = computeTreeVisibility(trees[folder], filterQuery, filterMode);
       for (const p of v.leaves) leaves.add(p);
       for (const sub of v.folderSubpaths) folderKeys.add(`${folder}:${sub}`);
+      matchedFolderCount += v.matchedFolders.size;
       if (v.leaves.size > 0 || v.folderSubpaths.size > 0) sections[folder] = true;
     }
     recordRendererPerf("sidebar.filter", performance.now() - startedAt, {
@@ -1528,7 +1534,7 @@ export function Sidebar(): JSX.Element {
     return {
       value: { filtering: true, leaves, folderKeys } as SidebarFilterContextValue,
       sections,
-      matchCount: leaves.size,
+      matchCount: leaves.size + matchedFolderCount,
     };
   }, [filtering, filterQuery, filterMode, trees]);
 

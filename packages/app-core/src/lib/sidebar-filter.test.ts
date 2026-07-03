@@ -110,12 +110,15 @@ describe('computeTreeVisibility', () => {
       children: [node('Sub', 'Projects/Sub')]
     })
     const root = node('inbox', '', { children: [projects] })
-    const { leaves, folderSubpaths } = computeTreeVisibility(root, 'projects')
+    const { leaves, folderSubpaths, matchedFolders } = computeTreeVisibility(root, 'projects')
     // The folder itself is visible…
     expect(folderSubpaths.has('Projects')).toBe(true)
-    // …but its non-matching children stay pruned (bare row).
+    // …and counts as a match (its name matched).
+    expect(matchedFolders.has('Projects')).toBe(true)
+    // …but its non-matching children stay pruned (bare row) and don't count.
     expect(leaves.has('inbox/Projects/unrelated.md')).toBe(false)
     expect(folderSubpaths.has('Projects/Sub')).toBe(false)
+    expect(matchedFolders.has('Projects/Sub')).toBe(false)
   })
 
   it('keeps a folder visible when a descendant matches even if the folder name does not', () => {
@@ -126,8 +129,11 @@ describe('computeTreeVisibility', () => {
         })
       ]
     })
-    const { folderSubpaths } = computeTreeVisibility(root, 'needle')
+    const { folderSubpaths, matchedFolders } = computeTreeVisibility(root, 'needle')
     expect(folderSubpaths.has('Random')).toBe(true)
+    // Shown for hierarchy, but its name doesn't match — not counted as a match.
+    expect(matchedFolders.has('Random')).toBe(false)
+    expect(matchedFolders.size).toBe(0)
   })
 
   it('drops folders with no match anywhere', () => {

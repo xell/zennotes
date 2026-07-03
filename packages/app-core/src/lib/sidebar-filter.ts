@@ -33,8 +33,15 @@ export interface FilterTreeNode {
 export interface SidebarFilterVisibility {
   /** Note & asset paths (globally unique — they include the top-level folder). */
   leaves: Set<string>
-  /** Folder subpaths to render within this tree (root '' is never included). */
+  /** Folder subpaths to render within this tree (root '' is never included).
+   *  Includes ancestor folders kept only to preserve hierarchy, so this is a
+   *  superset of the folders that actually match — use `matchedFolders` to
+   *  count matches. */
   folderSubpaths: Set<string>
+  /** Subpaths of folders whose *own name* matches the query (the bare-row
+   *  matches). A subset of `folderSubpaths` that excludes ancestors shown only
+   *  for context — this is what a match count should add to the leaf count. */
+  matchedFolders: Set<string>
 }
 
 /**
@@ -85,8 +92,9 @@ export function computeTreeVisibility(
 ): SidebarFilterVisibility {
   const leaves = new Set<string>()
   const folderSubpaths = new Set<string>()
+  const matchedFolders = new Set<string>()
   const q = query.trim()
-  if (!q) return { leaves, folderSubpaths }
+  if (!q) return { leaves, folderSubpaths, matchedFolders }
 
   // Returns whether `node` should be visible (self matches or has a visible
   // descendant). Folder membership is recorded as a side effect on the way up.
@@ -114,9 +122,10 @@ export function computeTreeVisibility(
     const selfMatches = !isRoot && matchesQuery(q, node.name, mode)
     const visible = hasVisibleDescendant || selfMatches
     if (!isRoot && visible) folderSubpaths.add(node.subpath)
+    if (selfMatches) matchedFolders.add(node.subpath)
     return visible
   }
 
   walk(root, true)
-  return { leaves, folderSubpaths }
+  return { leaves, folderSubpaths, matchedFolders }
 }
