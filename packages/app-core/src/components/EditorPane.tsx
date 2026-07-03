@@ -640,6 +640,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     activeTab ? s.noteComments[activeTab] ?? EMPTY_COMMENTS : EMPTY_COMMENTS
   )
   const activeCommentId = useStore((s) => s.activeCommentId)
+  const quicklookInfo = useStore((s) => s.quicklookInfo)
   const notes = useStore((s) => s.notes)
   const assetFiles = useStore((s) => s.assetFiles)
   const vault = useStore((s) => s.vault)
@@ -3331,6 +3332,18 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
           {paneDropEdge && <PaneDropOverlay edge={paneDropEdge} />}
           {assetDropActive && (
             <div className="pointer-events-none absolute inset-3 z-20 rounded-xl border-2 border-dashed border-accent/55 bg-accent/8" />
+          )}
+          {isActive && quicklookInfo && (
+            <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-paper-50/95 backdrop-blur-sm">
+              <div className="flex max-w-full flex-col items-center gap-3 px-6 text-center">
+                <span className="text-2xs font-medium uppercase tracking-[0.16em] text-ink-400">
+                  Folder
+                </span>
+                <span className="max-w-full break-all font-mono text-sm text-ink-700">
+                  {quicklookInfo}
+                </span>
+              </div>
+            </div>
           )}
           {isTasksTabPath(activeTab) ? (
             <TasksView />

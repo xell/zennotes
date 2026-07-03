@@ -43,9 +43,8 @@ import {
   ExpandAllIcon,
   FilterIcon,
   IsolateIcon,
+  QuicklookIcon,
   PaperclipIcon,
-  FolderPlusIcon,
-  NotePlusIcon,
   PanelLeftIcon,
   PlusIcon,
   SearchIcon,
@@ -178,17 +177,6 @@ function sidebarAnchorSelectorForElement(el: HTMLElement): string | null {
   }
 
   return `[data-sidebar-type="${escapeForAttr(type)}"]`;
-}
-
-function defaultNewNoteTarget(
-  activeNote: NoteMeta | null,
-  vaultSettings: ReturnType<typeof useStore.getState>["vaultSettings"],
-): { folder: NoteFolder; subpath: string } {
-  if (!activeNote) return { folder: "inbox", subpath: "" };
-  return {
-    folder: activeNote.folder,
-    subpath: noteFolderSubpath(activeNote, vaultSettings),
-  };
 }
 
 function remoteWorkspaceLabel(baseUrl: string | null): string {
@@ -428,6 +416,8 @@ export function Sidebar(): JSX.Element {
   const isolatedRoot = useStore((s) => s.isolatedRoot);
   const enterIsolation = useStore((s) => s.enterIsolation);
   const exitIsolation = useStore((s) => s.exitIsolation);
+  const quicklookActive = useStore((s) => s.quicklookActive);
+  const toggleQuicklook = useStore((s) => s.toggleQuicklook);
   const activeNote = useStore((s) => s.activeNote);
   const activeDirty = useStore((s) => s.activeDirty);
   const vaultSettings = useStore((s) => s.vaultSettings);
@@ -458,7 +448,6 @@ export function Sidebar(): JSX.Element {
   const createDrawingAndOpen = useStore((s) => s.createDrawingAndOpen);
   const toggleFavorite = useStore((s) => s.toggleFavorite);
   const createDatabase = useStore((s) => s.createDatabase);
-  const createNoteInChosenFolder = useStore((s) => s.createNoteInChosenFolder);
   const openTemplatePaletteForFolder = useStore((s) => s.openTemplatePaletteForFolder);
   const quickNoteDateTitle = useStore((s) => s.quickNoteDateTitle);
   const quickNoteTitlePrefix = useStore((s) => s.quickNoteTitlePrefix);
@@ -1547,6 +1536,37 @@ export function Sidebar(): JSX.Element {
     );
     return () => cancelAnimationFrame(raf);
   }, [sidebarCursorIndex, notes, allFolders, collapsed, filtering, isolatedRoot]);
+
+  // Quicklook: when active, previewing follows the sidebar cursor. Reads the
+  // current row from the DOM (so it works for plain nav, filter results, and
+  // isolated mode alike, all of which drive sidebarCursorIndex) and previews by
+  // row type: a note or asset in the no-focus preview tab, a folder as a
+  // centered path. Debounced so holding j through a run of notes only loads
+  // where the cursor rests.
+  useEffect(() => {
+    if (!quicklookActive) return;
+    const timer = window.setTimeout(() => {
+      const el = document.querySelector<HTMLElement>(
+        `[data-sidebar-idx="${sidebarCursorIndex}"]`,
+      );
+      if (!el) return;
+      const st = useStore.getState();
+      const type = el.dataset.sidebarType;
+      if (type === "note" && el.dataset.sidebarPath) {
+        void st.quicklookShowPath(el.dataset.sidebarPath);
+      } else if (type === "asset" && el.dataset.sidebarPath) {
+        void st.quicklookShowPath(assetTabPath(el.dataset.sidebarPath));
+      } else if (type === "folder" && el.dataset.sidebarFolder) {
+        const folder = el.dataset.sidebarFolder as NoteFolder;
+        const subpath = el.dataset.sidebarSubpath ?? "";
+        st.quicklookShowFolder(
+          vaultRelativeFolderPath(folder, subpath, vaultSettings) || folder,
+        );
+      }
+      // Other rows (tags, system) leave the last preview in place.
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [sidebarCursorIndex, quicklookActive, vaultSettings]);
 
   // ---- Sidebar filter: input focus, cursor navigation, open, exit ----------
   const sidebarFilterInputRef = useRef<HTMLInputElement | null>(null);
@@ -3384,6 +3404,11 @@ export function Sidebar(): JSX.Element {
     // While filtering, the filter owns the cursor and scroll position — don't
     // let the active-view auto-scroll fight it.
     if (isSidebarFilterActive()) return;
+    // Same during Quicklook: each preview changes selectedPath, and re-deriving
+    // the cursor from it here would fight the user's j/k (and resolve to a
+    // folder row in non-unified mode). The cursor stays user-driven; VimNav
+    // handles scrolling the cursor row into view.
+    if (quicklookActive) return;
 
     const findTarget = (): HTMLElement | null => {
       if (
@@ -3509,6 +3534,7 @@ export function Sidebar(): JSX.Element {
     tagsViewActive,
     selectedTags,
     trashViewActive,
+    quicklookActive,
   ]);
 
   return (
@@ -3630,68 +3656,15 @@ export function Sidebar(): JSX.Element {
             <IsolateIcon />
           </IconBtn>
           <IconBtn
-            title="New note (choose folder)"
-            onClick={() => {
-              const state = useStore.getState();
-              const target = defaultNewNoteTarget(
-                state.activeNote,
-                state.vaultSettings,
-              );
-              // While isolated, default the picker into the isolated root.
-              // Otherwise prefill from the current context (only the notes area
-              // is pickable, so archive/quick fall back to the root).
-              const initialPath = state.isolatedRoot
-                ? state.isolatedRoot.subpath
-                : target.folder === "inbox"
-                  ? target.subpath
-                  : "";
-              void createNoteInChosenFolder({ initialPath });
-            }}
+            title={
+              quicklookActive
+                ? "Quicklook: on — navigate to preview (⌘⌥U)"
+                : "Quicklook: preview as you navigate (⌘⌥U)"
+            }
+            active={quicklookActive}
+            onClick={() => toggleQuicklook()}
           >
-            <NotePlusIcon />
-          </IconBtn>
-          <IconBtn
-            title="New folder"
-            onClick={async () => {
-              const st = useStore.getState();
-              const view = st.view;
-              // Quick Notes is intentionally flat — fall back to inbox
-              // when the user is currently viewing it.
-              const noFolders =
-                view.kind === "folder" &&
-                (view.folder === "trash" || view.folder === "quick");
-              // While isolated, new folders land inside the isolated root.
-              const parentFolder: NoteFolder = st.isolatedRoot
-                ? "inbox"
-                : view.kind === "folder" && !noFolders
-                  ? view.folder
-                  : "inbox";
-              const parentSub = st.isolatedRoot
-                ? st.isolatedRoot.subpath
-                : view.kind === "folder" && !noFolders
-                  ? view.subpath
-                  : "";
-              const name = await promptApp({
-                title: "New folder",
-                placeholder: "Folder name",
-                okLabel: "Create",
-                validate: (v) => {
-                  if (v.includes("/")) return 'Folder name cannot contain "/"';
-                  return null;
-                },
-              });
-              if (!name) return;
-              const clean = name.trim().replace(/^\/+|\/+$/g, "");
-              if (!clean) return;
-              const next = parentSub ? `${parentSub}/${clean}` : clean;
-              try {
-                await createFolderAction(parentFolder, next);
-              } catch (err) {
-                window.alert((err as Error).message);
-              }
-            }}
-          >
-            <FolderPlusIcon />
+            <QuicklookIcon />
           </IconBtn>
           <IconBtn
             title={`Sort: ${sortOrderLabel(noteSortOrder)}${groupByKind ? ", Group by kind" : ""}`}

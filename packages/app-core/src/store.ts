@@ -2371,6 +2371,15 @@ interface Store {
    * the same vault keeps its own isolation.
    */
   isolatedRoot: { folder: NoteFolder; subpath: string } | null
+  /**
+   * Quicklook: a transient browsing mode where moving the sidebar cursor over a
+   * row previews it in the active pane's preview tab without taking focus (you
+   * stay in the sidebar). Notes and assets render in the preview tab;
+   * `quicklookInfo` holds the centered path shown for a folder row (which has no
+   * file to preview). Session-only — never persisted.
+   */
+  quicklookActive: boolean
+  quicklookInfo: string | null
   noteListCursorIndex: number
   connectionsCursorIndex: number
   connectionPreview: ConnectionPreviewState | null
@@ -2757,6 +2766,17 @@ interface Store {
    *  when the parent is the vault root (the caller confirms, then exits); 'noop'
    *  when not isolated. */
   goUpIsolation: () => 'moved' | 'would-exit' | 'noop'
+  /** Toggle Quicklook. On enable, focuses the sidebar; on disable, closes the
+   *  preview tab and clears the folder overlay. */
+  toggleQuicklook: () => void
+  /** Preview a note or asset-tab path in the active pane's preview tab without
+   *  taking focus (Quicklook). Clears any folder overlay. */
+  quicklookShowPath: (path: string) => Promise<void>
+  /** Show a folder's path centered in the Quicklook pane (folders have no file
+   *  to preview). */
+  quicklookShowFolder: (displayPath: string) => void
+  /** Close the active pane's Quicklook preview tab, restoring the prior tab. */
+  closeQuicklookPreview: () => void
   setNoteListCursorIndex: (idx: number) => void
   setConnectionsCursorIndex: (idx: number) => void
   setConnectionPreview: (preview: ConnectionPreviewState | null) => void
@@ -3323,8 +3343,12 @@ export const useStore = create<Store>((set, get) => {
   const selectNoteImpl = async (
     relPath: string | null,
     historyMode: 'push' | 'preserve' = 'push',
-    opts?: { preview?: boolean }
+    opts?: { preview?: boolean; focus?: boolean }
   ): Promise<boolean> => {
+    // Quicklook previews without taking focus: keep `focusedPanel` as-is so the
+    // editor (which only focuses when focusedPanel === 'editor') never pulls the
+    // user out of the sidebar.
+    const focusPatch = opts?.focus === false ? {} : { focusedPanel: 'editor' as const }
     const startedAt = performance.now()
     const state = get()
     const activeLeaf = findLeaf(state.paneLayout, state.activePaneId)
@@ -3375,9 +3399,12 @@ export const useStore = create<Store>((set, get) => {
       const latest = get()
       const leafNow = findLeaf(latest.paneLayout, latest.activePaneId)
       if (!leafNow) return false
+      // Quicklook previews assets (`zen://asset/…`) through this branch too:
+      // route them into the ephemeral preview slot when `preview` is set.
       const nextLayout =
-        updateLeaf(latest.paneLayout, leafNow.id, (l) => leafWithAddedTab(l, relPath)) ??
-        latest.paneLayout
+        updateLeaf(latest.paneLayout, leafNow.id, (l) =>
+          opts?.preview ? leafWithPreviewTab(l, relPath) : leafWithAddedTab(l, relPath)
+        ) ?? latest.paneLayout
       set({
         paneLayout: nextLayout,
         loadingNote: false,
@@ -3438,7 +3465,7 @@ export const useStore = create<Store>((set, get) => {
             : state.noteForwardstack,
         pendingJumpLocation: null,
         loadingNote: false,
-        focusedPanel: 'editor',
+        ...focusPatch,
         ...activeFieldsFrom(nextLayout, state.activePaneId, state.noteContents, state.noteDirty)
       })
       recordRendererPerf('note.open.cached', performance.now() - startedAt, {
@@ -3491,7 +3518,7 @@ export const useStore = create<Store>((set, get) => {
         noteContents: contents,
         noteDirty: dirty,
         loadingNote: false,
-        focusedPanel: 'editor',
+        ...focusPatch,
         ...activeFieldsFrom(nextLayout, s.activePaneId, contents, dirty),
         noteBackstack: nextBackstack,
         noteForwardstack: nextForwardstack,
@@ -3835,6 +3862,8 @@ export const useStore = create<Store>((set, get) => {
   sidebarFocusTick: 0,
   sidebarRevealRequest: null,
   isolatedRoot: null,
+  quicklookActive: false,
+  quicklookInfo: null,
   noteListCursorIndex: 0,
   connectionsCursorIndex: 0,
   connectionPreview: null,
@@ -6524,6 +6553,27 @@ export const useStore = create<Store>((set, get) => {
     })
     get().persistWorkspace()
     return 'moved'
+  },
+  toggleQuicklook: () => {
+    if (get().quicklookActive) {
+      get().closeQuicklookPreview()
+      set({ quicklookActive: false, quicklookInfo: null })
+    } else {
+      set({ quicklookActive: true })
+      // Focus the sidebar so j/k drive the preview immediately, even when
+      // toggled from the command palette while the editor was focused.
+      get().focusSidebar()
+    }
+  },
+  quicklookShowPath: async (path) => {
+    set({ quicklookInfo: null })
+    await selectNoteImpl(path, 'preserve', { preview: true, focus: false })
+  },
+  quicklookShowFolder: (displayPath) => set({ quicklookInfo: displayPath }),
+  closeQuicklookPreview: () => {
+    const s = get()
+    const leaf = findLeaf(s.paneLayout, s.activePaneId)
+    if (leaf?.previewTab) void get().closeTabInPane(s.activePaneId, leaf.previewTab)
   },
   setNoteListCursorIndex: (idx) => set({ noteListCursorIndex: idx }),
   setConnectionsCursorIndex: (idx) => set({ connectionsCursorIndex: idx }),

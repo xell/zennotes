@@ -111,7 +111,8 @@ export type KeymapId =
   | "editor.moveLineDown"
   | "editor.find"
   | "view.isolateFolder"
-  | "view.isolateUp";
+  | "view.isolateUp"
+  | "view.quicklook";
 
 export type KeymapOverrides = Partial<Record<KeymapId, string>>;
 
@@ -223,6 +224,16 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     description:
       "Go up one level in isolated mode from anywhere: re-root at the parent folder, or exit isolation (after a confirm) when already at a top-level folder. The sidebar's '-' key does the same. Unbound by default.",
     defaultBinding: "",
+  },
+  {
+    id: "view.quicklook",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Toggle Quicklook",
+    description:
+      "Toggle Quicklook, a browsing mode where moving the sidebar cursor (j/k, arrows, filter results) previews each note or asset in the pane without leaving the sidebar; a folder shows its path. Enter opens the current item for real. Exit closes the preview.",
+    defaultBinding: "Alt+Mod+U",
   },
   {
     id: "global.toggleConnections",

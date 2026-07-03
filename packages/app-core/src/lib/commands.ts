@@ -1005,6 +1005,14 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       category: 'Go',
       keywords: 'isolate exit quit leave unfold full tree sidebar',
       run: () => getState().exitIsolation()
+    },
+    {
+      id: 'view.quicklook',
+      title: 'Toggle Quicklook',
+      category: 'Go',
+      shortcut: shortcut('view.quicklook'),
+      keywords: 'quicklook quick look preview peek browse sidebar space',
+      run: () => getState().toggleQuicklook()
     }
   )
 

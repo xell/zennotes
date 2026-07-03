@@ -45,6 +45,13 @@ export const IsolateIcon = (p: IconProps): JSX.Element => (
   </I>
 )
 
+export const QuicklookIcon = (p: IconProps): JSX.Element => (
+  <I {...p}>
+    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+    <circle cx="12" cy="12" r="3" />
+  </I>
+)
+
 export const TableIcon = (p: IconProps): JSX.Element => (
   <I {...p}>
     <rect x="3" y="3" width="18" height="18" rx="2" />

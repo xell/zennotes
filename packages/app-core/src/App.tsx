@@ -751,6 +751,12 @@ function App(): JSX.Element {
         void goUpIsolationWithConfirm()
         return
       }
+      // Toggle Quicklook (⌘⌥U): preview-as-you-navigate in the sidebar.
+      if (matchesShortcut(e, overrides, 'view.quicklook')) {
+        e.preventDefault()
+        state.toggleQuicklook()
+        return
+      }
       // ⌘2 — toggle connections
       if (matchesShortcut(e, overrides, 'global.toggleConnections')) {
         e.preventDefault()

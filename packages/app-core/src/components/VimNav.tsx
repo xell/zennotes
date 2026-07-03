@@ -1050,7 +1050,17 @@ export function VimNav(): JSX.Element | null {
       void goUpIsolationWithConfirm()
       return
     }
-    const items = getIndexedElements('[data-sidebar-idx]', 'sidebarIdx')
+    let items = getIndexedElements('[data-sidebar-idx]', 'sidebarIdx')
+    // Quicklook constrains the cursor to rows that actually have a preview —
+    // notes, assets, and folders — so j/k can't wander onto the vault header,
+    // tags, System rows, or the bottom toolbar (which have nothing to show).
+    if (state.quicklookActive) {
+      const previewable = items.filter((el) => {
+        const t = el.dataset.sidebarType
+        return t === 'note' || t === 'asset' || t === 'folder'
+      })
+      if (previewable.length > 0) items = previewable
+    }
     const count = items.length
     const max = count - 1
     const currentPos = findPositionByIndex(items, 'sidebarIdx', state.sidebarCursorIndex)

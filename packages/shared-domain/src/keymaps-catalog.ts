@@ -36,6 +36,7 @@ export const KEYMAP_CATALOG: KeymapCatalogEntry[] = [
   { id: "global.filterSidebar", group: "global", defaultBinding: "", title: "Filter sidebar" },
   { id: "view.isolateFolder", group: "global", defaultBinding: "Shift+Mod+I", title: "Isolate folder in sidebar" },
   { id: "view.isolateUp", group: "global", defaultBinding: "", title: "Isolated mode: go up one level" },
+  { id: "view.quicklook", group: "global", defaultBinding: "Alt+Mod+U", title: "Toggle Quicklook" },
   { id: "global.toggleConnections", group: "global", defaultBinding: "Mod+2", title: "Toggle connections panel" },
   { id: "global.toggleOutlinePanel", group: "global", defaultBinding: "Mod+3", title: "Toggle outline panel" },
   { id: "global.toggleCommentsPanel", group: "global", defaultBinding: "Shift+Mod+C", title: "Toggle comments panel" },
