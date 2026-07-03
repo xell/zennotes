@@ -6486,12 +6486,25 @@ export const useStore = create<Store>((set, get) => {
     savePrefs(collectPrefs(get()))
   },
   setFocusedPanel: (panel) => set({ focusedPanel: panel }),
-  focusSidebar: () =>
-    set((s) => ({
+  focusSidebar: () => {
+    const s = get()
+    // Land the cursor on the note being edited. The plain active-view
+    // auto-scroll does this too, but it runs once and loses the fresh-restart
+    // render race (leaving the cursor on a stale/previous-tab row) and can be
+    // pre-empted by its recent-pointer branch. The reveal machinery retries
+    // across frames until the row exists, so it wins deterministically.
+    const reveal: SidebarRevealTarget | null = s.activeNote
+      ? { kind: 'leaf', path: s.activeNote.path }
+      : null
+    set({
       sidebarOpen: true,
       focusedPanel: 'sidebar',
       sidebarFocusTick: s.sidebarFocusTick + 1,
-    })),
+      // Don't clobber a pending reveal (e.g. filter/isolation exit) when there
+      // is no active note to target.
+      ...(reveal ? { sidebarRevealRequest: reveal } : {}),
+    })
+  },
   setSidebarCursorIndex: (idx) => set({ sidebarCursorIndex: idx }),
   openSidebarFilter: () =>
     set((s) => ({

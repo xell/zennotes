@@ -593,6 +593,12 @@ export function VimNav(): JSX.Element | null {
               .querySelector<HTMLElement>('[data-calendar-panel]')
               ?.focus({ preventScroll: true })
           })
+        } else if (next === 'sidebar' && state.activeNote) {
+          // Landing on the sidebar: reveal the note being edited (retry-based,
+          // so it survives the render race) instead of scrolling to a stale
+          // cursor row — same behaviour as the Focus Sidebar command.
+          ;(document.activeElement as HTMLElement)?.blur()
+          state.requestSidebarReveal({ kind: 'leaf', path: state.activeNote.path })
         } else {
           // Steal focus away from the editor so it stops processing keys
           ;(document.activeElement as HTMLElement)?.blur()
