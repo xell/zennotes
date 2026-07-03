@@ -6401,6 +6401,11 @@ export const useStore = create<Store>((set, get) => {
   setSidebarCursorIndex: (idx) => set({ sidebarCursorIndex: idx }),
   openSidebarFilter: () =>
     set((s) => ({
+      // Force the sidebar open and focused so this works as a global entry
+      // point (command palette / toolbar button / global shortcut), not only
+      // from an already-focused sidebar. Idempotent when already open/focused.
+      sidebarOpen: true,
+      focusedPanel: 'sidebar',
       sidebarFilter: { active: true, query: s.sidebarFilter.query },
       sidebarFilterFocusTick: s.sidebarFilterFocusTick + 1,
     })),

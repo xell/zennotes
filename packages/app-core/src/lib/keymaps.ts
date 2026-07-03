@@ -15,6 +15,7 @@ export type KeymapId =
   | "global.newQuickNote"
   | "global.openSettings"
   | "global.toggleSidebar"
+  | "global.filterSidebar"
   | "global.toggleConnections"
   | "global.toggleOutlinePanel"
   | "global.toggleCommentsPanel"
@@ -177,6 +178,16 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Toggle sidebar",
     description: "Hide or show the left sidebar.",
     defaultBinding: "Mod+1",
+  },
+  {
+    id: "global.filterSidebar",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Filter sidebar",
+    description:
+      "Open the sidebar's incremental filter from anywhere. Unbound by default — inside the sidebar '/' already opens it, but in the editor '/' is Vim search, so choose a global binding here.",
+    defaultBinding: "",
   },
   {
     id: "global.toggleConnections",

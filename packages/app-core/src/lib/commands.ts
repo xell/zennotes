@@ -971,6 +971,14 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
         st.setFocusedPanel('editor')
         requestAnimationFrame(() => useStore.getState().editorViewRef?.focus())
       }
+    },
+    {
+      id: 'nav.filter.sidebar',
+      title: 'Filter Sidebar…',
+      category: 'Go',
+      shortcut: shortcut('global.filterSidebar'),
+      keywords: 'filter sidebar narrow incremental fuzzy find files notes slash',
+      run: () => getState().openSidebarFilter()
     }
   )
 

@@ -707,6 +707,14 @@ function App(): JSX.Element {
         state.toggleSidebar()
         return
       }
+      // Open the sidebar's incremental filter from anywhere. Unbound by default:
+      // inside the sidebar `/` already opens it, but in the editor `/` is Vim
+      // search, so a global binding is left for the user to choose in Settings.
+      if (matchesShortcut(e, overrides, 'global.filterSidebar')) {
+        e.preventDefault()
+        state.openSidebarFilter()
+        return
+      }
       // ⌘2 — toggle connections
       if (matchesShortcut(e, overrides, 'global.toggleConnections')) {
         e.preventDefault()

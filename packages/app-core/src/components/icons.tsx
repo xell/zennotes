@@ -29,6 +29,12 @@ export const SearchIcon = (p: IconProps): JSX.Element => (
   </I>
 )
 
+export const FilterIcon = (p: IconProps): JSX.Element => (
+  <I {...p}>
+    <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />
+  </I>
+)
+
 export const TableIcon = (p: IconProps): JSX.Element => (
   <I {...p}>
     <rect x="3" y="3" width="18" height="18" rx="2" />

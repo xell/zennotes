@@ -41,6 +41,7 @@ import {
   DocumentIcon,
   ExcalidrawIcon,
   ExpandAllIcon,
+  FilterIcon,
   PaperclipIcon,
   FolderPlusIcon,
   NotePlusIcon,
@@ -414,6 +415,7 @@ export function Sidebar(): JSX.Element {
   const focusedPanel = useStore((s) => s.focusedPanel);
   const sidebarCursorIndex = useStore((s) => s.sidebarCursorIndex);
   const sidebarFilter = useStore((s) => s.sidebarFilter);
+  const openSidebarFilter = useStore((s) => s.openSidebarFilter);
   const setSidebarFilterQuery = useStore((s) => s.setSidebarFilterQuery);
   const closeSidebarFilter = useStore((s) => s.closeSidebarFilter);
   const activeNote = useStore((s) => s.activeNote);
@@ -1626,19 +1628,32 @@ export function Sidebar(): JSX.Element {
 
   // Focus the filter input whenever it opens *or* `/` is pressed again while it
   // is already open (after the first Escape blurred it to the panel). The tick
-  // re-runs this even when `active` didn't change. Cursor lands at the end so an
-  // existing query is extended, not wiped.
+  // re-runs this even when `active` didn't change.
+  //
+  // Retried over a short window rather than a single frame: opening from the
+  // command palette races the modal's focus-restore, which would otherwise pull
+  // focus back to the editor after we grab it. We only re-focus when focus was
+  // actually lost, so an already-focused input (typing) is never disrupted; the
+  // cursor lands at the end so an existing query is extended, not wiped. Mirrors
+  // focusEditorNormalMode's race-winning retry.
   const sidebarFilterFocusTick = useStore((s) => s.sidebarFilterFocusTick);
   useEffect(() => {
     if (!sidebarFilter.active) return;
-    const raf = requestAnimationFrame(() => {
+    let timer = 0;
+    const focusInput = (remaining: number): void => {
       const el = sidebarFilterInputRef.current;
-      if (!el) return;
-      el.focus();
-      const end = el.value.length;
-      el.setSelectionRange(end, end);
-    });
-    return () => cancelAnimationFrame(raf);
+      if (el && document.activeElement !== el) {
+        el.focus();
+        const end = el.value.length;
+        el.setSelectionRange(end, end);
+      }
+      if (remaining > 1) timer = window.setTimeout(() => focusInput(remaining - 1), 16);
+    };
+    const raf = requestAnimationFrame(() => focusInput(6));
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+    };
   }, [sidebarFilter.active, sidebarFilterFocusTick]);
 
   // Whenever the query changes, park the cursor on the first result row so
@@ -3441,19 +3456,23 @@ export function Sidebar(): JSX.Element {
       </div>
 
       {/* Search + toolbar on one row */}
-      <div className="flex items-center gap-1 px-3">
-        <button
-          onClick={() => setSearchOpen(true)}
-          className="group flex h-7 flex-1 min-w-0 items-center gap-2 rounded-md px-2 text-left text-sm text-ink-700 transition-colors hover:bg-paper-200/70 hover:text-ink-900"
-          title="Search (⌘P)"
-        >
-          <SearchIcon />
-          <span className="flex-1 truncate">Search</span>
-          <kbd className="rounded bg-paper-200 px-1 py-0.5 text-2xs text-ink-500">
-            ⌘P
-          </kbd>
-        </button>
-        <div className="flex shrink-0 items-center gap-0.5">
+      {/* One row of icon buttons, left-aligned so a widened sidebar's extra
+          space falls to the right. Filter (this fork's feature) sits first,
+          then Search (opens the file-search modal), then the note/folder/sort
+          actions. */}
+      <div className="flex items-center gap-0.5 px-3">
+          <IconBtn
+            title={sidebarFilter.active ? "Close filter" : "Filter sidebar"}
+            onClick={() =>
+              sidebarFilter.active ? closeSidebarFilter() : openSidebarFilter()
+            }
+            active={sidebarFilter.active}
+          >
+            <FilterIcon />
+          </IconBtn>
+          <IconBtn title="Search notes (⌘P)" onClick={() => setSearchOpen(true)}>
+            <SearchIcon />
+          </IconBtn>
           <IconBtn
             title="New note (choose folder)"
             onClick={() => {
@@ -3529,7 +3548,6 @@ export function Sidebar(): JSX.Element {
           >
             <ExpandAllIcon />
           </IconBtn>
-        </div>
       </div>
 
       {/* Incremental filter (opened with `/`). Prunes the tree in place; the
