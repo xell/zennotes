@@ -323,6 +323,16 @@ const VALID_CALENDAR_WEEK_STARTS: CalendarWeekStart[] = ['monday', 'sunday', 'lo
 
 /** The editor-pane right-side panels whose width the user can drag-resize. */
 export type RightPanelId = 'outline' | 'connections' | 'comments' | 'calendar' | 'terminal'
+
+/**
+ * A sidebar row to reveal + center after exiting the filter. Identified by
+ * stable identity (path / folder+subpath), never by row index — indices
+ * renumber the moment the full tree re-renders.
+ */
+export type SidebarRevealTarget =
+  | { kind: 'leaf'; path: string }
+  | { kind: 'folder'; folder: string; subpath: string }
+
 export interface PanelWidths {
   terminal: number
   outline: number
@@ -1823,6 +1833,10 @@ interface WorkspaceSnapshot {
   sidebarOpen: boolean
   noteListOpen: boolean
   selectedTags: string[]
+  /** Isolated ("only this folder") sidebar root, or null. Per-window: lives in
+   *  this snapshot (keyed by window UUID) rather than the vault sidecar, so two
+   *  windows on the same vault keep independent isolation. */
+  isolatedRoot?: { folder: NoteFolder; subpath: string } | null
   /** Epoch ms of the last write — drives newest-wins when the synced file and
    *  the local cache disagree (e.g. after working in this vault on another
    *  machine). (#292) */
@@ -1909,6 +1923,18 @@ function normalizeWorkspaceTags(raw: unknown): string[] {
     tags.push(value)
   }
   return tags
+}
+
+function normalizeIsolatedRoot(
+  raw: unknown
+): { folder: NoteFolder; subpath: string } | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  // Notes/inbox tree only, and never the vault root (empty subpath). A stored
+  // folder that no longer exists is handled by the sidebar's auto-exit effect.
+  if (r.folder !== 'inbox') return null
+  if (typeof r.subpath !== 'string' || r.subpath === '') return null
+  return { folder: 'inbox', subpath: r.subpath }
 }
 
 function normalizeWorkspaceSizes(raw: unknown, length: number): number[] {
@@ -2310,6 +2336,50 @@ interface Store {
   /** Vim navigation: which panel is keyboard-focused. */
   focusedPanel: Panel | null
   sidebarCursorIndex: number
+  /**
+   * Sidebar incremental filter (the `/` prune-in-place filter). `active` means
+   * the input row is open; `query` drives the visible-set prune in `Sidebar`.
+   * Session-only — never persisted to the workspace snapshot. An empty `query`
+   * with `active: true` shows the whole tree (input open, nothing typed yet).
+   */
+  sidebarFilter: { active: boolean; query: string }
+  /**
+   * Bumped every time `openSidebarFilter` runs — including when the filter is
+   * already active (e.g. `/` pressed again after the first Escape blurred the
+   * input to the panel). The sidebar's focus effect watches this so `/` always
+   * re-focuses the input, not just on the open→close transition.
+   */
+  sidebarFilterFocusTick: number
+  /** Bumped by `focusSidebar` so the Sidebar can grab real DOM focus (moving it
+   *  off the terminal/editor/palette), not just flip `focusedPanel`. */
+  sidebarFocusTick: number
+  /**
+   * One-shot request to reveal + center a note/asset/folder in the sidebar tree,
+   * set when exiting the filter so the row you picked stays selected and lands
+   * mid-viewport in the restored, unfiltered tree. The sidebar consumes it
+   * (expands ancestors, then selects + centers once the row renders) and clears
+   * it back to null.
+   */
+  sidebarRevealRequest: SidebarRevealTarget | null
+  /**
+   * Isolated ("only this folder") sidebar view. When set, the Notes area is
+   * re-rooted at this folder: only its descendants render, with its first
+   * children lifted to the top indentation level. Always a notes/inbox folder
+   * with a non-empty subpath (the vault root is never "isolable"). A pure view
+   * transform — files, search scope, and every other sidebar section are
+   * untouched. Persisted per-window in the workspace snapshot so each window on
+   * the same vault keeps its own isolation.
+   */
+  isolatedRoot: { folder: NoteFolder; subpath: string } | null
+  /**
+   * Quicklook: a transient browsing mode where moving the sidebar cursor over a
+   * row previews it in the active pane's preview tab without taking focus (you
+   * stay in the sidebar). Notes and assets render in the preview tab;
+   * `quicklookInfo` holds the centered path shown for a folder row (which has no
+   * file to preview). Session-only — never persisted.
+   */
+  quicklookActive: boolean
+  quicklookInfo: string | null
   noteListCursorIndex: number
   connectionsCursorIndex: number
   connectionPreview: ConnectionPreviewState | null
@@ -2672,7 +2742,41 @@ interface Store {
   /** Re-open the first-run onboarding wizard. Persists. */
   restartOnboarding: () => void
   setFocusedPanel: (panel: Panel | null) => void
+  /** Focus the sidebar, opening it first if closed. Pure focus: never closes
+   *  it and runs no other action. */
+  focusSidebar: () => void
   setSidebarCursorIndex: (idx: number) => void
+  /** Open the sidebar filter input (keeps any existing query). */
+  openSidebarFilter: () => void
+  /** Update the live filter query. Resets the sidebar cursor to the first
+   *  visible row so Ctrl+N always starts from the top of the results. */
+  setSidebarFilterQuery: (query: string) => void
+  /** Exit filter mode entirely (clears query, restores the full tree). */
+  closeSidebarFilter: () => void
+  /** Ask the sidebar to reveal + center a target row (or clear the request). */
+  requestSidebarReveal: (target: SidebarRevealTarget | null) => void
+  /** Re-root the sidebar's Notes area at `subpath` (a notes/inbox folder). No-op
+   *  for a non-inbox folder or an empty subpath. Opens + focuses the sidebar. */
+  enterIsolation: (folder: NoteFolder, subpath: string) => void
+  /** Leave isolation and reveal + center the folder that was the isolated root
+   *  back in the restored full tree. No-op when not isolated. */
+  exitIsolation: () => void
+  /** Go up one level in isolated mode. Re-roots at the parent folder and reveals
+   *  the folder you left ('moved'); returns 'would-exit' without changing state
+   *  when the parent is the vault root (the caller confirms, then exits); 'noop'
+   *  when not isolated. */
+  goUpIsolation: () => 'moved' | 'would-exit' | 'noop'
+  /** Toggle Quicklook. On enable, focuses the sidebar; on disable, closes the
+   *  preview tab and clears the folder overlay. */
+  toggleQuicklook: () => void
+  /** Preview a note or asset-tab path in the active pane's preview tab without
+   *  taking focus (Quicklook). Clears any folder overlay. */
+  quicklookShowPath: (path: string) => Promise<void>
+  /** Show a folder's path centered in the Quicklook pane (folders have no file
+   *  to preview). */
+  quicklookShowFolder: (displayPath: string) => void
+  /** Close the active pane's Quicklook preview tab, restoring the prior tab. */
+  closeQuicklookPreview: () => void
   setNoteListCursorIndex: (idx: number) => void
   setConnectionsCursorIndex: (idx: number) => void
   setConnectionPreview: (preview: ConnectionPreviewState | null) => void
@@ -3239,8 +3343,12 @@ export const useStore = create<Store>((set, get) => {
   const selectNoteImpl = async (
     relPath: string | null,
     historyMode: 'push' | 'preserve' = 'push',
-    opts?: { preview?: boolean }
+    opts?: { preview?: boolean; focus?: boolean }
   ): Promise<boolean> => {
+    // Quicklook previews without taking focus: keep `focusedPanel` as-is so the
+    // editor (which only focuses when focusedPanel === 'editor') never pulls the
+    // user out of the sidebar.
+    const focusPatch = opts?.focus === false ? {} : { focusedPanel: 'editor' as const }
     const startedAt = performance.now()
     const state = get()
     const activeLeaf = findLeaf(state.paneLayout, state.activePaneId)
@@ -3291,9 +3399,12 @@ export const useStore = create<Store>((set, get) => {
       const latest = get()
       const leafNow = findLeaf(latest.paneLayout, latest.activePaneId)
       if (!leafNow) return false
+      // Quicklook previews assets (`zen://asset/…`) through this branch too:
+      // route them into the ephemeral preview slot when `preview` is set.
       const nextLayout =
-        updateLeaf(latest.paneLayout, leafNow.id, (l) => leafWithAddedTab(l, relPath)) ??
-        latest.paneLayout
+        updateLeaf(latest.paneLayout, leafNow.id, (l) =>
+          opts?.preview ? leafWithPreviewTab(l, relPath) : leafWithAddedTab(l, relPath)
+        ) ?? latest.paneLayout
       set({
         paneLayout: nextLayout,
         loadingNote: false,
@@ -3354,7 +3465,7 @@ export const useStore = create<Store>((set, get) => {
             : state.noteForwardstack,
         pendingJumpLocation: null,
         loadingNote: false,
-        focusedPanel: 'editor',
+        ...focusPatch,
         ...activeFieldsFrom(nextLayout, state.activePaneId, state.noteContents, state.noteDirty)
       })
       recordRendererPerf('note.open.cached', performance.now() - startedAt, {
@@ -3407,7 +3518,7 @@ export const useStore = create<Store>((set, get) => {
         noteContents: contents,
         noteDirty: dirty,
         loadingNote: false,
-        focusedPanel: 'editor',
+        ...focusPatch,
         ...activeFieldsFrom(nextLayout, s.activePaneId, contents, dirty),
         noteBackstack: nextBackstack,
         noteForwardstack: nextForwardstack,
@@ -3525,6 +3636,9 @@ export const useStore = create<Store>((set, get) => {
           get().vaultSettings,
           null
         ),
+        // No snapshot for this window/vault — clear any isolation carried over
+        // from a previously-open vault.
+        isolatedRoot: null,
         workspaceRestored: true
       })
       scheduleAssetsRefreshForVault(vault)
@@ -3592,6 +3706,7 @@ export const useStore = create<Store>((set, get) => {
           ? snapshot.noteListOpen
           : get().noteListOpen,
       selectedTags: normalizeWorkspaceTags(snapshot.selectedTags),
+      isolatedRoot: normalizeIsolatedRoot(snapshot.isolatedRoot),
       collapsedFolders,
       workspaceRestored: true,
       ...active
@@ -3742,6 +3857,13 @@ export const useStore = create<Store>((set, get) => {
   tagMatchMode: 'all',
   focusedPanel: null,
   sidebarCursorIndex: 0,
+  sidebarFilter: { active: false, query: '' },
+  sidebarFilterFocusTick: 0,
+  sidebarFocusTick: 0,
+  sidebarRevealRequest: null,
+  isolatedRoot: null,
+  quicklookActive: false,
+  quicklookInfo: null,
   noteListCursorIndex: 0,
   connectionsCursorIndex: 0,
   connectionPreview: null,
@@ -6364,7 +6486,108 @@ export const useStore = create<Store>((set, get) => {
     savePrefs(collectPrefs(get()))
   },
   setFocusedPanel: (panel) => set({ focusedPanel: panel }),
+  focusSidebar: () => {
+    const s = get()
+    // Land the cursor on the note being edited. The plain active-view
+    // auto-scroll does this too, but it runs once and loses the fresh-restart
+    // render race (leaving the cursor on a stale/previous-tab row) and can be
+    // pre-empted by its recent-pointer branch. The reveal machinery retries
+    // across frames until the row exists, so it wins deterministically.
+    const reveal: SidebarRevealTarget | null = s.activeNote
+      ? { kind: 'leaf', path: s.activeNote.path }
+      : null
+    set({
+      sidebarOpen: true,
+      focusedPanel: 'sidebar',
+      sidebarFocusTick: s.sidebarFocusTick + 1,
+      // Don't clobber a pending reveal (e.g. filter/isolation exit) when there
+      // is no active note to target.
+      ...(reveal ? { sidebarRevealRequest: reveal } : {}),
+    })
+  },
   setSidebarCursorIndex: (idx) => set({ sidebarCursorIndex: idx }),
+  openSidebarFilter: () =>
+    set((s) => ({
+      // Force the sidebar open and focused so this works as a global entry
+      // point (command palette / toolbar button / global shortcut), not only
+      // from an already-focused sidebar. Idempotent when already open/focused.
+      sidebarOpen: true,
+      focusedPanel: 'sidebar',
+      sidebarFilter: { active: true, query: s.sidebarFilter.query },
+      sidebarFilterFocusTick: s.sidebarFilterFocusTick + 1,
+    })),
+  setSidebarFilterQuery: (query) =>
+    set({ sidebarFilter: { active: true, query }, sidebarCursorIndex: 0 }),
+  closeSidebarFilter: () => set({ sidebarFilter: { active: false, query: '' } }),
+  requestSidebarReveal: (target) => set({ sidebarRevealRequest: target }),
+  enterIsolation: (folder, subpath) => {
+    // Only real notes/inbox sub-folders are isolable (decision: notes tree
+    // only; the vault root is not a "folder").
+    if (folder !== 'inbox' || !subpath) return
+    set({
+      isolatedRoot: { folder, subpath },
+      sidebarOpen: true,
+      focusedPanel: 'sidebar',
+      sidebarCursorIndex: 0,
+    })
+    get().persistWorkspace()
+  },
+  exitIsolation: () => {
+    const prev = get().isolatedRoot
+    if (!prev) return
+    set({ isolatedRoot: null })
+    // Bring the former isolated root back into view, selected and centered, in
+    // the restored full tree (same reveal machinery the filter exit uses).
+    set({
+      sidebarRevealRequest: {
+        kind: 'folder',
+        folder: prev.folder,
+        subpath: prev.subpath,
+      },
+    })
+    get().persistWorkspace()
+  },
+  goUpIsolation: () => {
+    const cur = get().isolatedRoot
+    if (!cur) return 'noop'
+    const i = cur.subpath.lastIndexOf('/')
+    const parent = i < 0 ? '' : cur.subpath.slice(0, i)
+    // Parent is the vault root — going up would exit. Leave state untouched so
+    // the caller can confirm first, then call exitIsolation.
+    if (!parent) return 'would-exit'
+    set({ isolatedRoot: { folder: cur.folder, subpath: parent } })
+    // Reveal + center the folder we just left, now a child in the wider view.
+    set({
+      sidebarRevealRequest: {
+        kind: 'folder',
+        folder: cur.folder,
+        subpath: cur.subpath,
+      },
+    })
+    get().persistWorkspace()
+    return 'moved'
+  },
+  toggleQuicklook: () => {
+    if (get().quicklookActive) {
+      get().closeQuicklookPreview()
+      set({ quicklookActive: false, quicklookInfo: null })
+    } else {
+      set({ quicklookActive: true })
+      // Focus the sidebar so j/k drive the preview immediately, even when
+      // toggled from the command palette while the editor was focused.
+      get().focusSidebar()
+    }
+  },
+  quicklookShowPath: async (path) => {
+    set({ quicklookInfo: null })
+    await selectNoteImpl(path, 'preserve', { preview: true, focus: false })
+  },
+  quicklookShowFolder: (displayPath) => set({ quicklookInfo: displayPath }),
+  closeQuicklookPreview: () => {
+    const s = get()
+    const leaf = findLeaf(s.paneLayout, s.activePaneId)
+    if (leaf?.previewTab) void get().closeTabInPane(s.activePaneId, leaf.previewTab)
+  },
   setNoteListCursorIndex: (idx) => set({ noteListCursorIndex: idx }),
   setConnectionsCursorIndex: (idx) => set({ connectionsCursorIndex: idx }),
   setConnectionPreview: (preview) => set({ connectionPreview: preview }),
@@ -7905,7 +8128,8 @@ export const useStore = create<Store>((set, get) => {
       view: state.view,
       sidebarOpen,
       noteListOpen,
-      selectedTags: state.selectedTags
+      selectedTags: state.selectedTags,
+      isolatedRoot: state.isolatedRoot
     })
   },
 

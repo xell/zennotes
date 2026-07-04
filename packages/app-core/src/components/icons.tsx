@@ -29,6 +29,29 @@ export const SearchIcon = (p: IconProps): JSX.Element => (
   </I>
 )
 
+export const FilterIcon = (p: IconProps): JSX.Element => (
+  <I {...p}>
+    <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />
+  </I>
+)
+
+export const IsolateIcon = (p: IconProps): JSX.Element => (
+  <I {...p}>
+    <path d="M4 8V6a2 2 0 0 1 2-2h2" />
+    <path d="M16 4h2a2 2 0 0 1 2 2v2" />
+    <path d="M20 16v2a2 2 0 0 1-2 2h-2" />
+    <path d="M8 20H6a2 2 0 0 1-2-2v-2" />
+    <circle cx="12" cy="12" r="2.5" />
+  </I>
+)
+
+export const QuicklookIcon = (p: IconProps): JSX.Element => (
+  <I {...p}>
+    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+    <circle cx="12" cy="12" r="3" />
+  </I>
+)
+
 export const TableIcon = (p: IconProps): JSX.Element => (
   <I {...p}>
     <rect x="3" y="3" width="18" height="18" rx="2" />

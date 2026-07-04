@@ -45,7 +45,7 @@ import { vimImeControl } from '../lib/cm-vim-ime'
 import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
 import { syntaxHighlighting, HighlightStyle, defaultHighlightStyle } from '@codemirror/language'
 import { tags as t } from '@lezer/highlight'
-import { searchKeymap } from '@codemirror/search'
+import { editorFindKeymap } from '../lib/editor-search-keymap'
 import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
 import { slashCommandSource, slashCommandRender } from '../lib/cm-slash-commands'
 import { dateShortcutSource } from '../lib/cm-date-shortcuts'
@@ -411,7 +411,7 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
             indentWithTab,
             ...vimAwareDefaultKeymap(prefs.vimMode),
             ...historyKeymap,
-            ...searchKeymap,
+            ...editorFindKeymap(useStore.getState().keymapOverrides),
             ...completionKeymap
           ]),
           EditorView.updateListener.of((upd) => {

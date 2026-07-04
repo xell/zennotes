@@ -67,7 +67,7 @@ import {
 import { syntaxHighlighting, HighlightStyle, defaultHighlightStyle } from '@codemirror/language'
 import { headingFolding } from '../lib/cm-heading-fold'
 import { tags as t } from '@lezer/highlight'
-import { searchKeymap } from '@codemirror/search'
+import { editorFindKeymap, toCmKey } from '../lib/editor-search-keymap'
 import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
 import { useStore } from '../store'
 import type { LineNumberMode } from '../store'
@@ -241,14 +241,6 @@ const LARGE_DOC_EDITOR_HYDRATE_DELAY_MS = 180
 
 /** Convert a ZenNotes binding string ("Alt+ArrowUp", "Mod+K") to a CodeMirror
  *  key string ("Alt-ArrowUp", "Mod-k"). */
-function toCmKey(binding: string): string {
-  const parts = binding.split('+')
-  const base = parts.pop() ?? ''
-  const mods = parts.join('-')
-  const baseOut = base.length === 1 ? base.toLowerCase() : base
-  return mods ? `${mods}-${baseOut}` : baseOut
-}
-
 // The editor keymap depends on Vim mode: in Vim mode the macOS emacs-style
 // chords are stripped from `defaultKeymap` so Vim's `<C-d>` & co. work (see
 // cm-vim-default-keymap). Built behind a compartment and reconfigured on Vim
@@ -272,7 +264,7 @@ function buildEditorKeymap(vimMode: boolean, overrides: KeymapOverrides): Extens
     indentWithTab,
     ...vimAwareDefaultKeymap(vimMode),
     ...historyKeymap,
-    ...searchKeymap,
+    ...editorFindKeymap(overrides),
     ...completionKeymap
   ])
 }
@@ -648,6 +640,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     activeTab ? s.noteComments[activeTab] ?? EMPTY_COMMENTS : EMPTY_COMMENTS
   )
   const activeCommentId = useStore((s) => s.activeCommentId)
+  const quicklookInfo = useStore((s) => s.quicklookInfo)
   const notes = useStore((s) => s.notes)
   const assetFiles = useStore((s) => s.assetFiles)
   const vault = useStore((s) => s.vault)
@@ -3339,6 +3332,18 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
           {paneDropEdge && <PaneDropOverlay edge={paneDropEdge} />}
           {assetDropActive && (
             <div className="pointer-events-none absolute inset-3 z-20 rounded-xl border-2 border-dashed border-accent/55 bg-accent/8" />
+          )}
+          {isActive && quicklookInfo && (
+            <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-paper-50/95 backdrop-blur-sm">
+              <div className="flex max-w-full flex-col items-center gap-3 px-6 text-center">
+                <span className="text-2xs font-medium uppercase tracking-[0.16em] text-ink-400">
+                  Folder
+                </span>
+                <span className="max-w-full break-all font-mono text-sm text-ink-700">
+                  {quicklookInfo}
+                </span>
+              </div>
+            </div>
           )}
           {isTasksTabPath(activeTab) ? (
             <TasksView />

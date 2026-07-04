@@ -15,6 +15,8 @@ export type KeymapId =
   | "global.newQuickNote"
   | "global.openSettings"
   | "global.toggleSidebar"
+  | "global.focusSidebar"
+  | "global.filterSidebar"
   | "global.toggleConnections"
   | "global.toggleOutlinePanel"
   | "global.toggleCommentsPanel"
@@ -91,7 +93,10 @@ export type KeymapId =
   | "nav.openResult"
   | "nav.back"
   | "nav.toggleFolder"
+  | "nav.isolateUp"
   | "nav.filter"
+  | "nav.filterNext"
+  | "nav.filterPrev"
   | "nav.contextMenu"
   | "nav.peekPreview"
   | "nav.restore"
@@ -103,7 +108,11 @@ export type KeymapId =
   | "tasks.moveTaskUp"
   | "tasks.moveTaskDown"
   | "editor.moveLineUp"
-  | "editor.moveLineDown";
+  | "editor.moveLineDown"
+  | "editor.find"
+  | "view.isolateFolder"
+  | "view.isolateUp"
+  | "view.quicklook";
 
 export type KeymapOverrides = Partial<Record<KeymapId, string>>;
 
@@ -175,6 +184,56 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Toggle sidebar",
     description: "Hide or show the left sidebar.",
     defaultBinding: "Mod+1",
+  },
+  {
+    id: "global.focusSidebar",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Focus sidebar",
+    description:
+      "Move keyboard focus to the sidebar from anywhere, opening it first if it's closed. Pure focus — never closes the sidebar and runs no other action, unlike Toggle sidebar. Unbound by default; pick a binding here.",
+    defaultBinding: "",
+  },
+  {
+    id: "global.filterSidebar",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Filter sidebar",
+    description:
+      "Open the sidebar's incremental filter from anywhere. Unbound by default — inside the sidebar '/' already opens it, but in the editor '/' is Vim search, so choose a global binding here.",
+    defaultBinding: "",
+  },
+  {
+    id: "view.isolateFolder",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Isolate folder in sidebar",
+    description:
+      "Toggle isolated mode. With a folder selected in the sidebar, isolates it so the Notes area shows only that folder's contents. When already isolated, quits back to the full tree (asks to confirm, since this can fire from the editor). Narrow onto a sub-folder from the folder's context menu or the toolbar's isolate menu.",
+    defaultBinding: "Shift+Mod+I",
+  },
+  {
+    id: "view.isolateUp",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Isolated mode: go up one level",
+    description:
+      "Go up one level in isolated mode from anywhere: re-root at the parent folder, or exit isolation (after a confirm) when already at a top-level folder. The sidebar's '-' key does the same. Unbound by default.",
+    defaultBinding: "",
+  },
+  {
+    id: "view.quicklook",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Toggle Quicklook",
+    description:
+      "Toggle Quicklook, a browsing mode where moving the sidebar cursor (j/k, arrows, filter results) previews each note or asset in the pane without leaving the sidebar; a folder shows its path. Enter opens the current item for real. Exit closes the preview.",
+    defaultBinding: "Alt+Mod+U",
   },
   {
     id: "global.toggleConnections",
@@ -949,6 +1008,17 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     maxTokens: 1,
   },
   {
+    id: "nav.isolateUp",
+    kind: "sequence",
+    scope: "lists",
+    group: "navigation",
+    title: "Isolated mode: go up one level",
+    description:
+      "While the sidebar is focused and isolated, re-root at the parent folder (revealing the folder you left). From a top-level folder it exits isolation after a confirm. Does nothing when not isolated. Only fires on the sidebar panel, so it still types a hyphen in the filter input.",
+    defaultBinding: "-",
+    maxTokens: 1,
+  },
+  {
     id: "nav.filter",
     kind: "sequence",
     scope: "lists",
@@ -958,6 +1028,26 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
       "Focus the local filter or open note search from panel navigation.",
     defaultBinding: "/",
     maxTokens: 1,
+  },
+  {
+    id: "nav.filterNext",
+    kind: "shortcut",
+    scope: "lists",
+    group: "navigation",
+    title: "Filter: next result",
+    description:
+      "Move the selection down through the sidebar filter results (letters type into the filter).",
+    defaultBinding: "Ctrl+N",
+  },
+  {
+    id: "nav.filterPrev",
+    kind: "shortcut",
+    scope: "lists",
+    group: "navigation",
+    title: "Filter: previous result",
+    description:
+      "Move the selection up through the sidebar filter results (letters type into the filter).",
+    defaultBinding: "Ctrl+P",
   },
   {
     id: "nav.contextMenu",
@@ -1051,6 +1141,16 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     description:
       "Move the current line (or selected lines) down in the note editor — reorders the markdown, so it sticks in the file. Works with Vim mode on or off.",
     defaultBinding: "Alt+ArrowDown",
+  },
+  {
+    id: "editor.find",
+    kind: "shortcut",
+    scope: "vim-editor",
+    group: "view-actions",
+    title: "Find in note",
+    description:
+      "Open the in-editor find/replace panel (CodeMirror search) for the current note. Clear it to free the key, or rebind it. In non-Vim mode Cmd/Ctrl+F opens the vault note-search palette instead (see \"Search notes in non-Vim mode\").",
+    defaultBinding: "Mod+F",
   },
   {
     id: "nav.localEx",

@@ -41,9 +41,10 @@ import {
   DocumentIcon,
   ExcalidrawIcon,
   ExpandAllIcon,
+  FilterIcon,
+  IsolateIcon,
+  QuicklookIcon,
   PaperclipIcon,
-  FolderPlusIcon,
-  NotePlusIcon,
   PanelLeftIcon,
   PlusIcon,
   SearchIcon,
@@ -89,6 +90,14 @@ import {
   parentDirOf,
   type ManualOrderItem,
 } from "../lib/manual-order";
+import { computeTreeVisibility, filterModeForQuery } from "../lib/sidebar-filter";
+import {
+  selectedInboxFolderForIsolation,
+  parentSubpath,
+  goUpIsolationWithConfirm,
+  type IsolationTarget,
+} from "../lib/sidebar-isolation";
+import { matchesShortcut } from "../lib/keymaps";
 import {
   resolveDropTarget,
   type FlatRow,
@@ -138,6 +147,13 @@ function escapeForAttr(value: string): string {
   return value.replace(/["\\]/g, "\\$&");
 }
 
+/** True while the sidebar filter is open with a non-empty query — the window in
+ *  which rows are pruned and drag-reorder must be refused. */
+function isSidebarFilterActive(): boolean {
+  const f = useStore.getState().sidebarFilter;
+  return f.active && f.query.trim() !== "";
+}
+
 function sidebarAnchorSelectorForElement(el: HTMLElement): string | null {
   const type = el.dataset.sidebarType;
   if (!type) return null;
@@ -161,17 +177,6 @@ function sidebarAnchorSelectorForElement(el: HTMLElement): string | null {
   }
 
   return `[data-sidebar-type="${escapeForAttr(type)}"]`;
-}
-
-function defaultNewNoteTarget(
-  activeNote: NoteMeta | null,
-  vaultSettings: ReturnType<typeof useStore.getState>["vaultSettings"],
-): { folder: NoteFolder; subpath: string } {
-  if (!activeNote) return { folder: "inbox", subpath: "" };
-  return {
-    folder: activeNote.folder,
-    subpath: noteFolderSubpath(activeNote, vaultSettings),
-  };
 }
 
 function remoteWorkspaceLabel(baseUrl: string | null): string {
@@ -404,6 +409,15 @@ export function Sidebar(): JSX.Element {
   const hasAssetsDir = useStore((s) => s.hasAssetsDir);
   const focusedPanel = useStore((s) => s.focusedPanel);
   const sidebarCursorIndex = useStore((s) => s.sidebarCursorIndex);
+  const sidebarFilter = useStore((s) => s.sidebarFilter);
+  const openSidebarFilter = useStore((s) => s.openSidebarFilter);
+  const setSidebarFilterQuery = useStore((s) => s.setSidebarFilterQuery);
+  const closeSidebarFilter = useStore((s) => s.closeSidebarFilter);
+  const isolatedRoot = useStore((s) => s.isolatedRoot);
+  const enterIsolation = useStore((s) => s.enterIsolation);
+  const exitIsolation = useStore((s) => s.exitIsolation);
+  const quicklookActive = useStore((s) => s.quicklookActive);
+  const toggleQuicklook = useStore((s) => s.toggleQuicklook);
   const activeNote = useStore((s) => s.activeNote);
   const activeDirty = useStore((s) => s.activeDirty);
   const vaultSettings = useStore((s) => s.vaultSettings);
@@ -434,7 +448,6 @@ export function Sidebar(): JSX.Element {
   const createDrawingAndOpen = useStore((s) => s.createDrawingAndOpen);
   const toggleFavorite = useStore((s) => s.toggleFavorite);
   const createDatabase = useStore((s) => s.createDatabase);
-  const createNoteInChosenFolder = useStore((s) => s.createNoteInChosenFolder);
   const openTemplatePaletteForFolder = useStore((s) => s.openTemplatePaletteForFolder);
   const quickNoteDateTitle = useStore((s) => s.quickNoteDateTitle);
   const quickNoteTitlePrefix = useStore((s) => s.quickNoteTitlePrefix);
@@ -803,6 +816,9 @@ export function Sidebar(): JSX.Element {
     targetFolder: NoteFolder,
     targetSubpath: string,
   ): Promise<void> => {
+    // Reordering/moving while the filter hides rows would compute positions from
+    // a pruned list and corrupt the stored order — refuse drops while filtering.
+    if (isSidebarFilterActive()) return;
     const moveFolder = async (
       folder: NoteFolder,
       subpath: string,
@@ -920,6 +936,17 @@ export function Sidebar(): JSX.Element {
     null,
   );
   const [vaultMenu, setVaultMenu] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  const [isolateMenu, setIsolateMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  // The notes/inbox folder the sidebar cursor is currently on (folder click or
+  // vim j/k both drive `sidebarCursorIndex`). Read from the DOM after paint so
+  // the isolate button's enabled state tracks the live selection. Correctness
+  // never depends on this — the click handler re-resolves fresh.
+  const [isolationTarget, setIsolationTarget] = useState<IsolationTarget | null>(
     null,
   );
 
@@ -1161,6 +1188,10 @@ export function Sidebar(): JSX.Element {
 
   const handleTreeDragOver = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
+      if (isSidebarFilterActive()) {
+        clearDrop();
+        return;
+      }
       if (useStore.getState().noteSortOrder !== "manual" || !hasZenItem(event))
         return;
       const container = sidebarScrollRef.current;
@@ -1340,6 +1371,10 @@ export function Sidebar(): JSX.Element {
     (event: React.DragEvent<HTMLDivElement>) => {
       const resolution = dropResolutionRef.current;
       stopAutoScroll();
+      if (isSidebarFilterActive()) {
+        clearDrop();
+        return;
+      }
       if (useStore.getState().noteSortOrder !== "manual" || !resolution) return;
       event.preventDefault();
       const drag = readDragPayload(event) ?? getCurrentDragPayload();
@@ -1436,6 +1471,384 @@ export function Sidebar(): JSX.Element {
     });
     return next;
   }, [notes, allFolders, assetFiles, vaultSettings]);
+
+  // Isolated mode re-roots the Notes area at this node. Undefined when the
+  // isolated folder no longer exists — the effect below then auto-exits.
+  const isolatedNode = useMemo(
+    () => (isolatedRoot ? findTreeNode(trees.inbox, isolatedRoot.subpath) : undefined),
+    [isolatedRoot, trees.inbox],
+  );
+  useEffect(() => {
+    if (isolatedRoot && !isolatedNode) exitIsolation();
+  }, [isolatedRoot, isolatedNode, exitIsolation]);
+
+  // Sidebar filter: which rows stay visible for the current query. Computed once
+  // here over all four trees and shared down via SidebarFilterContext, so
+  // FolderTreeContents/SubTree only prune (never re-sort). `filtering` is false
+  // for an empty query, in which case the tree renders untouched. `sections`
+  // tracks which top-level areas have any match, so the archive/trash sections
+  // (which are normally launcher rows, not inline trees) render only when they
+  // actually contain a result. (See data/sidebar.md.)
+  // A deliberate leading space in the query opts into fuzzy (subsequence)
+  // matching; otherwise it's a plain contiguous substring match. Detect the
+  // mode from the *raw* value before trimming, since trimming erases the space.
+  const rawFilterQuery = sidebarFilter.active ? sidebarFilter.query : "";
+  const filterQuery = rawFilterQuery.trim();
+  const filtering = filterQuery !== "";
+  const filterMode = filterModeForQuery(rawFilterQuery);
+  const filterVisibility = useMemo(() => {
+    const leaves = new Set<string>();
+    const folderKeys = new Set<string>();
+    const sections = { quick: false, inbox: false, archive: false, trash: false };
+    if (!filtering) {
+      return { value: EMPTY_FILTER, sections, matchCount: 0 };
+    }
+    const startedAt = performance.now();
+    // Count matching folders (bare-row name matches) alongside matching
+    // notes/assets. `folderKeys` also holds ancestor folders shown only for
+    // hierarchy, so it can't be used for the count — `matchedFolders` is the
+    // match-only subset.
+    let matchedFolderCount = 0;
+    for (const folder of ["quick", "inbox", "archive", "trash"] as const) {
+      const v = computeTreeVisibility(trees[folder], filterQuery, filterMode);
+      for (const p of v.leaves) leaves.add(p);
+      for (const sub of v.folderSubpaths) folderKeys.add(`${folder}:${sub}`);
+      matchedFolderCount += v.matchedFolders.size;
+      if (v.leaves.size > 0 || v.folderSubpaths.size > 0) sections[folder] = true;
+    }
+    recordRendererPerf("sidebar.filter", performance.now() - startedAt, {
+      query: filterQuery.length,
+      leaves: leaves.size,
+    });
+    return {
+      value: { filtering: true, leaves, folderKeys } as SidebarFilterContextValue,
+      sections,
+      matchCount: leaves.size + matchedFolderCount,
+    };
+  }, [filtering, filterQuery, filterMode, trees]);
+
+  // Track which notes/inbox folder the sidebar cursor is on, for the isolate
+  // button's enabled state. Re-read after paint whenever the cursor moves or
+  // the row layout could have changed.
+  useEffect(() => {
+    const raf = requestAnimationFrame(() =>
+      setIsolationTarget(selectedInboxFolderForIsolation(sidebarCursorIndex)),
+    );
+    return () => cancelAnimationFrame(raf);
+  }, [sidebarCursorIndex, notes, allFolders, collapsed, filtering, isolatedRoot]);
+
+  // Quicklook: when active, previewing follows the sidebar cursor. Reads the
+  // current row from the DOM (so it works for plain nav, filter results, and
+  // isolated mode alike, all of which drive sidebarCursorIndex) and previews by
+  // row type: a note or asset in the no-focus preview tab, a folder as a
+  // centered path. Debounced so holding j through a run of notes only loads
+  // where the cursor rests.
+  useEffect(() => {
+    if (!quicklookActive) return;
+    const timer = window.setTimeout(() => {
+      const el = document.querySelector<HTMLElement>(
+        `[data-sidebar-idx="${sidebarCursorIndex}"]`,
+      );
+      if (!el) return;
+      const st = useStore.getState();
+      const type = el.dataset.sidebarType;
+      if (type === "note" && el.dataset.sidebarPath) {
+        void st.quicklookShowPath(el.dataset.sidebarPath);
+      } else if (type === "asset" && el.dataset.sidebarPath) {
+        void st.quicklookShowPath(assetTabPath(el.dataset.sidebarPath));
+      } else if (type === "folder" && el.dataset.sidebarFolder) {
+        const folder = el.dataset.sidebarFolder as NoteFolder;
+        const subpath = el.dataset.sidebarSubpath ?? "";
+        st.quicklookShowFolder(
+          vaultRelativeFolderPath(folder, subpath, vaultSettings) || folder,
+        );
+      }
+      // Other rows (tags, system) leave the last preview in place.
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [sidebarCursorIndex, quicklookActive, vaultSettings]);
+
+  // ---- Sidebar filter: input focus, cursor navigation, open, exit ----------
+  const sidebarFilterInputRef = useRef<HTMLInputElement | null>(null);
+  const keymapOverrides = useStore((s) => s.keymapOverrides);
+  const sidebarRevealRequest = useStore((s) => s.sidebarRevealRequest);
+  const requestSidebarReveal = useStore((s) => s.requestSidebarReveal);
+
+  // Ordered list of currently-visible result rows (skips the vault header),
+  // read straight from the DOM so it always reflects what's actually rendered.
+  const sidebarResultRows = useCallback((): HTMLElement[] => {
+    const container = sidebarScrollRef.current;
+    if (!container) return [];
+    return Array.from(
+      container.querySelectorAll<HTMLElement>("[data-sidebar-idx]"),
+    ).sort(
+      (a, b) => Number(a.dataset.sidebarIdx) - Number(b.dataset.sidebarIdx),
+    );
+  }, []);
+
+  const moveSidebarFilterCursor = useCallback(
+    (delta: 1 | -1): void => {
+      const rows = sidebarResultRows();
+      if (rows.length === 0) return;
+      const cur = useStore.getState().sidebarCursorIndex;
+      let pos = rows.findIndex((r) => Number(r.dataset.sidebarIdx) === cur);
+      if (pos === -1) pos = delta === 1 ? -1 : rows.length;
+      const next = Math.max(0, Math.min(rows.length - 1, pos + delta));
+      const target = rows[next];
+      const idx = Number(target.dataset.sidebarIdx);
+      if (Number.isFinite(idx)) useStore.getState().setSidebarCursorIndex(idx);
+      target.scrollIntoView({ block: "nearest" });
+    },
+    [sidebarResultRows],
+  );
+
+  // Open the row currently under the filter cursor. Notes/assets open in the
+  // editor (and the filter stays active — decision 4); folders just toggle
+  // their real collapse state so exiting later lands with them open.
+  const openSidebarFilterSelection = useCallback((): void => {
+    const container = sidebarScrollRef.current;
+    if (!container) return;
+    const cur = useStore.getState().sidebarCursorIndex;
+    const row = container.querySelector<HTMLElement>(
+      `[data-sidebar-idx="${cur}"]`,
+    );
+    if (!row) return;
+    const type = row.dataset.sidebarType;
+    const path = row.dataset.sidebarPath;
+    if (type === "note" && path) {
+      setFocusedPanel("editor");
+      void handleSelectNote(path);
+    } else if (type === "asset" && path) {
+      void openAssetInTab(path);
+    } else if (type === "folder" && row.dataset.sidebarFolder) {
+      toggleCollapse(
+        `${row.dataset.sidebarFolder}:${row.dataset.sidebarSubpath ?? ""}`,
+      );
+    }
+  }, [handleSelectNote, openAssetInTab, setFocusedPanel, toggleCollapse]);
+
+  const onSidebarFilterInputKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>): void => {
+      // IME: never steal keys mid-composition (CJK etc.).
+      if (e.nativeEvent.isComposing) return;
+      const overrides = keymapOverrides;
+      if (
+        matchesShortcut(e.nativeEvent, overrides, "nav.filterNext") ||
+        e.key === "ArrowDown"
+      ) {
+        e.preventDefault();
+        moveSidebarFilterCursor(1);
+        return;
+      }
+      if (
+        matchesShortcut(e.nativeEvent, overrides, "nav.filterPrev") ||
+        e.key === "ArrowUp"
+      ) {
+        e.preventDefault();
+        moveSidebarFilterCursor(-1);
+        return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        openSidebarFilterSelection();
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        // First Escape with a query: blur to the panel, keep the filter alive
+        // so the whole vim layer works over the filtered rows. An empty input
+        // has nothing to lose, so it exits outright.
+        if (useStore.getState().sidebarFilter.query.trim() === "") {
+          closeSidebarFilter();
+        }
+        sidebarFilterInputRef.current?.blur();
+        setFocusedPanel("sidebar");
+      }
+    },
+    [
+      closeSidebarFilter,
+      keymapOverrides,
+      moveSidebarFilterCursor,
+      openSidebarFilterSelection,
+      setFocusedPanel,
+    ],
+  );
+
+  // Focus the filter input whenever it opens *or* `/` is pressed again while it
+  // is already open (after the first Escape blurred it to the panel). The tick
+  // re-runs this even when `active` didn't change.
+  //
+  // Retried over a short window rather than a single frame: opening from the
+  // command palette races the modal's focus-restore, which would otherwise pull
+  // focus back to the editor after we grab it. We only re-focus when focus was
+  // actually lost, so an already-focused input (typing) is never disrupted; the
+  // cursor lands at the end so an existing query is extended, not wiped. Mirrors
+  // focusEditorNormalMode's race-winning retry.
+  const sidebarFilterFocusTick = useStore((s) => s.sidebarFilterFocusTick);
+  useEffect(() => {
+    if (!sidebarFilter.active) return;
+    let timer = 0;
+    const focusInput = (remaining: number): void => {
+      const el = sidebarFilterInputRef.current;
+      if (el && document.activeElement !== el) {
+        el.focus();
+        const end = el.value.length;
+        el.setSelectionRange(end, end);
+      }
+      if (remaining > 1) timer = window.setTimeout(() => focusInput(remaining - 1), 16);
+    };
+    const raf = requestAnimationFrame(() => focusInput(6));
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+    };
+  }, [sidebarFilter.active, sidebarFilterFocusTick]);
+
+  // `focusSidebar` (the "Focus sidebar" shortcut/command) flips focusedPanel,
+  // but that alone doesn't move DOM focus — so a shortcut fired from the
+  // terminal or editor leaves keystrokes going there and VimNav's focused-input
+  // bail (INPUT/TEXTAREA target) never routes to the sidebar. Grab real DOM
+  // focus onto the scroll container so the terminal is blurred and sidebar keys
+  // take over. Retry over a few frames to win the command-palette Modal's
+  // focus-restore race. Skip if focus is already inside the sidebar.
+  const sidebarFocusTick = useStore((s) => s.sidebarFocusTick);
+  useEffect(() => {
+    if (sidebarFocusTick === 0) return;
+    let timer = 0;
+    const grab = (remaining: number): void => {
+      const container = sidebarScrollRef.current;
+      if (container && !container.contains(document.activeElement)) {
+        container.focus({ preventScroll: true });
+      }
+      if (remaining > 1) timer = window.setTimeout(() => grab(remaining - 1), 16);
+    };
+    const raf = requestAnimationFrame(() => grab(6));
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+    };
+  }, [sidebarFocusTick]);
+
+  // Whenever the query changes, park the cursor on the first result row so
+  // Ctrl+N starts from the top of the matches (not the vault header).
+  useEffect(() => {
+    if (!filtering) return;
+    const raf = requestAnimationFrame(() => {
+      const first = sidebarResultRows().find(
+        (r) => r.dataset.sidebarType !== "vault",
+      );
+      if (!first) return;
+      const idx = Number(first.dataset.sidebarIdx);
+      if (Number.isFinite(idx)) {
+        useStore.getState().setSidebarCursorIndex(idx);
+        first.scrollIntoView({ block: "nearest" });
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [filtering, filterQuery, filterVisibility.matchCount, sidebarResultRows]);
+
+  // Consume a reveal request (set when exiting the filter): expand the picked
+  // item's ancestor folders, then select + center its row in the restored tree.
+  //
+  // The row usually isn't in the DOM on the first frame — expanding ancestors
+  // schedules a re-render that commits a frame or two later — so we retry the
+  // lookup instead of querying once (that single-shot version silently missed
+  // and left the cursor stale on a bottom row). Works for a note/asset leaf or a
+  // folder row.
+  useEffect(() => {
+    const target = sidebarRevealRequest;
+    if (!target) return;
+
+    // Ancestor collapse-keys to expand, and the DOM selector for the row.
+    let ancestors: string[];
+    let selector: string;
+    if (target.kind === "leaf") {
+      // Resolve the real top-level folder + subpath from metadata rather than
+      // parsing the path: in "notes at vault root" mode a nested note's path
+      // has no top-level-folder prefix (e.g. "projects/x.md" lives under folder
+      // "inbox", collapse-keyed "inbox:projects", not "projects:").
+      const s = useStore.getState();
+      const noteMeta = s.notes.find((n) => n.path === target.path);
+      const assetMeta = noteMeta
+        ? undefined
+        : s.assetFiles.find((a) => a.path === target.path);
+      const folder = noteMeta
+        ? noteMeta.folder
+        : folderForVaultRelativePath(target.path, s.vaultSettings);
+      const subpath = noteMeta
+        ? noteFolderSubpath(noteMeta, s.vaultSettings)
+        : assetMeta
+          ? assetFolderSubpath(assetMeta, s.vaultSettings)
+          : "";
+      ancestors = [`${folder}:`];
+      let acc = "";
+      for (const seg of subpath ? subpath.split("/") : []) {
+        acc = acc ? `${acc}/${seg}` : seg;
+        ancestors.push(`${folder}:${acc}`);
+      }
+      selector = `[data-sidebar-path="${escapeForAttr(target.path)}"]`;
+    } else {
+      const { folder, subpath } = target;
+      // Only the folder's *parents* need expanding for its row to show.
+      ancestors = [`${folder}:`];
+      const segs = subpath ? subpath.split("/") : [];
+      let acc = "";
+      for (let i = 0; i < segs.length - 1; i++) {
+        acc = acc ? `${acc}/${segs[i]}` : segs[i];
+        ancestors.push(`${folder}:${acc}`);
+      }
+      selector = `[data-sidebar-type="folder"][data-sidebar-folder="${folder}"][data-sidebar-subpath="${escapeForAttr(subpath)}"]`;
+    }
+
+    const nextCollapsed = new Set(useStore.getState().collapsedFolders);
+    let changed = false;
+    for (const k of ancestors) {
+      if (nextCollapsed.has(k)) {
+        nextCollapsed.delete(k);
+        changed = true;
+      }
+    }
+    if (changed) setCollapsed(nextCollapsed);
+
+    // Drive it over successive frames, because two things settle late: the
+    // expanded row may not be in the DOM on the first frame, and its
+    // `data-sidebar-idx` is reassigned on every render and keeps changing for a
+    // few frames as sections re-appear. So each frame we re-read the row's
+    // *current* index and pin the cursor to it (re-centering whenever it moves),
+    // until the index holds steady — otherwise the cursor is stranded on
+    // whatever row later inherits the index we first read (a footer button, in
+    // practice). Retries until the row exists, then stops once stable or capped.
+    let raf = 0;
+    let waits = 0; // frames spent waiting for the row to render
+    let frames = 0; // frames spent pinning after it appeared
+    let stableFrames = 0;
+    let lastIdx = -1;
+    const step = (): void => {
+      const el = document.querySelector<HTMLElement>(selector);
+      if (!el) {
+        if (waits++ < 12) raf = requestAnimationFrame(step);
+        else requestSidebarReveal(null);
+        return;
+      }
+      const idx = Number(el.dataset.sidebarIdx);
+      if (Number.isFinite(idx)) {
+        useStore.getState().setSidebarCursorIndex(idx);
+        if (idx !== lastIdx) {
+          el.scrollIntoView({ block: "center" });
+          lastIdx = idx;
+          stableFrames = 0;
+        } else {
+          stableFrames++;
+        }
+      }
+      if (stableFrames < 3 && frames++ < 30) raf = requestAnimationFrame(step);
+      else requestSidebarReveal(null);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+    // setCollapsed is stable enough; deliberately only re-run on request change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidebarRevealRequest]);
 
   // Resolve favorite keys to live notes/folders. Keys whose target no longer
   // exists (renamed away, deleted, trashed) are silently skipped — the Favorites
@@ -2081,6 +2494,21 @@ export function Sidebar(): JSX.Element {
         },
       },
     ];
+    // Isolate: notes/inbox sub-folders only (never the vault root or other
+    // top-level areas). Disabled when this folder is already the isolated root.
+    if (folder === "inbox" && subpath) {
+      const isCurrentRoot =
+        isolatedRoot?.folder === "inbox" && isolatedRoot.subpath === subpath;
+      items.push(
+        { kind: "separator" },
+        {
+          label: isCurrentRoot ? "Isolated (current)" : "Isolate folder",
+          icon: <IsolateIcon />,
+          disabled: isCurrentRoot,
+          onSelect: () => enterIsolation("inbox", subpath),
+        },
+      );
+    }
     if (folder === "quick" && isTop) {
       items.push({
         label: "Open as Tab",
@@ -2293,6 +2721,8 @@ export function Sidebar(): JSX.Element {
     toggleFavorite,
     bulkSelectionMenuItems,
     selectedSidebarKeys,
+    isolatedRoot,
+    enterIsolation,
   ]);
 
   // Items for the empty-area (vault root) context menu.
@@ -2971,6 +3401,14 @@ export function Sidebar(): JSX.Element {
 
   useEffect(() => {
     if (!isSidebarFocused) return;
+    // While filtering, the filter owns the cursor and scroll position — don't
+    // let the active-view auto-scroll fight it.
+    if (isSidebarFilterActive()) return;
+    // Same during Quicklook: each preview changes selectedPath, and re-deriving
+    // the cursor from it here would fight the user's j/k (and resolve to a
+    // folder row in non-unified mode). The cursor stays user-driven; VimNav
+    // handles scrolling the cursor row into view.
+    if (quicklookActive) return;
 
     const findTarget = (): HTMLElement | null => {
       if (
@@ -3096,10 +3534,12 @@ export function Sidebar(): JSX.Element {
     tagsViewActive,
     selectedTags,
     trashViewActive,
+    quicklookActive,
   ]);
 
   return (
     <SidebarScrollerContext.Provider value={sidebarScrollRef}>
+    <SidebarFilterContext.Provider value={filterVisibility.value}>
     <aside
       className={`glass-sidebar relative flex shrink-0 flex-col pt-3${isSidebarFocused ? " panel-focused" : ""}`}
       style={{ width: sidebarWidth }}
@@ -3178,69 +3618,53 @@ export function Sidebar(): JSX.Element {
       </div>
 
       {/* Search + toolbar on one row */}
-      <div className="flex items-center gap-1 px-3">
-        <button
-          onClick={() => setSearchOpen(true)}
-          className="group flex h-7 flex-1 min-w-0 items-center gap-2 rounded-md px-2 text-left text-sm text-ink-700 transition-colors hover:bg-paper-200/70 hover:text-ink-900"
-          title="Search (⌘P)"
-        >
-          <SearchIcon />
-          <span className="flex-1 truncate">Search</span>
-          <kbd className="rounded bg-paper-200 px-1 py-0.5 text-2xs text-ink-500">
-            ⌘P
-          </kbd>
-        </button>
-        <div className="flex shrink-0 items-center gap-0.5">
+      {/* One row of icon buttons, left-aligned so a widened sidebar's extra
+          space falls to the right. Filter (this fork's feature) sits first,
+          then Search (opens the file-search modal), then the note/folder/sort
+          actions. */}
+      <div className="flex items-center gap-0.5 px-3">
           <IconBtn
-            title="New note (choose folder)"
-            onClick={() => {
-              const state = useStore.getState();
-              const target = defaultNewNoteTarget(
-                state.activeNote,
-                state.vaultSettings,
-              );
-              // Prefill the picker with the current context (only the notes
-              // area is pickable, so archive/quick fall back to the root).
-              const initialPath = target.folder === "inbox" ? target.subpath : "";
-              void createNoteInChosenFolder({ initialPath });
-            }}
+            title={sidebarFilter.active ? "Close filter" : "Filter sidebar"}
+            onClick={() =>
+              sidebarFilter.active ? closeSidebarFilter() : openSidebarFilter()
+            }
+            active={sidebarFilter.active}
           >
-            <NotePlusIcon />
+            <FilterIcon />
+          </IconBtn>
+          <IconBtn title="Search notes (⌘P)" onClick={() => setSearchOpen(true)}>
+            <SearchIcon />
           </IconBtn>
           <IconBtn
-            title="New folder"
-            onClick={async () => {
-              const view = useStore.getState().view;
-              // Quick Notes is intentionally flat — fall back to inbox
-              // when the user is currently viewing it.
-              const noFolders =
-                view.kind === "folder" &&
-                (view.folder === "trash" || view.folder === "quick");
-              const parentFolder: NoteFolder =
-                view.kind === "folder" && !noFolders ? view.folder : "inbox";
-              const parentSub =
-                view.kind === "folder" && !noFolders ? view.subpath : "";
-              const name = await promptApp({
-                title: "New folder",
-                placeholder: "Folder name",
-                okLabel: "Create",
-                validate: (v) => {
-                  if (v.includes("/")) return 'Folder name cannot contain "/"';
-                  return null;
-                },
-              });
-              if (!name) return;
-              const clean = name.trim().replace(/^\/+|\/+$/g, "");
-              if (!clean) return;
-              const next = parentSub ? `${parentSub}/${clean}` : clean;
-              try {
-                await createFolderAction(parentFolder, next);
-              } catch (err) {
-                window.alert((err as Error).message);
+            title={
+              isolatedRoot
+                ? `Isolated: ${isolatedRoot.subpath.split("/").slice(-1)[0]} — click for options`
+                : isolationTarget
+                  ? `Isolate "${isolationTarget.subpath.split("/").slice(-1)[0]}" (⇧⌘I)`
+                  : "Isolate folder — select a folder first"
+            }
+            active={!!isolatedRoot}
+            disabled={!isolatedRoot && !isolationTarget}
+            onClick={(e) => {
+              if (isolatedRoot) {
+                setIsolateMenu({ x: e.clientX, y: e.clientY });
+              } else if (isolationTarget) {
+                enterIsolation(isolationTarget.folder, isolationTarget.subpath);
               }
             }}
           >
-            <FolderPlusIcon />
+            <IsolateIcon />
+          </IconBtn>
+          <IconBtn
+            title={
+              quicklookActive
+                ? "Quicklook: on — navigate to preview (⌘⌥U)"
+                : "Quicklook: preview as you navigate (⌘⌥U)"
+            }
+            active={quicklookActive}
+            onClick={() => toggleQuicklook()}
+          >
+            <QuicklookIcon />
           </IconBtn>
           <IconBtn
             title={`Sort: ${sortOrderLabel(noteSortOrder)}${groupByKind ? ", Group by kind" : ""}`}
@@ -3266,8 +3690,55 @@ export function Sidebar(): JSX.Element {
           >
             <ExpandAllIcon />
           </IconBtn>
-        </div>
       </div>
+
+      {/* Incremental filter (opened with `/`). Prunes the tree in place; the
+          input owns its own keys (Ctrl+N/P, Enter, Esc) while focused. */}
+      {sidebarFilter.active && (
+        <div className="mt-2 px-3">
+          <div className="flex h-8 items-center gap-2 rounded-md bg-paper-200/70 px-2 ring-1 ring-inset ring-paper-300/70 focus-within:ring-accent/60">
+            <SearchIcon />
+            <input
+              ref={sidebarFilterInputRef}
+              value={sidebarFilter.query}
+              onChange={(e) => setSidebarFilterQuery(e.target.value)}
+              onKeyDown={onSidebarFilterInputKeyDown}
+              placeholder="Filter notes…"
+              spellCheck={false}
+              autoComplete="off"
+              className="min-w-0 flex-1 bg-transparent text-sm text-ink-900 placeholder:text-ink-400 outline-none"
+            />
+            {filtering && filterMode === "fuzzy" && (
+              <span
+                title="Fuzzy (subsequence) match — leading space"
+                className="shrink-0 rounded border border-accent/40 bg-accent/10 px-1 py-0.5 font-mono text-2xs leading-none text-accent"
+              >
+                ~
+              </span>
+            )}
+            {filtering && (
+              <span className="shrink-0 text-2xs tabular-nums text-ink-500">
+                {filterVisibility.matchCount}
+              </span>
+            )}
+            <span className="shrink-0 rounded border border-paper-300/70 bg-paper-100/70 px-1 py-0.5 text-2xs leading-none text-ink-500">
+              esc esc
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                closeSidebarFilter();
+                setFocusedPanel("sidebar");
+              }}
+              title="Clear filter"
+              aria-label="Clear filter"
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-ink-500 hover:bg-current/10 hover:text-ink-800"
+            >
+              <CloseIcon width={11} height={11} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {rootContentHiddenByInboxMode && !rootContentBannerDismissed && (
         <div className="relative mx-3 mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5">
@@ -3309,7 +3780,10 @@ export function Sidebar(): JSX.Element {
       {/* Main scrollable tree area */}
       <div
         ref={sidebarScrollRef}
-        className="mt-3 min-h-0 flex-1 overflow-y-auto px-3"
+        // Programmatically focusable (not in the Tab order) so `focusSidebar`
+        // can pull real DOM focus here, off the terminal/editor.
+        tabIndex={-1}
+        className="mt-3 min-h-0 flex-1 overflow-y-auto px-3 outline-none"
         onDragOver={handleTreeDragOver}
         onDrop={handleTreeDrop}
         onDragLeave={handleTreeDragLeave}
@@ -3354,7 +3828,7 @@ export function Sidebar(): JSX.Element {
             }
           }}
         >
-          {favoriteItems.length > 0 && (
+          {!filtering && favoriteItems.length > 0 && (
             <>
               <SidebarSectionHeading label="Favorites" />
               {favoriteItems.map((item) => {
@@ -3402,14 +3876,26 @@ export function Sidebar(): JSX.Element {
                           vaultSettings.folderIcons,
                         ).icon
                       }
-                      active={isFolderActive(item.folder, item.subpath)}
+                      active={
+                        isolatedRoot?.folder === item.folder &&
+                        isolatedRoot?.subpath === item.subpath
+                          ? true
+                          : isFolderActive(item.folder, item.subpath)
+                      }
                       onClick={() => {
-                        setFocusedPanel("editor");
-                        setView({
-                          kind: "folder",
-                          folder: item.folder,
-                          subpath: item.subpath,
-                        });
+                        // A favorited notes/inbox folder is a one-click isolate
+                        // target (the payoff for favoriting folders). Other
+                        // areas keep the plain "show this folder" behaviour.
+                        if (item.folder === "inbox" && item.subpath) {
+                          enterIsolation("inbox", item.subpath);
+                        } else {
+                          setFocusedPanel("editor");
+                          setView({
+                            kind: "folder",
+                            folder: item.folder,
+                            subpath: item.subpath,
+                          });
+                        }
                       }}
                       onContextMenu={(e) =>
                         openFolderMenu(e, item.folder, item.subpath)
@@ -3421,6 +3907,10 @@ export function Sidebar(): JSX.Element {
                         "data-sidebar-type": "folder",
                         "data-sidebar-folder": item.folder,
                         "data-sidebar-subpath": item.subpath,
+                        // Marks this as a Favorites-section folder row so
+                        // keyboard activation (Enter) isolates it, matching the
+                        // click handler above.
+                        "data-sidebar-favorite": "true",
                       }}
                     />
                   );
@@ -3428,16 +3918,20 @@ export function Sidebar(): JSX.Element {
             </>
           )}
 
+          {(!filtering || filterVisibility.sections.quick) && (
+          <>
           <SidebarSectionHeading label="Quick access" />
 
-          <TaskSidebarRow
-            active={tasksViewActive}
-            onClick={() => void openTasksView()}
-            label={folderLabels.tasks}
-            sidebarIdx={idxCounter.current.value++}
-            vimHighlight={vimCursor === idxCounter.current.value - 1}
-            sidebarFocused={isSidebarFocused}
-          />
+          {!filtering && (
+            <TaskSidebarRow
+              active={tasksViewActive}
+              onClick={() => void openTasksView()}
+              label={folderLabels.tasks}
+              sidebarIdx={idxCounter.current.value++}
+              vimHighlight={vimCursor === idxCounter.current.value - 1}
+              sidebarFocused={isSidebarFocused}
+            />
+          )}
 
           <FolderTreeRoot
             label={folderLabels.quick}
@@ -3452,7 +3946,7 @@ export function Sidebar(): JSX.Element {
             toggleCollapse={toggleCollapse}
             setView={setView}
             onContextMenu={openFolderMenu}
-            showNotes={unifiedSidebar}
+            showNotes={filtering || unifiedSidebar}
             selectedPath={selectedPath}
             vaultRoot={vault?.root ?? null}
             onSelectNote={handleSelectNote}
@@ -3489,37 +3983,101 @@ export function Sidebar(): JSX.Element {
               </button>
             }
           />
+          </>
+          )}
 
-          <DateNotesNav
-            dateNav={dateNav}
-            expanded={dateNavExpanded}
-            onToggle={toggleDateNav}
-            dailyIcon={<CalendarIcon />}
-            weeklyIcon={<CalendarIcon />}
-            isFolderActive={isFolderActive}
-            selectedPath={selectedPath}
-            selectedKeys={selectedSidebarKeys}
-            sidebarFocused={isSidebarFocused}
-            showSidebarChevrons={showSidebarChevrons}
-            onSelectNote={handleSelectNote}
-            onSelectItem={handleSidebarItemSelect}
-            onNoteContextMenu={openNoteMenu}
-            dragPayloadForItem={dragPayloadForItem}
-            onRootContextMenu={(e, subpath) => openFolderMenu(e, "inbox", subpath)}
-            idxCounter={idxCounter.current}
-            vimCursor={vimCursor}
-          />
+          {!filtering && (
+            <DateNotesNav
+              dateNav={dateNav}
+              expanded={dateNavExpanded}
+              onToggle={toggleDateNav}
+              dailyIcon={<CalendarIcon />}
+              weeklyIcon={<CalendarIcon />}
+              isFolderActive={isFolderActive}
+              selectedPath={selectedPath}
+              selectedKeys={selectedSidebarKeys}
+              sidebarFocused={isSidebarFocused}
+              showSidebarChevrons={showSidebarChevrons}
+              onSelectNote={handleSelectNote}
+              onSelectItem={handleSidebarItemSelect}
+              onNoteContextMenu={openNoteMenu}
+              dragPayloadForItem={dragPayloadForItem}
+              onRootContextMenu={(e, subpath) => openFolderMenu(e, "inbox", subpath)}
+              idxCounter={idxCounter.current}
+              vimCursor={vimCursor}
+            />
+          )}
 
+          {(isolatedNode || !filtering || filterVisibility.sections.inbox) && (
+          <>
           <SidebarSectionHeading
-            label="Notes"
+            label={
+              isolatedNode && isolatedRoot
+                ? isolatedRoot.subpath.split("/").slice(-1)[0]
+                : "Notes"
+            }
             onDropPayload={
-              primaryNotesAtRoot
-                ? (payload) => handleDropOnFolder(payload, "inbox", "")
-                : undefined
+              isolatedNode && isolatedRoot
+                ? (payload) =>
+                    handleDropOnFolder(payload, "inbox", isolatedRoot.subpath)
+                : primaryNotesAtRoot
+                  ? (payload) => handleDropOnFolder(payload, "inbox", "")
+                  : undefined
             }
           />
 
-          {primaryNotesAtRoot ? (
+          {isolatedNode && isolatedRoot ? (
+            <>
+              <RootFolderDropTarget
+                onDropPayload={(payload) =>
+                  handleDropOnFolder(payload, "inbox", isolatedRoot.subpath)
+                }
+              >
+                <FolderTreeContents
+                  tree={isolatedNode}
+                  depth={0}
+                  folder="inbox"
+                  vaultSettings={vaultSettings}
+                  isFolderActive={isFolderActive}
+                  collapsed={collapsed}
+                  toggleCollapse={toggleCollapse}
+                  setView={setView}
+                  onContextMenu={openFolderMenu}
+                  // Isolation is a self-contained file list: always show notes
+                  // inline, even for classic (non-unified) sidebar users.
+                  showNotes
+                  selectedPath={selectedPath}
+                  vaultRoot={vault?.root ?? null}
+                  onSelectNote={handleSelectNote}
+                  onOpenAsset={openAssetInTab}
+                  onNoteContextMenu={openNoteMenu}
+                  onAssetContextMenu={openAssetMenu}
+                  sortComparator={treeSortComparator}
+                  onDropOnFolder={handleDropOnFolder}
+                  selectedKeys={selectedSidebarKeys}
+                  onSelectItem={handleSidebarItemSelect}
+                  dragPayloadForItem={dragPayloadForItem}
+                  idxCounter={idxCounter.current}
+                  vimCursor={vimCursor}
+                  sidebarFocused={isSidebarFocused}
+                  groupByKind={groupByKind}
+                  showSidebarChevrons={showSidebarChevrons}
+                />
+              </RootFolderDropTarget>
+              {isTreeNodeEmpty(isolatedNode) && (
+                <div className="px-3 py-2 text-xs text-ink-400">
+                  This folder is empty.{" "}
+                  <button
+                    type="button"
+                    className="underline underline-offset-2 hover:text-ink-600"
+                    onClick={() => exitIsolation()}
+                  >
+                    Exit isolation
+                  </button>
+                </div>
+              )}
+            </>
+          ) : primaryNotesAtRoot ? (
             <RootFolderDropTarget
               onDropPayload={(payload) => handleDropOnFolder(payload, "inbox", "")}
             >
@@ -3533,7 +4091,7 @@ export function Sidebar(): JSX.Element {
                 toggleCollapse={toggleCollapse}
                 setView={setView}
                 onContextMenu={openFolderMenu}
-                showNotes={unifiedSidebar}
+                showNotes={filtering || unifiedSidebar}
                 selectedPath={selectedPath}
                 vaultRoot={vault?.root ?? null}
                 onSelectNote={handleSelectNote}
@@ -3566,7 +4124,7 @@ export function Sidebar(): JSX.Element {
               toggleCollapse={toggleCollapse}
               setView={setView}
               onContextMenu={openFolderMenu}
-              showNotes={unifiedSidebar}
+              showNotes={filtering || unifiedSidebar}
               selectedPath={selectedPath}
               vaultRoot={vault?.root ?? null}
               onSelectNote={handleSelectNote}
@@ -3585,10 +4143,83 @@ export function Sidebar(): JSX.Element {
               showSidebarChevrons={showSidebarChevrons}
             />
           )}
+          </>
+          )}
+
+          {/* While filtering, archive & trash — normally launcher rows, not
+              inline trees — surface their matches as pruned sections at the
+              bottom under their own headings (the "separator"), keeping them
+              least-priority per decision 1. */}
+          {filtering && filterVisibility.sections.archive && (
+            <>
+              <SidebarSectionHeading label={folderLabels.archive} />
+              <FolderTreeContents
+                tree={trees.archive}
+                depth={0}
+                folder="archive"
+                vaultSettings={vaultSettings}
+                isFolderActive={isFolderActive}
+                collapsed={collapsed}
+                toggleCollapse={toggleCollapse}
+                setView={setView}
+                onContextMenu={openFolderMenu}
+                showNotes
+                selectedPath={selectedPath}
+                vaultRoot={vault?.root ?? null}
+                onSelectNote={handleSelectNote}
+                onOpenAsset={openAssetInTab}
+                onNoteContextMenu={openNoteMenu}
+                onAssetContextMenu={openAssetMenu}
+                sortComparator={treeSortComparator}
+                onDropOnFolder={handleDropOnFolder}
+                selectedKeys={selectedSidebarKeys}
+                onSelectItem={handleSidebarItemSelect}
+                dragPayloadForItem={dragPayloadForItem}
+                idxCounter={idxCounter.current}
+                vimCursor={vimCursor}
+                sidebarFocused={isSidebarFocused}
+                groupByKind={groupByKind}
+                showSidebarChevrons={showSidebarChevrons}
+              />
+            </>
+          )}
+          {filtering && filterVisibility.sections.trash && (
+            <>
+              <SidebarSectionHeading label={folderLabels.trash} />
+              <FolderTreeContents
+                tree={trees.trash}
+                depth={0}
+                folder="trash"
+                vaultSettings={vaultSettings}
+                isFolderActive={isFolderActive}
+                collapsed={collapsed}
+                toggleCollapse={toggleCollapse}
+                setView={setView}
+                onContextMenu={openFolderMenu}
+                showNotes
+                selectedPath={selectedPath}
+                vaultRoot={vault?.root ?? null}
+                onSelectNote={handleSelectNote}
+                onOpenAsset={openAssetInTab}
+                onNoteContextMenu={openNoteMenu}
+                onAssetContextMenu={openAssetMenu}
+                sortComparator={treeSortComparator}
+                onDropOnFolder={handleDropOnFolder}
+                selectedKeys={selectedSidebarKeys}
+                onSelectItem={handleSidebarItemSelect}
+                dragPayloadForItem={dragPayloadForItem}
+                idxCounter={idxCounter.current}
+                vimCursor={vimCursor}
+                sidebarFocused={isSidebarFocused}
+                groupByKind={groupByKind}
+                showSidebarChevrons={showSidebarChevrons}
+              />
+            </>
+          )}
 
           {/* Tags pinned to the bottom of the tree, directly above System
               (mt-auto absorbs the free space above them). */}
-          {tags.length > 0 && (
+          {!filtering && tags.length > 0 && (
             <div className="mt-auto pt-4">
               <button
                 type="button"
@@ -3658,7 +4289,9 @@ export function Sidebar(): JSX.Element {
             )}
 
           {/* System (Archive / Trash / Assets) sits just below Tags. When there
-              are no tags above it, it carries the bottom-anchoring itself. */}
+              are no tags above it, it carries the bottom-anchoring itself.
+              Hidden while filtering — archive/trash matches show inline above. */}
+          {!filtering && (
           <div className={tags.length > 0 ? "pt-4" : "mt-auto pt-4"}>
             <SidebarSectionHeading label="System" />
               <SystemRow
@@ -3701,6 +4334,7 @@ export function Sidebar(): JSX.Element {
                 sidebarType="assets"
               />
             </div>
+          )}
         </div>
       </div>
 
@@ -3843,6 +4477,44 @@ export function Sidebar(): JSX.Element {
           onClose={() => setSortMenu(null)}
         />
       )}
+      {isolateMenu && (
+        <ContextMenu
+          x={isolateMenu.x}
+          y={isolateMenu.y}
+          items={[
+            ...(isolationTarget &&
+            isolationTarget.subpath !== isolatedRoot?.subpath
+              ? [
+                  {
+                    label: `Isolate "${isolationTarget.subpath.split("/").slice(-1)[0]}"`,
+                    onSelect: () =>
+                      enterIsolation(
+                        isolationTarget.folder,
+                        isolationTarget.subpath,
+                      ),
+                  },
+                ]
+              : []),
+            {
+              label: (() => {
+                const parent = isolatedRoot
+                  ? parentSubpath(isolatedRoot.subpath)
+                  : "";
+                if (!parent) return "Go up (exits isolation)";
+                const name = parent.split("/").slice(-1)[0];
+                return `Go up to ${name.length > 20 ? `${name.slice(0, 20)}…` : name}`;
+              })(),
+              onSelect: () => void goUpIsolationWithConfirm(),
+            },
+            { kind: "separator" as const },
+            {
+              label: "Quit isolated mode",
+              onSelect: () => exitIsolation(),
+            },
+          ]}
+          onClose={() => setIsolateMenu(null)}
+        />
+      )}
 
       <ResizeHandle
         getWidth={() => sidebarWidth}
@@ -3852,6 +4524,7 @@ export function Sidebar(): JSX.Element {
         }}
       />
     </aside>
+    </SidebarFilterContext.Provider>
     </SidebarScrollerContext.Provider>
   );
 }
@@ -3903,6 +4576,23 @@ const SIDEBAR_WINDOW_OVERSCAN = 10;
 // and react to scroll without re-rendering the whole sidebar.
 const SidebarScrollerContext =
   createContext<React.RefObject<HTMLDivElement | null> | null>(null);
+
+// The active sidebar filter's visible-set, computed once at the top and read by
+// FolderTreeContents/SubTree so they can prune rendered entries *after* ordering
+// (the filter is a prune pass, not a re-sort — see lib/sidebar-filter.ts). When
+// `filtering` is false the tree renders normally. `leaves` holds visible note &
+// asset paths; `folderKeys` holds `${folder}:${subpath}` for folders to show.
+interface SidebarFilterContextValue {
+  filtering: boolean;
+  leaves: Set<string>;
+  folderKeys: Set<string>;
+}
+const EMPTY_FILTER: SidebarFilterContextValue = {
+  filtering: false,
+  leaves: new Set(),
+  folderKeys: new Set(),
+};
+const SidebarFilterContext = createContext<SidebarFilterContextValue>(EMPTY_FILTER);
 
 const SidebarLeafPlaceholder = memo(function SidebarLeafPlaceholder({
   sidebarIdx,
@@ -4426,6 +5116,26 @@ function manualRenderDescriptor(
   };
 }
 
+/**
+ * Prune already-ordered render entries down to the filter's visible set. Runs
+ * after `getTreeRenderEntries` so current sort order (including manual order) is
+ * preserved; the filter only hides rows, it never reorders them. A no-op when
+ * the filter is inactive.
+ */
+function filterEntries(
+  entries: TreeRenderEntry[],
+  filter: SidebarFilterContextValue,
+  folder: NoteFolder,
+): TreeRenderEntry[] {
+  if (!filter.filtering) return entries;
+  return entries.filter((entry) => {
+    if (entry.type === "folder")
+      return filter.folderKeys.has(`${folder}:${entry.node.subpath}`);
+    if (entry.type === "note") return filter.leaves.has(entry.note.path);
+    return filter.leaves.has(entry.asset.path);
+  });
+}
+
 function getTreeRenderEntries(
   node: TreeNode,
   showNotes: boolean,
@@ -4520,6 +5230,34 @@ function countNotesInTree(node: TreeNode): number {
   );
 }
 
+/**
+ * Walk a built tree down to the node at `subpath` (matching each child's real
+ * `subpath`, so it stays correct in notes-at-root vaults). Returns undefined
+ * when the folder no longer exists (deleted / renamed / moved externally),
+ * which the isolated-mode auto-exit relies on. `subpath === ""` returns root.
+ */
+function findTreeNode(root: TreeNode, subpath: string): TreeNode | undefined {
+  if (!subpath) return root;
+  let node: TreeNode = root;
+  let acc = "";
+  for (const seg of subpath.split("/")) {
+    acc = acc ? `${acc}/${seg}` : seg;
+    const next = node.children.find((c) => c.subpath === acc);
+    if (!next) return undefined;
+    node = next;
+  }
+  return node;
+}
+
+/** No child folders, notes, or assets to render at this node's top level. */
+function isTreeNodeEmpty(node: TreeNode): boolean {
+  return (
+    node.children.length === 0 &&
+    node.notes.length === 0 &&
+    node.assets.length === 0
+  );
+}
+
 /* ---------- Tree rendering ---------- */
 
 /** Mutable counter threaded through tree rendering for sequential data-sidebar-idx attributes. */
@@ -4604,15 +5342,18 @@ function FolderTreeContents({
 } & TreeRenderProps): JSX.Element {
   const manualSort = useStore((s) => s.noteSortOrder === "manual");
   const manualNoteOrder = useStore((s) => s.manualNoteOrder);
+  const filter = useContext(SidebarFilterContext);
   const entries = useMemo(
-    () =>
-      getTreeRenderEntries(
+    () => {
+      const all = getTreeRenderEntries(
         tree,
         showNotes,
         sortComparator,
         groupByKind,
         manualRenderDescriptor(tree, manualSort, manualNoteOrder, folder, vaultSettings),
-      ),
+      );
+      return filterEntries(all, filter, folder);
+    },
     [
       tree,
       showNotes,
@@ -4622,6 +5363,7 @@ function FolderTreeContents({
       manualNoteOrder,
       folder,
       vaultSettings,
+      filter,
     ],
   );
   const progressiveEligible = shouldProgressivelyRenderEntries(entries);
@@ -4797,19 +5539,24 @@ function FolderTreeRoot({
   headerAction?: JSX.Element;
 } & TreeRenderProps): JSX.Element {
   const rootKey = `${folder}:`;
-  const isCollapsed = collapsed.has(rootKey);
+  const filter = useContext(SidebarFilterContext);
+  // Force-expand while filtering so matches are visible; real collapse state
+  // is left untouched and restored on exit.
+  const isCollapsed = filter.filtering ? false : collapsed.has(rootKey);
   const total = countNotesInTree(tree);
   const manualSort = useStore((s) => s.noteSortOrder === "manual");
   const manualNoteOrder = useStore((s) => s.manualNoteOrder);
   const entries = useMemo(
-    () =>
-      getTreeRenderEntries(
+    () => {
+      const all = getTreeRenderEntries(
         tree,
         showNotes,
         sortComparator,
         groupByKind,
         manualRenderDescriptor(tree, manualSort, manualNoteOrder, folder, vaultSettings),
-      ),
+      );
+      return filterEntries(all, filter, folder);
+    },
     [
       tree,
       showNotes,
@@ -4819,6 +5566,7 @@ function FolderTreeRoot({
       manualNoteOrder,
       folder,
       vaultSettings,
+      filter,
     ],
   );
   const rootActive = isFolderActive(folder, "");
@@ -4946,7 +5694,12 @@ function SubTree({
   showSidebarChevrons,
 }: { node: TreeNode; depth: number } & TreeRenderProps): JSX.Element {
   const key = `${folder}:${node.subpath}`;
-  const isCollapsed = collapsed.has(key);
+  const filter = useContext(SidebarFilterContext);
+  // While filtering, every rendered (visible) folder is force-expanded so the
+  // path to a match is always shown; the user's real collapse state is left
+  // untouched and restored on exit. A folder visible only by its own name has
+  // its children pruned, so it still reads as a bare row.
+  const isCollapsed = filter.filtering ? false : collapsed.has(key);
   const iconOption = resolveFolderIconOption(
     folder,
     node.subpath,
@@ -4962,14 +5715,16 @@ function SubTree({
   const manualSort = useStore((s) => s.noteSortOrder === "manual");
   const manualNoteOrder = useStore((s) => s.manualNoteOrder);
   const entries = useMemo(
-    () =>
-      getTreeRenderEntries(
+    () => {
+      const all = getTreeRenderEntries(
         node,
         showNotes,
         sortComparator,
         groupByKind,
         manualRenderDescriptor(node, manualSort, manualNoteOrder, folder, vaultSettings),
-      ),
+      );
+      return filterEntries(all, filter, folder);
+    },
     [
       node,
       showNotes,
@@ -4979,6 +5734,7 @@ function SubTree({
       manualNoteOrder,
       folder,
       vaultSettings,
+      filter,
     ],
   );
   const progressiveEligible = shouldProgressivelyRenderEntries(entries);
@@ -6105,22 +6861,27 @@ function IconBtn({
   onClick,
   title,
   active,
+  disabled,
 }: {
   children: JSX.Element;
   onClick: (e: React.MouseEvent) => void;
   title: string;
   active?: boolean;
+  disabled?: boolean;
 }): JSX.Element {
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
       aria-label={title}
       className={[
         "group relative flex h-7 w-7 items-center justify-center rounded-md transition-colors",
-        active
-          ? "bg-accent/15 text-accent"
-          : "text-ink-500 hover:bg-paper-200 hover:text-ink-800",
+        disabled
+          ? "cursor-default text-ink-300"
+          : active
+            ? "bg-accent/15 text-accent"
+            : "text-ink-500 hover:bg-paper-200 hover:text-ink-800",
       ].join(" ")}
     >
       <span className="pointer-events-none">{children}</span>

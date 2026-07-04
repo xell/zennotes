@@ -131,6 +131,13 @@ function focusEdgePanel(panel: Exclude<EdgePanel, 'editor'>): void {
   const state = useStore.getState()
   state.setFocusedPanel(panel)
   ;(document.activeElement as HTMLElement | null)?.blur()
+  // Landing on the sidebar: reveal the note being edited (retry-based, so it
+  // survives the render race) instead of a stale cursor row — same as the
+  // Focus Sidebar command. Other edge panels keep their scroll-to-cursor.
+  if (panel === 'sidebar' && state.activeNote) {
+    state.requestSidebarReveal({ kind: 'leaf', path: state.activeNote.path })
+    return
+  }
   requestAnimationFrame(() => {
     const target =
       panel === 'sidebar'

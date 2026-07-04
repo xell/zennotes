@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { EditorView } from '@codemirror/view'
-import { isTagsViewActive, isTasksViewActive, useStore } from '../store'
+import { isTagsViewActive, isTasksViewActive, useStore, type SidebarRevealTarget } from '../store'
 import { HintOverlay } from './HintOverlay'
 import { WhichKeyOverlay, type WhichKeyItem } from './WhichKeyOverlay'
 import {
@@ -33,6 +33,7 @@ import {
 } from '../lib/keyboard-context-menu'
 import { navigateActiveBuffer } from '../lib/buffer-navigation'
 import { focusEditorNormalMode } from '../lib/editor-focus'
+import { goUpIsolationWithConfirm } from '../lib/sidebar-isolation'
 
 function escapeForAttr(value: string): string {
   if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(value)
@@ -592,6 +593,12 @@ export function VimNav(): JSX.Element | null {
               .querySelector<HTMLElement>('[data-calendar-panel]')
               ?.focus({ preventScroll: true })
           })
+        } else if (next === 'sidebar' && state.activeNote) {
+          // Landing on the sidebar: reveal the note being edited (retry-based,
+          // so it survives the render race) instead of scrolling to a stale
+          // cursor row — same behaviour as the Focus Sidebar command.
+          ;(document.activeElement as HTMLElement)?.blur()
+          state.requestSidebarReveal({ kind: 'leaf', path: state.activeNote.path })
         } else {
           // Steal focus away from the editor so it stops processing keys
           ;(document.activeElement as HTMLElement)?.blur()
@@ -1039,7 +1046,27 @@ export function VimNav(): JSX.Element | null {
     const key = e.key
     const overrides = state.keymapOverrides
     if (state.focusedPanel !== 'sidebar') state.setFocusedPanel('sidebar')
-    const items = getIndexedElements('[data-sidebar-idx]', 'sidebarIdx')
+    // Isolated-mode "go up" ('-' by default). Acts on isolatedRoot, not the
+    // cursor row, so it works from any row and even in an empty isolated folder
+    // — handle it before the item-count guards below. Only claimed when
+    // isolated, so '-' stays free otherwise.
+    if (state.isolatedRoot && matchesSequenceToken(e, overrides, 'nav.isolateUp')) {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      void goUpIsolationWithConfirm()
+      return
+    }
+    let items = getIndexedElements('[data-sidebar-idx]', 'sidebarIdx')
+    // Quicklook constrains the cursor to rows that actually have a preview —
+    // notes, assets, and folders — so j/k can't wander onto the vault header,
+    // tags, System rows, or the bottom toolbar (which have nothing to show).
+    if (state.quicklookActive) {
+      const previewable = items.filter((el) => {
+        const t = el.dataset.sidebarType
+        return t === 'note' || t === 'asset' || t === 'folder'
+      })
+      if (previewable.length > 0) items = previewable
+    }
     const count = items.length
     const max = count - 1
     const currentPos = findPositionByIndex(items, 'sidebarIdx', state.sidebarCursorIndex)
@@ -1118,11 +1145,36 @@ export function VimNav(): JSX.Element | null {
       return
     }
     if (key === 'Escape') {
+      // Second Escape while the filter is open (input already blurred to the
+      // panel by the first Escape): exit and keep the picked row centered in
+      // the restored tree. Otherwise Escape leaves the sidebar for the editor.
+      const filter = state.sidebarFilter
+      if (filter.active && filter.query.trim() !== '') {
+        const el = items[currentPos]
+        const type = el?.dataset.sidebarType
+        let reveal: SidebarRevealTarget | null = null
+        if ((type === 'note' || type === 'asset') && el?.dataset.sidebarPath) {
+          reveal = { kind: 'leaf', path: el.dataset.sidebarPath }
+        } else if (type === 'folder' && el?.dataset.sidebarFolder != null) {
+          reveal = {
+            kind: 'folder',
+            folder: el.dataset.sidebarFolder,
+            subpath: el.dataset.sidebarSubpath ?? ''
+          }
+        }
+        state.requestSidebarReveal(reveal)
+        state.closeSidebarFilter()
+        state.setFocusedPanel('sidebar')
+        return
+      }
       focusEditor()
       return
     }
     if (matchesSequenceToken(e, overrides, 'nav.filter')) {
-      state.setSearchOpen(true)
+      // `/` opens (or re-focuses) the sidebar's own incremental filter. Global
+      // search stays on Mod+P and the leader. The focus effect in Sidebar moves
+      // focus into the input.
+      state.openSidebarFilter()
       return
     }
     if (wantsContextMenu) {
@@ -1849,6 +1901,11 @@ export function VimNav(): JSX.Element | null {
     if (itemType === 'folder') {
       const folder = el.dataset.sidebarFolder as 'inbox' | 'quick' | 'archive' | 'trash'
       const subpath = el.dataset.sidebarSubpath ?? ''
+      // A favorited inbox folder activates into isolation, matching its click.
+      if (el.dataset.sidebarFavorite === 'true' && folder === 'inbox' && subpath) {
+        state.enterIsolation('inbox', subpath)
+        return
+      }
       state.setView({ kind: 'folder', folder, subpath })
       const collapseKey = el.dataset.sidebarKey
       if (collapseKey && state.collapsedFolders.includes(collapseKey)) {

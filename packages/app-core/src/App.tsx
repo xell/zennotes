@@ -17,6 +17,8 @@ import { ConfirmHost } from './components/ConfirmHost'
 import { ServerDirectoryPickerHost } from './components/ServerDirectoryPickerHost'
 import { resolveQuickNoteTitle } from './lib/quick-note-title'
 import { isMacPlatform, matchesShortcut, matchesSequenceToken } from './lib/keymaps'
+import { confirmApp } from './lib/confirm-requests'
+import { selectedInboxFolderForIsolation, goUpIsolationWithConfirm } from './lib/sidebar-isolation'
 import { focusPaneOrEdgePanel } from './lib/pane-nav'
 import { requestPaneMode } from './lib/pane-mode'
 import { recordRendererPerf } from './lib/perf'
@@ -705,6 +707,54 @@ function App(): JSX.Element {
       if (matchesShortcut(e, overrides, 'global.toggleSidebar')) {
         e.preventDefault()
         state.toggleSidebar()
+        return
+      }
+      // Pure focus-sidebar (opens if closed, never closes, no other action).
+      // Unbound by default — pick a binding in Settings.
+      if (matchesShortcut(e, overrides, 'global.focusSidebar')) {
+        e.preventDefault()
+        state.focusSidebar()
+        return
+      }
+      // Open the sidebar's incremental filter from anywhere. Unbound by default:
+      // inside the sidebar `/` already opens it, but in the editor `/` is Vim
+      // search, so a global binding is left for the user to choose in Settings.
+      if (matchesShortcut(e, overrides, 'global.filterSidebar')) {
+        e.preventDefault()
+        state.openSidebarFilter()
+        return
+      }
+      // Toggle isolated mode. When isolated, quit from anywhere (confirm, since
+      // this can fire from the editor). When not isolated, enter only if the
+      // sidebar is focused and its cursor is on a notes/inbox folder — so an
+      // enter fired from deep in the editor never acts on a stale selection.
+      if (matchesShortcut(e, overrides, 'view.isolateFolder')) {
+        e.preventDefault()
+        if (state.isolatedRoot) {
+          void confirmApp({
+            title: 'Exit isolated mode?',
+            description: 'Show the full note tree again.',
+            confirmLabel: 'Exit',
+          }).then((ok) => {
+            if (ok) useStore.getState().exitIsolation()
+          })
+        } else if (state.focusedPanel === 'sidebar') {
+          const target = selectedInboxFolderForIsolation(state.sidebarCursorIndex)
+          if (target) state.enterIsolation(target.folder, target.subpath)
+        }
+        return
+      }
+      // Isolated mode: go up one level (unbound by default). Same as the
+      // sidebar's '-' key, but works from anywhere. No-op when not isolated.
+      if (matchesShortcut(e, overrides, 'view.isolateUp')) {
+        e.preventDefault()
+        void goUpIsolationWithConfirm()
+        return
+      }
+      // Toggle Quicklook (⌘⌥U): preview-as-you-navigate in the sidebar.
+      if (matchesShortcut(e, overrides, 'view.quicklook')) {
+        e.preventDefault()
+        state.toggleQuicklook()
         return
       }
       // ⌘2 — toggle connections

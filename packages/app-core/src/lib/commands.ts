@@ -14,6 +14,7 @@ import { focusPaneInDirection } from './pane-nav'
 import { findLeaf } from './pane-layout'
 import { requestPaneMode } from './pane-mode'
 import { resolveQuickNoteTitle } from './quick-note-title'
+import { selectedInboxFolderForIsolation, goUpIsolationWithConfirm } from './sidebar-isolation'
 import { getKeymapDisplay, type KeymapId } from './keymaps'
 import { dispatchKeyboardContextMenu, findTabContextMenuTarget } from './keyboard-context-menu'
 import { resolveSystemFolderLabels } from './system-folder-labels'
@@ -956,11 +957,9 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       id: 'nav.focus.sidebar',
       title: 'Focus Sidebar',
       category: 'Go',
-      run: () => {
-        const st = getState()
-        if (!st.sidebarOpen) st.toggleSidebar()
-        st.setFocusedPanel('sidebar')
-      }
+      shortcut: shortcut('global.focusSidebar'),
+      keywords: 'focus sidebar panel navigate reveal',
+      run: () => getState().focusSidebar()
     },
     {
       id: 'nav.focus.editor',
@@ -971,6 +970,49 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
         st.setFocusedPanel('editor')
         requestAnimationFrame(() => useStore.getState().editorViewRef?.focus())
       }
+    },
+    {
+      id: 'nav.filter.sidebar',
+      title: 'Filter Sidebar…',
+      category: 'Go',
+      shortcut: shortcut('global.filterSidebar'),
+      keywords: 'filter sidebar narrow incremental fuzzy find files notes slash',
+      run: () => getState().openSidebarFilter()
+    },
+    {
+      id: 'view.isolate.folder',
+      title: 'Isolate Selected Folder',
+      category: 'Go',
+      shortcut: shortcut('view.isolateFolder'),
+      keywords: 'isolate focus only this folder scope narrow sidebar',
+      run: () => {
+        const st = getState()
+        const target = selectedInboxFolderForIsolation(st.sidebarCursorIndex)
+        if (target) st.enterIsolation(target.folder, target.subpath)
+      }
+    },
+    {
+      id: 'view.isolate.up',
+      title: 'Isolate: Go Up One Level',
+      category: 'Go',
+      shortcut: shortcut('view.isolateUp'),
+      keywords: 'isolate go up parent folder level out zoom sidebar',
+      run: () => void goUpIsolationWithConfirm()
+    },
+    {
+      id: 'view.isolate.exit',
+      title: 'Exit Isolated Mode',
+      category: 'Go',
+      keywords: 'isolate exit quit leave unfold full tree sidebar',
+      run: () => getState().exitIsolation()
+    },
+    {
+      id: 'view.quicklook',
+      title: 'Toggle Quicklook',
+      category: 'Go',
+      shortcut: shortcut('view.quicklook'),
+      keywords: 'quicklook quick look preview peek browse sidebar space',
+      run: () => getState().toggleQuicklook()
     }
   )
 
