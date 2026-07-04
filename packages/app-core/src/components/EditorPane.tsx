@@ -1515,7 +1515,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
             deferInitialRichMarkdown ? [] : markdownSyntaxHighlightExtensions()
           ),
           livePreviewCompartment.of(
-            s0.livePreview && !deferInitialRichMarkdown
+            // Split mode shows raw Markdown (all syntax marks visible) in the
+            // editor half, so WYSIWYG is off there regardless of livePreview.
+            s0.livePreview && !deferInitialRichMarkdown && modeRef.current !== 'split'
               ? wysiwygExtensions(s0.renderTablesInLivePreview)
               : []
           ),
@@ -1670,7 +1672,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
             markdownCompartment.reconfigure(markdownEditingExtensions()),
             markdownSyntaxCompartment.reconfigure(markdownSyntaxHighlightExtensions())
           ]
-          if (useStore.getState().livePreview) {
+          if (useStore.getState().livePreview && modeRef.current !== 'split') {
             restoreEffects.push(livePreviewCompartment.reconfigure(wysiwygExtensions(useStore.getState().renderTablesInLivePreview)))
           }
           view.dispatch({ effects: restoreEffects })
@@ -1761,7 +1763,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
         markdownCompartment.reconfigure(markdownEditingExtensions()),
         markdownSyntaxCompartment.reconfigure(markdownSyntaxHighlightExtensions())
       )
-      if (livePreviewEnabled && livePreviewCompartment) {
+      if (livePreviewEnabled && livePreviewCompartment && modeRef.current !== 'split') {
         effects.push(livePreviewCompartment.reconfigure(wysiwygExtensions(useStore.getState().renderTablesInLivePreview)))
       }
     }
@@ -1840,7 +1842,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
           markdownCompartment.reconfigure(markdownEditingExtensions()),
           markdownSyntaxCompartment.reconfigure(markdownSyntaxHighlightExtensions())
         ]
-        if (useStore.getState().livePreview && livePreviewCompartment) {
+        if (useStore.getState().livePreview && livePreviewCompartment && modeRef.current !== 'split') {
           restoreEffects.push(livePreviewCompartment.reconfigure(wysiwygExtensions(useStore.getState().renderTablesInLivePreview)))
         }
         view.dispatch({
@@ -1881,7 +1883,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     const comp = livePreviewCompartmentRef.current
     if (!view || !comp) return
     if (deferredLivePreviewTimerRef.current != null) {
-      if (livePreview) {
+      if (livePreview && mode !== 'split') {
         clearTimeout(deferredLivePreviewTimerRef.current)
         deferredLivePreviewTimerRef.current = null
         richMarkdownDeferredRef.current = false
@@ -1901,8 +1903,17 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       }
       return
     }
-    view.dispatch({ effects: comp.reconfigure(livePreview ? wysiwygExtensions(useStore.getState().renderTablesInLivePreview) : []) })
-  }, [livePreview, renderTablesInLivePreview, hideActiveLineMarkup])
+    // Split mode shows raw Markdown in the editor half (all syntax marks
+    // visible), so WYSIWYG live-preview decorations are suppressed there
+    // regardless of the global livePreview setting.
+    view.dispatch({
+      effects: comp.reconfigure(
+        livePreview && mode !== 'split'
+          ? wysiwygExtensions(useStore.getState().renderTablesInLivePreview)
+          : []
+      )
+    })
+  }, [livePreview, renderTablesInLivePreview, hideActiveLineMarkup, mode])
   useEffect(() => {
     const view = viewRef.current
     const comp = lineNumbersCompartmentRef.current
