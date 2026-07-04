@@ -28,6 +28,7 @@ import {
   syntaxTree
 } from '@codemirror/language'
 import type { SyntaxNode } from '@lezer/common'
+import { Prec } from '@codemirror/state'
 import type { EditorState, Extension, StateEffect } from '@codemirror/state'
 import {
   Decoration,
@@ -357,12 +358,20 @@ export function foldAllHeadings(view: EditorView): boolean {
 }
 
 export function headingFolding(): Extension {
-  const service = foldService.of((state, from, _to) => {
-    const lineNumber = state.doc.lineAt(from).number
-    const level = headingLevelAt(state, lineNumber)
-    if (level === null) return null
-    return rangeForHeading(state, lineNumber, level)
-  })
+  // `Prec.highest` so this wins over the markdown language's own heading
+  // foldService inside `foldable()` (used by `zc`/foldCode). The language's
+  // range stops at the last non-blank line, dropping a trailing blank line
+  // out of the fold; ours (rangeForHeading) includes it, matching the click
+  // toggle. For non-heading lines this returns null and folding falls through
+  // to the language's list/code/frontmatter folds as before.
+  const service = Prec.highest(
+    foldService.of((state, from, _to) => {
+      const lineNumber = state.doc.lineAt(from).number
+      const level = headingLevelAt(state, lineNumber)
+      if (level === null) return null
+      return rangeForHeading(state, lineNumber, level)
+    })
+  )
 
   // `codeFolding()` is what actually applies fold state — it listens
   // for foldEffect / unfoldEffect and installs the replace-decorations
