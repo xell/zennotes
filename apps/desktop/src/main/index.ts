@@ -763,6 +763,9 @@ function mimeTypeForPath(absPath: string): string {
       return 'video/ogg'
     case '.webm':
       return 'video/webm'
+    case '.html':
+    case '.htm':
+      return 'text/html'
     case '.woff2':
       return 'font/woff2'
     case '.woff':

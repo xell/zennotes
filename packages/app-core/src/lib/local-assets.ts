@@ -14,8 +14,9 @@ const IMAGE_EXTENSIONS = new Set([
 const PDF_EXTENSIONS = new Set(['.pdf'])
 const AUDIO_EXTENSIONS = new Set(['.aac', '.flac', '.m4a', '.mp3', '.ogg', '.wav'])
 const VIDEO_EXTENSIONS = new Set(['.m4v', '.mov', '.mp4', '.ogv', '.webm'])
+const HTML_EXTENSIONS = new Set(['.html', '.htm'])
 
-export type LocalAssetKind = 'image' | 'pdf' | 'audio' | 'video' | 'file'
+export type LocalAssetKind = 'image' | 'pdf' | 'audio' | 'video' | 'html' | 'file'
 
 function stripQueryAndHash(href: string): string {
   return href.split('#')[0]?.split('?')[0] ?? href
@@ -66,6 +67,7 @@ export function classifyLocalAssetHref(href: string): LocalAssetKind | null {
   if (PDF_EXTENSIONS.has(ext)) return 'pdf'
   if (AUDIO_EXTENSIONS.has(ext)) return 'audio'
   if (VIDEO_EXTENSIONS.has(ext)) return 'video'
+  if (HTML_EXTENSIONS.has(ext)) return 'html'
   return 'file'
 }
 
@@ -265,7 +267,7 @@ function buildImageEmbed(
 }
 
 function buildEmbed(
-  kind: Exclude<LocalAssetKind, 'image' | 'file'>,
+  kind: Exclude<LocalAssetKind, 'image' | 'html' | 'file'>,
   url: string,
   label: string,
   href: string,
@@ -459,7 +461,10 @@ export function enhanceLocalAssetNodes(
       })
     }
 
-    if (kind === 'file' || kind === 'image') return
+    // 'html' stays a plain click-to-open link inline (no auto-embed), so
+    // its script never executes just because a note scrolled into view —
+    // it renders only on a deliberate open, in a sandboxed tab iframe.
+    if (kind === 'file' || kind === 'image' || kind === 'html') return
 
     const paragraph = isStandaloneAnchorParagraph(anchor)
     if (!paragraph || paragraph.dataset.assetEmbed === 'true') return

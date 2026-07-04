@@ -3603,6 +3603,20 @@ function AssetTabView({
         <audio src={assetUrl} controls className="w-full" />
       </div>
     </div>
+  ) : assetKind === 'html' ? (
+    // HTML is the one executable asset kind, so it renders inside a
+    // sandbox — allow-scripts/allow-forms only, deliberately WITHOUT
+    // allow-same-origin. The iframe loads at an opaque origin, so its JS
+    // can't fetch other vault files through zen-asset://local (which
+    // shares one origin across the whole vault). Relative refs inside the
+    // page (<script src>, <img src>) still resolve against the file's own
+    // URL, so a self-contained page renders and runs normally.
+    <iframe
+      src={assetUrl}
+      title={title}
+      sandbox="allow-scripts allow-forms"
+      className="min-h-0 min-w-0 flex-1 border-0 bg-white"
+    />
   ) : (
     <iframe
       src={assetUrl}

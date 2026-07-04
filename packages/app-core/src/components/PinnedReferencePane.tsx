@@ -685,6 +685,20 @@ export function PinnedReferencePane(): JSX.Element | null {
           </div>
         )}
 
+        {pinnedRefPath && !showPicker && isAsset && assetUrl && assetKind === 'html' && (
+          // Sandboxed like the AssetTabView case (allow-scripts/allow-forms,
+          // no allow-same-origin). Intentionally NOT part of the persistent
+          // seenAssetUrls stack below: HTML is executable, so it mounts only
+          // while it's the active pin and unmounts otherwise, stopping any
+          // timers/polling from running invisibly in the background.
+          <iframe
+            src={assetUrl}
+            title={title}
+            sandbox="allow-scripts allow-forms"
+            className="absolute inset-0 h-full w-full border-0 bg-white"
+          />
+        )}
+
         {/* Asset iframe stack — ALWAYS mounted once any PDF/generic asset has been
             pinned this session, regardless of whether one is currently
             pinned or the pane is visible. This is the "preserve PDF
