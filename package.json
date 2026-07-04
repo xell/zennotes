@@ -30,6 +30,8 @@
     "test:sidebar-vim": "node tooling/scripts/sidebar-vim-smoke.mjs",
     "pack": "npm run pack --workspace @zennotes/desktop",
     "install:mac": "npm run pack && node tooling/scripts/install-mac.mjs",
+    "install:mac:quick": "npm run pack:quick --workspace @zennotes/desktop && node tooling/scripts/install-mac.mjs",
+    "install:mac:fast": "npm run pack:adhoc --workspace @zennotes/desktop && node tooling/scripts/sign-mac-fast.mjs && node tooling/scripts/install-mac.mjs",
     "dist:mac": "npm run dist:mac --workspace @zennotes/desktop",
     "dist:win": "npm run dist:win --workspace @zennotes/desktop",
     "dist:linux": "npm run dist:linux --workspace @zennotes/desktop"

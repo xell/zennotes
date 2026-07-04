@@ -32,6 +32,8 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "pack": "npm run build:prod && electron-builder --dir",
+    "pack:quick": "npm run build && electron-builder --dir",
+    "pack:adhoc": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
     "dist:mac": "npm run build:prod && electron-builder --mac --publish never",
     "dist:win": "npm run build:prod && electron-builder --win --publish never",
     "dist:linux": "npm run build:prod && electron-builder --linux --publish never"
