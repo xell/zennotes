@@ -1,5 +1,5 @@
 /**
- * `zen` note-management subcommands. Operations are filesystem-direct
+ * `zn` note-management subcommands. Operations are filesystem-direct
  * via vault-ops.ts — same engine the MCP server uses, no network
  * round-trip, works whether the desktop app is open or closed.
  */
@@ -124,7 +124,7 @@ export async function cmdWrite(vault: string, args: ParsedArgs): Promise<void> {
   const rel = requirePath(args)
   const body = await resolveBody(args)
   if (body == null) {
-    throw new Error('zen write requires --body, a positional body, or piped stdin.')
+    throw new Error('zn write requires --body, a positional body, or piped stdin.')
   }
   const meta = await writeNote(vault, rel, body)
   emitWritten(meta, args)
@@ -134,7 +134,7 @@ export async function cmdAppend(vault: string, args: ParsedArgs): Promise<void> 
   const rel = requirePath(args)
   const body = await resolveBody(args)
   if (body == null || body.trim() === '') {
-    throw new Error('zen append requires --body, a positional body, or piped stdin.')
+    throw new Error('zn append requires --body, a positional body, or piped stdin.')
   }
   const meta = await appendToNote(vault, rel, body)
   emitWritten(meta, args)
@@ -144,7 +144,7 @@ export async function cmdPrepend(vault: string, args: ParsedArgs): Promise<void>
   const rel = requirePath(args)
   const body = await resolveBody(args)
   if (body == null || body.trim() === '') {
-    throw new Error('zen prepend requires --body, a positional body, or piped stdin.')
+    throw new Error('zn prepend requires --body, a positional body, or piped stdin.')
   }
   const meta = await prependToNote(vault, rel, body)
   emitWritten(meta, args)
@@ -153,7 +153,7 @@ export async function cmdPrepend(vault: string, args: ParsedArgs): Promise<void>
 export async function cmdRename(vault: string, args: ParsedArgs): Promise<void> {
   const rel = requirePath(args)
   const to = getString(args, 'to')
-  if (!to) throw new Error('zen rename requires --to <new title>.')
+  if (!to) throw new Error('zn rename requires --to <new title>.')
   const meta = await renameNote(vault, rel, to)
   emitWritten(meta, args, 'Renamed')
 }
@@ -161,7 +161,7 @@ export async function cmdRename(vault: string, args: ParsedArgs): Promise<void> 
 export async function cmdMove(vault: string, args: ParsedArgs): Promise<void> {
   const rel = requirePath(args)
   const folder = parseFolderFlag(getString(args, 'folder'))
-  if (!folder) throw new Error('zen move requires --folder <inbox|quick|archive|trash>.')
+  if (!folder) throw new Error('zn move requires --folder <inbox|quick|archive|trash>.')
   const sub = getString(args, 'subpath') ?? ''
   const meta = await moveNote(vault, rel, folder, sub)
   emitWritten(meta, args, 'Moved')
@@ -191,7 +191,7 @@ export async function cmdDelete(vault: string, args: ParsedArgs): Promise<void> 
   const rel = requirePath(args)
   if (!getBool(args, 'yes')) {
     throw new Error(
-      'zen delete is permanent. Re-run with --yes to confirm, or use `zen trash` for the reversible alternative.'
+      'zn delete is permanent. Re-run with --yes to confirm, or use `zn trash` for the reversible alternative.'
     )
   }
   await deleteNote(vault, rel)

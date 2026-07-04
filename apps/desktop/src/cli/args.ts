@@ -1,6 +1,6 @@
 /**
- * Minimal argument parser for the `zen` CLI. Supports:
- *   zen <command> [<subcommand>] [positional...] [--flag value | --flag=value | -x value]
+ * Minimal argument parser for the `zn` CLI. Supports:
+ *   zn <command> [<subcommand>] [positional...] [--flag value | --flag=value | -x value]
  * Repeated flags (e.g. `--tag a --tag b`) collect into an array via getMany().
  * Boolean flags are inferred when no value follows or when the next token
  * starts with `--`.
@@ -48,7 +48,7 @@ export function parse(argv: string[]): ParsedArgs {
       // Short flag (e.g. `-h`). Only a dash followed by a letter counts as a
       // flag; text that merely starts with `-` — a markdown task `- [ ] …`, a
       // list item, or a negative number — stays positional so
-      // `zen capture "- [ ] task"` works. Boolean only (no value / `-abc`
+      // `zn capture "- [ ] task"` works. Boolean only (no value / `-abc`
       // combining — unnecessary for our surface).
       push(flags, token.slice(1), 'true')
       continue
@@ -88,7 +88,7 @@ export function getMany(args: ParsedArgs, name: string): string[] {
 
 /**
  * Read all of stdin to a string. Used when `--body -` or a positional
- * `-` is given, and as the implicit input for `zen capture`.
+ * `-` is given, and as the implicit input for `zn capture`.
  */
 export async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return ''

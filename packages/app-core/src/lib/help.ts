@@ -144,7 +144,7 @@ export const HELP_HOW_TO_GUIDES: HelpCard[] = [
   {
     title: 'Search from Raycast on macOS',
     body:
-      'Install the `zen` CLI from Settings → CLI, then use the Raycast Extension section on the same page to install ZenNotes for Raycast locally. Raycast can search notes, filter by folder or tag, open a note in the app, open it in a floating window, archive or unarchive, move to Trash, reveal in Finder, copy the note path, and copy a wikilink.'
+      'Install the `zn` CLI from Settings → CLI, then use the Raycast Extension section on the same page to install ZenNotes for Raycast locally. Raycast can search notes, filter by folder or tag, open a note in the app, open it in a floating window, archive or unarchive, move to Trash, reveal in Finder, copy the note path, and copy a wikilink.'
   },
   {
     title: 'Check for updates and install them',
@@ -262,7 +262,7 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
   {
     title: 'Reference and connections support research-heavy work',
     body:
-      'Pin a companion note or PDF in the reference pane, then toggle the connections panel to inspect backlinks and unresolved links while you draft.'
+      'Pin a companion note or PDF in the reference pane, then toggle the connections panel to inspect backlinks and unresolved links while you draft. Connections count both `[[wikilinks]]` and standard Markdown links (`[text](Note.md)`), so incoming and outgoing associations show up even if you never use wikilinks.'
   },
   {
     title: 'Zen mode removes chrome',
@@ -272,7 +272,7 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
   {
     title: 'Links are actionable',
     body:
-      'Use [[wikilinks]] or markdown links. In normal mode, the follow-link motion opens the link under the cursor, offers to create missing notes, and pins PDFs into the reference pane.'
+      'Use [[wikilinks]] or markdown links. In normal mode, the follow-link motion opens the link under the cursor, offers to create missing notes, and pins PDFs into the reference pane. Prefix a wikilink with `!` to embed rather than link: `![[Note]]` inlines the target note content in the reading view and PDF export — recursively, with cycle protection — so a master note can pull in sub-notes and export to PDF as one document. `![[image.png]]` embeds an image.'
   },
   {
     title: 'Files stay local',
@@ -287,7 +287,7 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
   {
     title: 'The CLI is the bridge to launchers',
     body:
-      'The `zen` command-line tool can list, read, search, capture, edit, archive, trash, inspect tasks, and start the MCP server without the app running. Raycast uses it for search, then uses `zennotes://open` and `zennotes://open-window` links to bring the selected note back into ZenNotes. On macOS, Settings → CLI can install the bundled Raycast extension locally so users do not need to wait for the Raycast Store version.'
+      'The `zn` command-line tool can list, read, search, capture, edit, archive, trash, inspect tasks, and start the MCP server without the app running. Raycast uses it for search, then uses `zennotes://open` and `zennotes://open-window` links to bring the selected note back into ZenNotes. On macOS, Settings → CLI can install the bundled Raycast extension locally so users do not need to wait for the Raycast Store version.'
   },
   {
     title: 'Math, diagrams, and plots render from plain fences',
@@ -478,6 +478,7 @@ export const HELP_SHORTCUT_SECTIONS: HelpShortcutSection[] = [
     description: 'Vim-style motions when a CSV database table has focus. The grid yields to these keys so they do not collide with global motions.',
     items: [
       { keys: 'h / j / k / l', action: 'Move the cell cursor', detail: 'Arrow keys also work. 0 / ^ jump to the first column, $ to the last.' },
+      { keys: 'H / L', action: 'Move the current column left / right', detail: 'Reorders columns from the keyboard and the cursor follows. You can also drag a column header, or use “Move left / Move right” in the field menu (⋯).' },
       { keys: 'g g / G', action: 'Jump to first / last row', detail: 'Fast travel within the current column.' },
       { keys: 'i / Enter', action: 'Edit the cell', detail: 'On a checkbox cell this toggles it instead of opening an editor.' },
       { keys: 'Space / x', action: 'Select the row', detail: 'Toggle the row’s selection for bulk actions.' },
@@ -777,11 +778,11 @@ export const HELP_SETTINGS: HelpSettingsSection[] = [
   {
     title: 'CLI',
     items: [
-      { label: 'Install Command-Line Tool', detail: 'Symlink the bundled `zen` wrapper into a usable PATH location so any terminal session can capture, search, and edit notes. ZenNotes prefers user-writable directories and only prompts for admin access when no writable PATH target is available. The CLI runtime stays packaged with the app, including the dependencies needed by `zen mcp`, so updates ship together.' },
-      { label: 'Status, path, and quick reference', detail: 'Settings → CLI shows whether `zen` is installed, where the symlink lives, and a copy-able quick reference of the most useful commands. If the chosen directory is not on PATH yet, Settings shows the exact shell command to add it. An "External install" badge appears when something else owns `zen` so ZenNotes never clobbers an unmanaged binary.' },
-      { label: 'Paths with spaces', detail: 'Quote note paths like `zen read "hellointerview/system design.md"` or pass them with `--path "hellointerview/system design.md"` so your shell keeps the path as one argument.' },
-      { label: 'Raycast on macOS', detail: 'The Raycast extension requires `zen` and can be installed locally from this settings page. ZenNotes copies the bundled extension into app data, installs dependencies, builds it, and imports it into Raycast. It searches with `zen list --json`, then opens notes in ZenNotes through `zennotes://open` or `zennotes://open-window` and exposes archive, unarchive, trash, reveal, copy path, and copy wikilink actions from Raycast.' },
-      { label: 'Uninstall', detail: 'Removes only the ZenNotes-managed symlink — never an arbitrary unmanaged binary named `zen`. The CLI stays inside the app bundle for next time.' }
+      { label: 'Install Command-Line Tool', detail: 'Symlink the bundled `zn` wrapper into a usable PATH location so any terminal session can capture, search, and edit notes. ZenNotes prefers user-writable directories and only prompts for admin access when no writable PATH target is available. The CLI runtime stays packaged with the app, including the dependencies needed by `zn mcp`, so updates ship together.' },
+      { label: 'Status, path, and quick reference', detail: 'Settings → CLI shows whether `zn` is installed, where the symlink lives, and a copy-able quick reference of the most useful commands. If the chosen directory is not on PATH yet, Settings shows the exact shell command to add it. An "External install" badge appears when something else owns `zn` so ZenNotes never clobbers an unmanaged binary.' },
+      { label: 'Paths with spaces', detail: 'Quote note paths like `zn read "hellointerview/system design.md"` or pass them with `--path "hellointerview/system design.md"` so your shell keeps the path as one argument.' },
+      { label: 'Raycast on macOS', detail: 'The Raycast extension requires `zn` and can be installed locally from this settings page. ZenNotes copies the bundled extension into app data, installs dependencies, builds it, and imports it into Raycast. It searches with `zn list --json`, then opens notes in ZenNotes through `zennotes://open` or `zennotes://open-window` and exposes archive, unarchive, trash, reveal, copy path, and copy wikilink actions from Raycast.' },
+      { label: 'Uninstall', detail: 'Removes only the ZenNotes-managed symlink — never an arbitrary unmanaged binary named `zn`. The CLI stays inside the app bundle for next time.' }
     ]
   },
   {
@@ -800,12 +801,12 @@ export const HELP_CLI: HelpCard[] = [
   {
     title: 'What the CLI is for',
     body:
-      '`zen` is a command-line companion that talks to your vault directly. It reads and writes the same markdown files the app does, so anything you do in a terminal — capture, search, append, archive, list tasks — shows up in the app instantly. Use it for shell pipelines, scripts, cron jobs, editor plugins (vim, emacs, helix), launcher integrations (Raycast, Alfred), or just because the keyboard is faster.'
+      '`zn` is a command-line companion that talks to your vault directly. It reads and writes the same markdown files the app does, so anything you do in a terminal — capture, search, append, archive, list tasks — shows up in the app instantly. Use it for shell pipelines, scripts, cron jobs, editor plugins (vim, emacs, helix), launcher integrations (Raycast, Alfred), or just because the keyboard is faster.'
   },
   {
     title: 'Install it once from Settings',
     body:
-      'Open Settings → CLI and click Install. ZenNotes symlinks the bundled wrapper into a usable PATH location, preferring user-writable directories and only asking for admin access when no writable PATH target is available. After that, `zen --help` works in any new terminal. You can also run the install from the command palette via "Install Command-Line Tool (zen)".'
+      'Open Settings → CLI and click Install. ZenNotes symlinks the bundled wrapper into a usable PATH location, preferring user-writable directories and only asking for admin access when no writable PATH target is available. After that, `zn --help` works in any new terminal. You can also run the install from the command palette via "Install Command-Line Tool (zn)".'
   },
   {
     title: 'No app required',
@@ -815,36 +816,36 @@ export const HELP_CLI: HelpCard[] = [
   {
     title: 'Capture is the gateway drug',
     body:
-      'The fastest way to add a note is `zen capture "..."`. Pipe-friendly: `pbpaste | zen capture --tag idea` lifts the clipboard into a tagged note. The first non-empty line becomes the title. Markdown works too — `zen capture "- [ ] buy milk"` keeps the leading `- [ ]` as a task in the body (so it appears in the Tasks view) while the title reads "buy milk".'
+      'The fastest way to add a note is `zn capture "..."`. Pipe-friendly: `pbpaste | zn capture --tag idea` lifts the clipboard into a tagged note. The first non-empty line becomes the title. Markdown works too — `zn capture "- [ ] buy milk"` keeps the leading `- [ ]` as a task in the body (so it appears in the Tasks view) while the title reads "buy milk".'
   },
   {
     title: 'Read and search from the terminal',
     body:
-      'Use `zen list` to see recent notes, `zen list --tag work --limit 5` to filter, `zen read inbox/Project.md` to print a body, and `zen search "deadline"` for full-text matches with file:line previews. Quote paths with spaces, like `zen read "hellointerview/system design.md"`, or use `--path`. Add `--json` to any command to get structured output you can pipe into `jq`.'
+      'Use `zn list` to see recent notes, `zn list --tag work --limit 5` to filter, `zn read inbox/Project.md` to print a body, and `zn search "deadline"` for full-text matches with file:line previews. Quote paths with spaces, like `zn read "hellointerview/system design.md"`, or use `--path`. Add `--json` to any command to get structured output you can pipe into `jq`.'
   },
   {
     title: 'Raycast uses the same CLI',
     body:
-      'On macOS, install the Raycast extension locally from Settings → CLI after `zen` is installed. ZenNotes copies the bundled extension into app data, runs the local build, and imports it into Raycast, so you do not need the Raycast Store version. The Search Notes command reads from `zen list --json`, then uses `zennotes://open` to open notes in the main app or `zennotes://open-window` to open a floating window. Cmd+K actions also archive, unarchive, move to Trash, reveal in Finder, copy the path, and copy a wikilink.'
+      'On macOS, install the Raycast extension locally from Settings → CLI after `zn` is installed. ZenNotes copies the bundled extension into app data, runs the local build, and imports it into Raycast, so you do not need the Raycast Store version. The Search Notes command reads from `zn list --json`, then uses `zennotes://open` to open notes in the main app or `zennotes://open-window` to open a floating window. Cmd+K actions also archive, unarchive, move to Trash, reveal in Finder, copy the path, and copy a wikilink.'
   },
   {
     title: 'Raycast local install requirements',
     body:
-      'The local Raycast installer is macOS-only. It needs Raycast, the `zen` CLI, Node.js 22.14 or newer, and npm 7 or newer available from your login shell. Settings shows each requirement, the local extension path, and whether the installed copy is current with the bundled ZenNotes version.'
+      'The local Raycast installer is macOS-only. It needs Raycast, the `zn` CLI, Node.js 22.14 or newer, and npm 7 or newer available from your login shell. Settings shows each requirement, the local extension path, and whether the installed copy is current with the bundled ZenNotes version.'
   },
   {
     title: 'Edit incrementally',
     body:
-      'Prefer `zen append` and `zen prepend` over `zen write` for journals and running lists — they preserve the rest of the body. Both accept `--body "literal"` or `--body -` to read stdin (so `cat ideas.txt | zen append daily.md --body -` works).'
+      'Prefer `zn append` and `zn prepend` over `zn write` for journals and running lists — they preserve the rest of the body. Both accept `--body "literal"` or `--body -` to read stdin (so `cat ideas.txt | zn append daily.md --body -` works).'
   },
   {
     title: 'Tasks and folders',
     body:
-      '`zen task list` enumerates open checkboxes across the vault with stable ids. `zen task toggle <id>` flips a task without opening the note. `zen folder list / create / rename / delete` keep your subfolder tree manageable from the terminal.'
+      '`zn task list` enumerates open checkboxes across the vault with stable ids. `zn task toggle <id>` flips a task without opening the note. `zn folder list / create / rename / delete` keep your subfolder tree manageable from the terminal.'
   },
   {
     title: 'MCP for AI agents',
     body:
-      '`zen mcp` starts the ZenNotes MCP server in stdio mode — the same one Claude Code, Claude Desktop, and Codex use under the hood. Once `zen` is installed, Settings → MCP installs configure the clients to launch `zen mcp` directly, so the install path is one stable absolute path that survives app moves.'
+      '`zn mcp` starts the ZenNotes MCP server in stdio mode — the same one Claude Code, Claude Desktop, and Codex use under the hood. Once `zn` is installed, Settings → MCP installs configure the clients to launch `zn mcp` directly, so the install path is one stable absolute path that survives app moves.'
   }
 ]

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `zen` — the ZenNotes command-line interface.
+ * `zn` — the ZenNotes command-line interface.
  *
  * Bundled by electron-vite as a third Node entry point alongside the
  * Electron main process and the MCP server. Invoked via the wrapper
@@ -64,8 +64,8 @@ async function main(argv: string[]): Promise<number> {
 
   const [command, ...rest] = argv
 
-  // Some commands have a second-level subcommand (`zen folder list`,
-  // `zen task toggle`, `zen tag find`, `zen search-title`). We resolve
+  // Some commands have a second-level subcommand (`zn folder list`,
+  // `zn task toggle`, `zn tag find`, `zn search-title`). We resolve
   // the subcommand before parsing flags so positionals don't include it.
   const { subcommand, parsed } = peelSubcommand(command, rest)
 
@@ -82,7 +82,7 @@ async function main(argv: string[]): Promise<number> {
   // always wins (an invalid selector errors loudly, never falls back).
   // `open` is special: it works without a vault (arbitrary markdown
   // files), but uses one when available so the vault-relative paths
-  // `zen list` prints open from any directory. `vault list` enumerates
+  // `zn list` prints open from any directory. `vault list` enumerates
   // vaults, so it must work before any vault is configured.
   const vaultSelector = getString(parsed, 'vault')
   let vault = ''
@@ -127,7 +127,7 @@ async function main(argv: string[]): Promise<number> {
 
   const handler = dispatch[key]
   if (!handler) {
-    emitError(`Unknown command: zen ${key}. Run \`zen --help\` for usage.`)
+    emitError(`Unknown command: zn ${key}. Run \`zn --help\` for usage.`)
     return 1
   }
   await handler(vault, parsed)

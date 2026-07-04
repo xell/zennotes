@@ -3,11 +3,13 @@ import type { NoteContent, NoteMeta } from '@shared/ipc'
 import { useStore } from '../store'
 import {
   extractWikilinkTargets,
+  extractMarkdownLinkHrefs,
   extractMentionSnippet,
   parseCreateNotePath,
   resolveWikilinkTarget,
   suggestCreateNotePath
 } from '../lib/wikilinks'
+import { resolveInternalNoteHref } from '../lib/internal-links'
 import { LazyNoteHoverPreview as NoteHoverPreview } from './LazyNoteHoverPreview'
 import { promptApp } from '../lib/prompt-requests'
 import { usePanelResize } from '../lib/use-panel-resize'
@@ -103,6 +105,15 @@ export function ConnectionsPanel({ note }: { note: NoteContent }): JSX.Element {
         suggestedPath: suggestCreateNotePath(target)
       })
     }
+    // #70dark: standard Markdown links [text](Note.md) also count as outgoing
+    // connections — resolve each href the way `gd` does and add resolved notes.
+    for (const href of extractMarkdownLinkHrefs(note.body)) {
+      const resolvedPath = resolveInternalNoteHref(note.path, href, notes)?.path
+      if (!resolvedPath || resolvedPath === note.path) continue
+      if (resolvedItems.some((n) => n.path === resolvedPath)) continue
+      const target = notes.find((n) => n.path === resolvedPath)
+      if (target && target.folder !== 'trash') resolvedItems.push(target)
+    }
     return { resolvedItems, missingItems }
   }, [note.body, note.path, notes])
 
@@ -170,9 +181,14 @@ export function ConnectionsPanel({ note }: { note: NoteContent }): JSX.Element {
         try {
           const content = await window.zen.readNote(candidate.path)
           const targets = extractWikilinkTargets(content.body)
-          const linksHere = targets.some(
-            (target) => resolveWikilinkTarget(notes, target)?.path === note.path
-          )
+          const linksHere =
+            targets.some(
+              (target) => resolveWikilinkTarget(notes, target)?.path === note.path
+            ) ||
+            // #70dark: a markdown link [text](Note.md) here also counts as a backlink.
+            extractMarkdownLinkHrefs(content.body).some(
+              (href) => resolveInternalNoteHref(candidate.path, href, notes)?.path === note.path
+            )
           const snippet = extractMentionSnippet(content.body, note.title)
           return {
             note: candidate,

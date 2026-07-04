@@ -63,7 +63,7 @@ export function ExcalidrawView({ path }: { path: string }): JSX.Element {
   }
 
   return (
-    <div className="min-h-0 w-full flex-1" style={{ height: '100%' }}>
+    <div className="min-h-0 w-full flex-1" style={{ height: '100%' }} data-excalidraw-view>
       <Excalidraw
         initialData={initialData}
         theme={excalidrawTheme}

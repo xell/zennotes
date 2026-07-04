@@ -132,7 +132,12 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   whichKeyHints: true,
   whichKeyHintMode: 'timed',
   whichKeyHintTimeoutMs: 900,
-  vimKeymap: 'nmap k gk\nnmap j gj\nnnoremap - $\nvnoremap - $',
+  // Keep in sync with DEFAULT_VIM_KEYMAP (app-core/src/lib/vim-keymap-defaults.ts);
+  // shared-domain can't import from app-core, so this literal is duplicated.
+  // j/k are not remapped to gj/gk here — display-line motion comes from
+  // registerDisplayLineMotion() (upstream #290/#312/#314), which would be
+  // shadowed by a `nmap j gj` seed.
+  vimKeymap: 'nnoremap - $\nvnoremap - $',
   keymapOverrides: {},
   vaultTextSearchBackend: 'auto',
   ripgrepBinaryPath: null,

@@ -2353,6 +2353,41 @@ textarea,
 .prose-zen.comment-prose > :last-child {
   margin-bottom: 0;
 }
+
+/* #transclusion: `![[Note]]` embeds render inline in a subtle block that links
+   back to the source note. Reused by PDF export (same .prose-zen surface). */
+.prose-zen .note-embed {
+  margin: 1.1rem 0;
+  padding: 0.5rem 1rem;
+  border-left: 3px solid rgb(var(--z-accent) / 0.5);
+  border-radius: 0.3rem;
+  background: rgb(var(--z-accent) / 0.05);
+}
+.prose-zen .note-embed > :first-child {
+  margin-top: 0;
+}
+.prose-zen .note-embed > :last-child {
+  margin-bottom: 0;
+}
+.prose-zen .note-embed-title {
+  margin-bottom: 0.4rem;
+  font-size: 0.75em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+.prose-zen .note-embed-title p {
+  margin: 0;
+}
+.prose-zen .note-embed-title a {
+  text-decoration: none;
+}
+.prose-zen .note-embed-notice {
+  font-style: italic;
+  opacity: 0.75;
+  border-left-color: rgb(var(--z-accent) / 0.3);
+}
 .prose-zen.comment-prose h1,
 .prose-zen.comment-prose h2,
 .prose-zen.comment-prose h3,

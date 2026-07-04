@@ -1,5 +1,5 @@
 /**
- * `zen mcp` — start the MCP server in stdio mode. The CLI process
+ * `zn mcp` — start the MCP server in stdio mode. The CLI process
  * effectively becomes the MCP server for as long as the calling
  * client (Claude Code, Claude Desktop, Codex) keeps the stdin pipe
  * open. We delegate to the same runMcpServer() the legacy

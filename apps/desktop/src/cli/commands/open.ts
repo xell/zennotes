@@ -1,13 +1,13 @@
 /**
- * `zen open <file.md>` — open one or more markdown files in the ZenNotes
+ * `zn open <file.md>` — open one or more markdown files in the ZenNotes
  * desktop app, whether or not they live inside a vault.
  *
- *   zen open ~/Downloads/notes.md
- *   zen open inbox/Today.md other.markdown
- *   zen open inbox/demo/03 — Tables and Task Lists.md   (unquoted is fine)
+ *   zn open ~/Downloads/notes.md
+ *   zn open inbox/Today.md other.markdown
+ *   zn open inbox/demo/03 — Tables and Task Lists.md   (unquoted is fine)
  *
  * Paths resolve against the current directory first, then the active
- * vault root — so the vault-relative paths `zen list` prints open from
+ * vault root — so the vault-relative paths `zn list` prints open from
  * anywhere. When the shell has split an unquoted path with spaces into
  * several tokens, we re-join them and try again as a single file.
  *
@@ -42,13 +42,13 @@ async function resolveTarget(vault: string, target: string): Promise<string | nu
 
 function assertMarkdown(abs: string): void {
   if (!isMarkdownFilePath(abs)) {
-    throw new Error(`zen open only supports markdown files (.md, .markdown): ${abs}`)
+    throw new Error(`zn open only supports markdown files (.md, .markdown): ${abs}`)
   }
 }
 
 export async function cmdOpen(vault: string, args: ParsedArgs): Promise<void> {
   if (args.positionals.length === 0) {
-    throw new Error('zen open needs a file path. Usage: zen open <file.md> [more.md ...]')
+    throw new Error('zn open needs a file path. Usage: zn open <file.md> [more.md ...]')
   }
 
   let absPaths: string[] = []

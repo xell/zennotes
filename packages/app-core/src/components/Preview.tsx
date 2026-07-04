@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { NoteMeta } from "@shared/ipc";
 import { renderMarkdown } from "../lib/markdown";
+import { expandEmbeds, hasNoteEmbeds } from "../lib/transclusion";
 import { useStore } from "../store";
 import { resolveAuto, THEMES } from "../lib/themes";
 import {
@@ -449,7 +450,61 @@ export const Preview = memo(function Preview({
     window.zen.getAppInfo().runtime === "desktop" &&
     workspaceMode !== "remote";
 
-  const html = useMemo(() => renderMarkdown(markdown), [markdown]);
+  // #transclusion: expand `![[Note]]` embeds into inline content before
+  // rendering, so the reading view — and PDF export, which renders through this
+  // same Preview — show a "master note" with its sub-notes inlined. Only note
+  // targets expand (images/unknown are left for the normal pipeline), and only
+  // when the note actually contains note-embeds.
+  const resolveEmbedTarget = useMemo(
+    () =>
+      (target: string): { path: string; title: string } | null => {
+        const n = resolveWikilinkTarget(notes, target);
+        return n ? { path: n.path, title: n.title } : null;
+      },
+    [notes],
+  );
+  const hasEmbeds = useMemo(
+    () => hasNoteEmbeds(markdown, resolveEmbedTarget, notePath),
+    [markdown, resolveEmbedTarget, notePath],
+  );
+  const [embedExpansion, setEmbedExpansion] = useState<{
+    src: string;
+    out: string;
+  } | null>(null);
+  const expandedForCurrent =
+    embedExpansion?.src === markdown ? embedExpansion.out : null;
+  useEffect(() => {
+    if (!hasEmbeds || expandedForCurrent != null) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void expandEmbeds(markdown, notePath, {
+        resolve: resolveEmbedTarget,
+        loadNote: async (path) => {
+          try {
+            return (await window.zen.readNote(path)).body ?? null;
+          } catch {
+            return null;
+          }
+        },
+      }).then((out) => {
+        if (!cancelled) setEmbedExpansion({ src: markdown, out });
+      });
+    }, 120);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [hasEmbeds, expandedForCurrent, markdown, notePath, resolveEmbedTarget]);
+  // Gate the PDF-ready signal (onRendered) until embeds resolve, so exports
+  // capture the expanded document rather than the bare links.
+  const embedsReady = !hasEmbeds || expandedForCurrent != null;
+  const embedsReadyRef = useRef(embedsReady);
+  embedsReadyRef.current = embedsReady;
+
+  const html = useMemo(
+    () => renderMarkdown(expandedForCurrent ?? markdown),
+    [expandedForCurrent, markdown],
+  );
   const assetFilesKey = useMemo(
     () => assetFiles.map((asset) => asset.path).join("\n"),
     [assetFiles],
@@ -809,7 +864,7 @@ export const Preview = memo(function Preview({
       await renderDiagrams(root, { themeKey: effectiveMode, expanded: false });
       if (cancelled) return;
       requestAnimationFrame(() => {
-        if (!cancelled) onRenderedRef.current?.();
+        if (!cancelled && embedsReadyRef.current) onRenderedRef.current?.();
       });
     };
 

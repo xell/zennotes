@@ -33,7 +33,7 @@ RUN npm run build --workspace @zennotes/web
 
 # Run the Go toolchain on the native build platform and cross-compile to the
 # target arch (CGO is off, so this is a fast pure-Go cross-build — no QEMU).
-FROM --platform=$BUILDPLATFORM golang:1.22-alpine@sha256:1699c10032ca2582ec89a24a1312d986a3f094aed3d5c1147b19880afe40e052 AS server-build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648 AS server-build
 WORKDIR /app
 
 COPY apps/server/go.mod apps/server/go.sum ./apps/server/

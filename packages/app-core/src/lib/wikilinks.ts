@@ -170,6 +170,34 @@ export function extractWikilinkTargets(body: string): string[] {
   return [...seen]
 }
 
+/**
+ * Href targets of standard Markdown links `[text](href)` (and the angle-bracket
+ * form `[text](<href>)`) in a note body, outside code. Deduped raw hrefs — resolve
+ * each with `resolveInternalNoteHref` to a note. Powers markdown-link connections
+ * in the sidebar for people who don't use wikilinks. (#70dark)
+ */
+export function extractMarkdownLinkHrefs(body: string): string[] {
+  const stripped = stripCodeContent(body)
+  const seen = new Set<string>()
+  let m: RegExpExecArray | null
+  // Angle-bracket hrefs (may contain spaces): [x](<a b.md>)
+  const angleRe = /\[[^\]]*\]\(<([^>]+)>\)/g
+  while ((m = angleRe.exec(stripped)) !== null) {
+    const href = m[1].trim()
+    if (href) seen.add(href)
+  }
+  // Plain hrefs: [x](href) or [x](href "title")
+  const re = /\[[^\]]*\]\(([^)]+)\)/g
+  while ((m = re.exec(stripped)) !== null) {
+    let href = m[1].trim()
+    if (href.startsWith('<')) continue // angle form, already captured above
+    const sp = href.search(/\s/)
+    if (sp >= 0) href = href.slice(0, sp) // drop an optional "title"
+    if (href) seen.add(href)
+  }
+  return [...seen]
+}
+
 export function suggestCreateNotePath(target: string): string {
   // Creating from `[[Doc#Heading]]` makes `Doc`, not the invalid `Doc#Heading`. (#196)
   const trimmed = normalizeSlashes(stripWikilinkAnchor(target).trim()).replace(/\/+$/, '')

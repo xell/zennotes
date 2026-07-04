@@ -1,10 +1,10 @@
 /**
- * `zen capture` — Bear-style quick add. Drops a note into inbox/ (or
+ * `zn capture` — Bear-style quick add. Drops a note into inbox/ (or
  * a chosen folder). Designed to be the friction-free pipe target:
  *
- *   echo "thought" | zen capture
- *   pbpaste | zen capture --tag idea
- *   zen capture "Quick idea about X"
+ *   echo "thought" | zn capture
+ *   pbpaste | zn capture --tag idea
+ *   zn capture "Quick idea about X"
  */
 
 import { createNote } from '../../mcp/vault-ops.js'
@@ -17,12 +17,12 @@ export async function cmdCapture(vault: string, args: ParsedArgs): Promise<void>
   const body = positional || stdin.trim()
   if (!body) {
     throw new Error(
-      'zen capture needs text. Pass it as a positional argument or pipe via stdin.'
+      'zn capture needs text. Pass it as a positional argument or pipe via stdin.'
     )
   }
   const folder = (getString(args, 'folder') as 'inbox' | 'quick' | 'archive' | undefined) ?? 'inbox'
   if (folder !== 'inbox' && folder !== 'quick' && folder !== 'archive') {
-    throw new Error('zen capture --folder must be inbox, quick, or archive.')
+    throw new Error('zn capture --folder must be inbox, quick, or archive.')
   }
   const tags = getMany(args, 'tag').map((t) => t.replace(/^#/, ''))
 

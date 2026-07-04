@@ -51,6 +51,15 @@ Current session TTL:
 
 - 30 days
 
+### Session storage
+
+Sessions are held **in memory by default**, so a server restart invalidates
+every active login (the browser must re-authenticate with the token). Set
+`ZENNOTES_PERSIST_SESSIONS=1` to opt into persisting them to `sessions.json`
+beside the host config (mode `0600`), so logins survive restarts. It is off by
+default because it writes session tokens to disk; expired sessions are dropped
+on load.
+
 ### Token rotation
 
 `POST /api/session/rotate-token` replaces the bootstrap auth token in
@@ -323,7 +332,9 @@ Important current variables:
 - `ZENNOTES_AUTH_TOKEN_FILE` — path to a file containing the token;
   used when `ZENNOTES_AUTH_TOKEN` is unset, matching the
   Docker/Kubernetes secrets convention so the token never has to live
-  in `.env`.
+  in `.env`. The file must be readable by the server's user and its
+  contents are trimmed; a missing, unreadable, or empty file is logged
+  explicitly rather than silently ignored.
 - `ZENNOTES_CONFIG_PATH`
 - `ZENNOTES_BIND`
 - `ZENNOTES_ALLOWED_ORIGINS`
@@ -332,6 +343,9 @@ Important current variables:
 - `ZENNOTES_DEFAULT_VAULT_PATH`
 - `ZENNOTES_ALLOW_UNSCOPED_BROWSE`
 - `ZENNOTES_ALLOW_INSECURE_NOAUTH`
+- `ZENNOTES_PERSIST_SESSIONS` — opt-in; persist browser sessions to
+  `sessions.json` (mode `0600`) beside the host config so logins survive
+  restarts. Off by default (in-memory only).
 - `ZENNOTES_BEHIND_TLS` — declares a TLS-terminating proxy is in
   front; enables `Secure` cookies and `Strict-Transport-Security`.
 - `ZENNOTES_TRUSTED_PROXIES` — CIDR list whose `X-Forwarded-*`

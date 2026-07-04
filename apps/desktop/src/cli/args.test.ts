@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { getString, parse } from './args'
 
-// A markdown task passed to `zen capture "- [ ] task"` arrives as one token
+// A markdown task passed to `zn capture "- [ ] task"` arrives as one token
 // that starts with `-`; it must stay positional, not be parsed as a flag.
 describe('cli args parse — leading-dash text', () => {
   it('keeps a markdown task as a positional, not a flag', () => {

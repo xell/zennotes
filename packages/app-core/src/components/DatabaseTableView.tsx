@@ -18,6 +18,8 @@ import {
   renameField,
   retypeField,
   deleteField,
+  moveColumn,
+  moveColumnToField,
   ensureSelectOption,
   updateView,
   fieldsById,
@@ -64,6 +66,10 @@ export function DatabaseTableView({ csvPath, doc, view, isActive }: Props): JSX.
   const [fieldMenu, setFieldMenu] = useState<{ fieldId: string; x: number; y: number } | null>(null)
   const [rowMenu, setRowMenu] = useState<{ rowId: string; x: number; y: number } | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  // #317: header drag-to-reorder columns. Ref holds the field being dragged;
+  // state drives the drop-target indicator.
+  const dragFieldRef = useRef<string | null>(null)
+  const [dragOverFieldId, setDragOverFieldId] = useState<string | null>(null)
 
   // --- Vim-style keyboard grid ---------------------------------------------
   // The grid is the focus owner; cells bubble their key events up to it. A
@@ -220,6 +226,26 @@ export function DatabaseTableView({ csvPath, doc, view, isActive }: Props): JSX.
       case 'l':
       case 'ArrowRight':
         return move(active.row, active.col + 1)
+      case 'H': {
+        // #317: move the current column one step left, keeping the cursor on it.
+        e.preventDefault()
+        const field = columns[active.col]
+        if (field && active.col > 0) {
+          updateDatabaseSchema(csvPath, moveColumn(doc, view.id, field.id, 'left'))
+          setActive({ row: active.row, col: active.col - 1 })
+        }
+        return
+      }
+      case 'L': {
+        // #317: move the current column one step right, keeping the cursor on it.
+        e.preventDefault()
+        const field = columns[active.col]
+        if (field && active.col < lastCol) {
+          updateDatabaseSchema(csvPath, moveColumn(doc, view.id, field.id, 'right'))
+          setActive({ row: active.row, col: active.col + 1 })
+        }
+        return
+      }
       case '0':
       case '^':
         return move(active.row, 0)
@@ -342,6 +368,19 @@ export function DatabaseTableView({ csvPath, doc, view, isActive }: Props): JSX.
     { label: 'Sort descending', onSelect: () => updateDatabaseSchema(csvPath, updateView(doc, view.id, { sorts: [{ fieldId: field.id, direction: 'desc' }] })) },
     { label: 'Clear sort', disabled: view.sorts.length === 0, onSelect: () => updateDatabaseSchema(csvPath, updateView(doc, view.id, { sorts: [] })) },
     { kind: 'separator' },
+    {
+      label: 'Move left',
+      hint: 'H',
+      disabled: columns[0]?.id === field.id,
+      onSelect: () => updateDatabaseSchema(csvPath, moveColumn(doc, view.id, field.id, 'left'))
+    },
+    {
+      label: 'Move right',
+      hint: 'L',
+      disabled: columns[columns.length - 1]?.id === field.id,
+      onSelect: () => updateDatabaseSchema(csvPath, moveColumn(doc, view.id, field.id, 'right'))
+    },
+    { kind: 'separator' },
     { label: 'Rename field', onSelect: () => setRenamingField(field.id) },
     ...(Object.keys(FIELD_TYPE_LABELS) as FieldType[]).map((t) => ({
       label: `Type: ${FIELD_TYPE_LABELS[t]}`,
@@ -421,9 +460,42 @@ export function DatabaseTableView({ csvPath, doc, view, isActive }: Props): JSX.
               <th
                 key={field.id}
                 data-active-header={active.row < 0 && active.col === colIndex}
+                // #317: drag a header to reorder its column. Disabled while
+                // renaming so the inline input keeps normal text selection.
+                draggable={renamingField !== field.id}
+                onDragStart={(e) => {
+                  dragFieldRef.current = field.id
+                  e.dataTransfer.effectAllowed = 'move'
+                  e.dataTransfer.setData('text/plain', field.id) // some browsers need data set
+                }}
+                onDragOver={(e) => {
+                  const dragged = dragFieldRef.current
+                  if (!dragged || dragged === field.id) return
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                  if (dragOverFieldId !== field.id) setDragOverFieldId(field.id)
+                }}
+                onDragLeave={() => {
+                  if (dragOverFieldId === field.id) setDragOverFieldId(null)
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  const dragged = dragFieldRef.current
+                  dragFieldRef.current = null
+                  setDragOverFieldId(null)
+                  if (dragged && dragged !== field.id) {
+                    updateDatabaseSchema(csvPath, moveColumnToField(doc, view.id, dragged, field.id))
+                  }
+                }}
+                onDragEnd={() => {
+                  dragFieldRef.current = null
+                  setDragOverFieldId(null)
+                }}
                 className={[
                   'group/h min-w-32 border-r border-paper-300/40 px-2.5 py-2 text-left text-2xs font-medium uppercase tracking-wide text-ink-500',
-                  active.row < 0 && active.col === colIndex ? 'ring-2 ring-inset ring-accent' : ''
+                  active.row < 0 && active.col === colIndex ? 'ring-2 ring-inset ring-accent' : '',
+                  // Drop indicator: the dragged column lands *before* this one.
+                  dragOverFieldId === field.id ? 'border-l-2 border-l-accent bg-accent/5' : ''
                 ].join(' ')}
               >
                 {renamingField === field.id ? (

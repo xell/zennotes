@@ -163,6 +163,60 @@ export function deleteField(doc: DatabaseDoc, fieldId: string): DatabaseDoc {
   }
 }
 
+/** Reorder a table view's columns by moving `fieldId` one *visible* step left or
+ *  right (#317). Works on the view's `columnOrder`, swapping with the nearest
+ *  visible neighbor so hidden columns don't absorb the move; a no-op at an edge
+ *  or for a non-table view. The stored order is normalized first (missing fields
+ *  appended, stale ids dropped) so it stays consistent with `doc.fields`. */
+export function moveColumn(
+  doc: DatabaseDoc,
+  viewId: string,
+  fieldId: string,
+  direction: 'left' | 'right'
+): DatabaseDoc {
+  const view = doc.views.find((v) => v.id === viewId)
+  if (!view || view.type !== 'table') return doc
+  const fieldIds = doc.fields.map((f) => f.id)
+  const stored = view.columnOrder ?? fieldIds
+  const order = [...stored, ...fieldIds.filter((id) => !stored.includes(id))].filter((id) =>
+    fieldIds.includes(id)
+  )
+  const hidden = new Set(view.hiddenFieldIds ?? [])
+  const visible = order.filter((id) => !hidden.has(id))
+  const vi = visible.indexOf(fieldId)
+  if (vi === -1) return doc
+  const vj = direction === 'left' ? vi - 1 : vi + 1
+  if (vj < 0 || vj >= visible.length) return doc // already at the edge
+  const oi = order.indexOf(fieldId)
+  const oj = order.indexOf(visible[vj])
+  const next = [...order]
+  ;[next[oi], next[oj]] = [next[oj], next[oi]]
+  return updateView(doc, viewId, { columnOrder: next })
+}
+
+/** Move `fieldId` to sit immediately before `targetFieldId` in a table view's
+ *  column order — used by header drag-and-drop (#317). No-op for a non-table
+ *  view, unknown ids, or a self-drop. */
+export function moveColumnToField(
+  doc: DatabaseDoc,
+  viewId: string,
+  fieldId: string,
+  targetFieldId: string
+): DatabaseDoc {
+  if (fieldId === targetFieldId) return doc
+  const view = doc.views.find((v) => v.id === viewId)
+  if (!view || view.type !== 'table') return doc
+  const fieldIds = doc.fields.map((f) => f.id)
+  const stored = view.columnOrder ?? fieldIds
+  const order = [...stored, ...fieldIds.filter((id) => !stored.includes(id))].filter((id) =>
+    fieldIds.includes(id)
+  )
+  if (!order.includes(fieldId) || !order.includes(targetFieldId)) return doc
+  const without = order.filter((id) => id !== fieldId)
+  without.splice(without.indexOf(targetFieldId), 0, fieldId)
+  return updateView(doc, viewId, { columnOrder: without })
+}
+
 export function ensureSelectOption(doc: DatabaseDoc, fieldId: string, rawValue: string): DatabaseDoc {
   const value = rawValue.trim().replace(/,/g, ' ') // option values may not contain commas
   if (!value) return doc

@@ -49,6 +49,11 @@ type IndexedDatasetKey = 'sidebarIdx' | 'notelistIdx' | 'connectionsIdx' | 'comm
  * keydown handler always reads the latest values — no stale closures, no
  * dependency on React re-renders between keystrokes.
  */
+// #309: how quickly a Space press+release inside an Excalidraw canvas counts as
+// a "tap" (arm the leader) rather than a hold (let Excalidraw's Hand tool pan).
+// Tuned so a deliberate hold-to-pan clears it while a natural tap stays under it.
+const EXCALIDRAW_LEADER_TAP_MS = 250
+
 export function VimNav(): JSX.Element | null {
   const vimMode = useStore((s) => s.vimMode)
   const keymapOverrides = useStore((s) => s.keymapOverrides)
@@ -63,6 +68,10 @@ export function VimNav(): JSX.Element | null {
   const previousBufferTimer = useRef<ReturnType<typeof setTimeout>>()
   const nextBufferTimer = useRef<ReturnType<typeof setTimeout>>()
   const leaderTimer = useRef<ReturnType<typeof setTimeout>>()
+  // #309: timestamp of the last Space keydown observed inside an Excalidraw
+  // canvas (or null). A quick keyup after it arms the leader; a longer hold was
+  // a pan and arms nothing.
+  const excalidrawSpaceDownAt = useRef<number | null>(null)
 
   // Hint mode needs a render (to mount HintOverlay), so it's state.
   const [hintActive, setHintActive] = useState(false)
@@ -380,6 +389,20 @@ export function VimNav(): JSX.Element | null {
       // the panel's handler (and any global app shortcut) still sees it.
       const calendarPanelEl = document.querySelector('[data-calendar-panel]')
       if (calendarPanelEl && target && calendarPanelEl.contains(target)) return
+      // #309: In an Excalidraw canvas, hold-Space pans (the Hand tool). Don't
+      // swallow the Space keydown as the leader — let it reach Excalidraw so
+      // panning works, and arm the leader only on a quick TAP (see the keyup
+      // handler). Record the press time here and yield; other keys fall through
+      // to normal routing. Skip while a leader sequence is already pending so its
+      // follow-up key still routes as a leader command.
+      if (
+        sequenceTokenFromEvent(e) === leaderToken &&
+        !leaderPending.current &&
+        target?.closest('[data-excalidraw-view]')
+      ) {
+        if (!e.repeat) excalidrawSpaceDownAt.current = Date.now()
+        return
+      }
       const previewEl = getPreviewScrollElement()
       const hoverPreviewEl = getHoverPreviewScrollElement()
 
@@ -1021,9 +1044,29 @@ export function VimNav(): JSX.Element | null {
 
     }
 
+    // #309: arm the leader on a quick Space TAP inside an Excalidraw canvas. The
+    // keydown was let through (above) so hold-Space pans; a fast release (under
+    // the tap window) means the user tapped rather than held, so enter leader
+    // mode. A longer hold was a pan and arms nothing.
+    const onKeyUp = (e: KeyboardEvent): void => {
+      if (excalidrawSpaceDownAt.current == null) return
+      const leaderToken =
+        getSequenceTokens(useStore.getState().keymapOverrides, 'vim.leaderPrefix')[0] ?? 'Space'
+      if (sequenceTokenFromEvent(e) !== leaderToken) return
+      const downAt = excalidrawSpaceDownAt.current
+      excalidrawSpaceDownAt.current = null
+      const target = e.target instanceof HTMLElement ? e.target : null
+      if (!target?.closest('[data-excalidraw-view]')) return
+      if (Date.now() - downAt < EXCALIDRAW_LEADER_TAP_MS) {
+        armLeader('leader', false)
+      }
+    }
+
     window.addEventListener('keydown', handler, true)
+    window.addEventListener('keyup', onKeyUp, true)
     return () => {
       window.removeEventListener('keydown', handler, true)
+      window.removeEventListener('keyup', onKeyUp, true)
       previousBufferPending.current = 0
       nextBufferPending.current = 0
       if (previousBufferTimer.current) clearTimeout(previousBufferTimer.current)
@@ -1897,6 +1940,14 @@ export function VimNav(): JSX.Element | null {
 
   function activateSidebarItem(el: HTMLElement | undefined, state: ReturnType<typeof useStore.getState>): void {
     if (!el) return
+    // #301: Daily/Weekly date groups aren't real folders — `l`/Enter/Right
+    // expands them via the store's date-nav state instead of navigating (which
+    // snapped the cursor to the parent) with a no-op collapse toggle.
+    const dateNavKey = el.dataset.sidebarDatenavKey
+    if (dateNavKey) {
+      state.expandDateNav(dateNavKey)
+      return
+    }
     const itemType = el.dataset.sidebarType
     if (itemType === 'folder') {
       const folder = el.dataset.sidebarFolder as 'inbox' | 'quick' | 'archive' | 'trash'
@@ -1998,6 +2049,12 @@ export function VimNav(): JSX.Element | null {
 
   function collapseSidebarItem(el: HTMLElement | undefined, state: ReturnType<typeof useStore.getState>): void {
     if (!el) return
+    // #301: collapse a Daily/Weekly date group via the store's date-nav state.
+    const dateNavKey = el.dataset.sidebarDatenavKey
+    if (dateNavKey) {
+      state.collapseDateNav(dateNavKey)
+      return
+    }
 
     const collapseFolder = (folderEl: HTMLElement | null): void => {
       if (!folderEl) return
@@ -2042,7 +2099,14 @@ export function VimNav(): JSX.Element | null {
   }
 
   function toggleSidebarItem(el: HTMLElement | undefined, state: ReturnType<typeof useStore.getState>): void {
-    if (!el || el.dataset.sidebarType !== 'folder') return
+    if (!el) return
+    // #301: toggle a Daily/Weekly date group via the store's date-nav state.
+    const dateNavKey = el.dataset.sidebarDatenavKey
+    if (dateNavKey) {
+      state.toggleDateNav(dateNavKey)
+      return
+    }
+    if (el.dataset.sidebarType !== 'folder') return
     const collapseKey = el.dataset.sidebarKey
     if (collapseKey) state.toggleCollapseFolder(collapseKey)
   }

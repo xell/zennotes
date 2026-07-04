@@ -1,5 +1,5 @@
 /**
- * `zen tag list` and `zen tag find` — enumerate and discover #tags
+ * `zn tag list` and `zn tag find` — enumerate and discover #tags
  * across live notes (excluding trash).
  */
 
@@ -36,7 +36,7 @@ export async function cmdTagList(vault: string, args: ParsedArgs): Promise<void>
 
 export async function cmdTagFind(vault: string, args: ParsedArgs): Promise<void> {
   const tag = (getString(args, 'tag') ?? args.positionals[0])?.replace(/^#/, '').toLowerCase()
-  if (!tag) throw new Error('zen tag find requires a tag name (e.g. `zen tag find idea`).')
+  if (!tag) throw new Error('zn tag find requires a tag name (e.g. `zn tag find idea`).')
   const limit = getNumber(args, 'limit') ?? 200
   const all = await listNotes(vault)
   const matches = all

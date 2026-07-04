@@ -322,7 +322,7 @@ async function updateNoteArchiveState(
     const { stdout } = await execZen([action, note.path, "--json"]);
     const updatedNote = parseNote(JSON.parse(String(stdout)) as unknown);
     if (!updatedNote)
-      throw new Error(`Expected \`zen ${action} --json\` to return a note.`);
+      throw new Error(`Expected \`zn ${action} --json\` to return a note.`);
     onUpdate(note.path, updatedNote);
     toast.style = Toast.Style.Success;
     toast.title = `${done} note`;

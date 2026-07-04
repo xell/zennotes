@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   extractWikilinkTargets,
+  extractMarkdownLinkHrefs,
   isSameFileHeadingLink,
   parseCreateNotePath,
   resolveWikilinkTarget,
@@ -115,5 +116,27 @@ describe('leading-slash + anchor (#196 — [[/Untitled#test]])', () => {
     expect(parseCreateNotePath(suggestCreateNotePath('/Untitled#test')).relPath).toBe(
       'inbox/Untitled.md'
     )
+  })
+})
+
+describe('extractMarkdownLinkHrefs (#70dark)', () => {
+  it('pulls hrefs from markdown links', () => {
+    const body = 'See [Note](Note.md) and [Sub](folder/Sub.md).'
+    expect(extractMarkdownLinkHrefs(body)).toEqual(['Note.md', 'folder/Sub.md'])
+  })
+
+  it('handles angle-bracket hrefs and drops link titles', () => {
+    expect(extractMarkdownLinkHrefs('[a](<a b.md>)')).toEqual(['a b.md'])
+    expect(extractMarkdownLinkHrefs('[a](Note.md "the title")')).toEqual(['Note.md'])
+  })
+
+  it('ignores links inside code', () => {
+    expect(extractMarkdownLinkHrefs('use `[a](Note.md)`')).toEqual([])
+    expect(extractMarkdownLinkHrefs('```\n[a](Note.md)\n```')).toEqual([])
+  })
+
+  it('dedupes; external hrefs are left for the resolver to filter', () => {
+    const body = '[a](Note.md) [b](Note.md) [ext](https://example.com)'
+    expect(extractMarkdownLinkHrefs(body)).toEqual(['Note.md', 'https://example.com'])
   })
 })

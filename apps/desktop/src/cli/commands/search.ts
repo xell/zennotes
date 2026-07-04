@@ -10,7 +10,7 @@ import { emitJson, emitLine, pad, truncate } from '../format.js'
 
 export async function cmdSearch(vault: string, args: ParsedArgs): Promise<void> {
   const query = getString(args, 'query') ?? args.positionals.join(' ')
-  if (!query.trim()) throw new Error('zen search requires a query.')
+  if (!query.trim()) throw new Error('zn search requires a query.')
   const limit = getNumber(args, 'limit') ?? 50
   const matches = await searchText(vault, query.trim(), limit)
   if (getBool(args, 'json')) {
@@ -28,7 +28,7 @@ export async function cmdSearch(vault: string, args: ParsedArgs): Promise<void> 
 
 export async function cmdSearchTitle(vault: string, args: ParsedArgs): Promise<void> {
   const query = getString(args, 'query') ?? args.positionals.join(' ')
-  if (!query.trim()) throw new Error('zen search-title requires a query.')
+  if (!query.trim()) throw new Error('zn search-title requires a query.')
   const needle = query.trim().toLowerCase()
   const limit = getNumber(args, 'limit') ?? 20
   const all = await listNotes(vault)
@@ -49,7 +49,7 @@ export async function cmdSearchTitle(vault: string, args: ParsedArgs): Promise<v
 
 export async function cmdBacklinks(vault: string, args: ParsedArgs): Promise<void> {
   const rel = getString(args, 'path') ?? args.positionals[0]
-  if (!rel) throw new Error('zen backlinks requires a note path.')
+  if (!rel) throw new Error('zn backlinks requires a note path.')
   const refs = await backlinks(vault, rel)
   if (getBool(args, 'json')) {
     emitJson(refs)

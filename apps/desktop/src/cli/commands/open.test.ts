@@ -99,7 +99,7 @@ describe('cmdOpen', () => {
     expect(spawn).not.toHaveBeenCalled()
   })
 
-  it('resolves vault-relative paths like the ones zen list prints', async () => {
+  it('resolves vault-relative paths like the ones zn list prints', async () => {
     await cmdOpen(vaultDir, makeArgs([vaultNoteRel]))
     expect(spawn).toHaveBeenCalledTimes(1)
     const [, argv] = vi.mocked(spawn).mock.calls[0]
@@ -113,7 +113,7 @@ describe('cmdOpen', () => {
   })
 
   it('re-joins an unquoted path that the shell split on spaces', async () => {
-    // `zen open inbox/demo/03 — Tables and Task Lists.md` (no quotes)
+    // `zn open inbox/demo/03 — Tables and Task Lists.md` (no quotes)
     // arrives as six positionals.
     const tokens = vaultSpacedRel.split(' ')
     expect(tokens.length).toBeGreaterThan(1)

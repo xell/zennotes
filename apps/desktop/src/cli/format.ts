@@ -1,5 +1,5 @@
 /**
- * Output helpers for the `zen` CLI. The default mode is terse,
+ * Output helpers for the `zn` CLI. The default mode is terse,
  * human-readable text. Pass `--json` on any command to swap in
  * machine-friendly JSON instead.
  *
@@ -21,7 +21,7 @@ export function emitOk(message: string): void {
 }
 
 export function emitError(message: string): void {
-  process.stderr.write(`zen: ${message}\n`)
+  process.stderr.write(`zn: ${message}\n`)
 }
 
 export function truncate(value: string, max: number): string {

@@ -1,5 +1,5 @@
 /**
- * `zen folder ...` subcommands. Folders are subpaths under one of the
+ * `zn folder ...` subcommands. Folders are subpaths under one of the
  * four top-level folders (inbox / quick / archive / trash); the CLI
  * treats `folder/sub` as the canonical reference.
  */
@@ -50,7 +50,7 @@ export async function cmdFolderList(vault: string, args: ParsedArgs): Promise<vo
 
 export async function cmdFolderCreate(vault: string, args: ParsedArgs): Promise<void> {
   const target = args.positionals[0] ?? getString(args, 'path')
-  if (!target) throw new Error('zen folder create requires a folder path like inbox/Work.')
+  if (!target) throw new Error('zn folder create requires a folder path like inbox/Work.')
   const ref = splitFolderPath(target)
   if (!ref.subpath) throw new Error('Cannot create the top-level folder; pick a subpath.')
   await createFolder(vault, ref.folder, ref.subpath)
@@ -64,13 +64,13 @@ export async function cmdFolderCreate(vault: string, args: ParsedArgs): Promise<
 export async function cmdFolderRename(vault: string, args: ParsedArgs): Promise<void> {
   const oldPath = args.positionals[0] ?? getString(args, 'path')
   const to = getString(args, 'to')
-  if (!oldPath) throw new Error('zen folder rename requires a folder path.')
-  if (!to) throw new Error('zen folder rename requires --to <newPath>.')
+  if (!oldPath) throw new Error('zn folder rename requires a folder path.')
+  if (!to) throw new Error('zn folder rename requires --to <newPath>.')
   const oldRef = splitFolderPath(oldPath)
   const newRef = splitFolderPath(to)
   if (oldRef.folder !== newRef.folder) {
     throw new Error(
-      'Renaming across top-level folders is not supported. Use `zen move` for individual notes.'
+      'Renaming across top-level folders is not supported. Use `zn move` for individual notes.'
     )
   }
   if (!oldRef.subpath || !newRef.subpath) {
@@ -86,10 +86,10 @@ export async function cmdFolderRename(vault: string, args: ParsedArgs): Promise<
 
 export async function cmdFolderDelete(vault: string, args: ParsedArgs): Promise<void> {
   const target = args.positionals[0] ?? getString(args, 'path')
-  if (!target) throw new Error('zen folder delete requires a folder path.')
+  if (!target) throw new Error('zn folder delete requires a folder path.')
   if (!getBool(args, 'yes')) {
     throw new Error(
-      'zen folder delete is destructive. Re-run with --yes to confirm.'
+      'zn folder delete is destructive. Re-run with --yes to confirm.'
     )
   }
   const ref = splitFolderPath(target)

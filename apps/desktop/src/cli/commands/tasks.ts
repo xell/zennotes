@@ -1,5 +1,5 @@
 /**
- * `zen task ...` — list and toggle markdown checkboxes parsed across
+ * `zn task ...` — list and toggle markdown checkboxes parsed across
  * the live vault. Mirrors the MCP server's task semantics.
  */
 
@@ -37,11 +37,11 @@ export async function cmdTaskList(vault: string, args: ParsedArgs): Promise<void
 
 export async function cmdTaskToggle(vault: string, args: ParsedArgs): Promise<void> {
   const id = getString(args, 'id') ?? args.positionals[0]
-  if (!id) throw new Error('zen task toggle requires a task id from `zen task list`.')
+  if (!id) throw new Error('zn task toggle requires a task id from `zn task list`.')
   const next = await toggleTask(vault, id)
   if (next == null) {
     throw new Error(
-      `Task ${id} no longer exists at that location — the file may have changed. Run \`zen task list\` again.`
+      `Task ${id} no longer exists at that location — the file may have changed. Run \`zn task list\` again.`
     )
   }
   if (getBool(args, 'json')) {

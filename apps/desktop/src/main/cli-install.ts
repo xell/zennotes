@@ -1,5 +1,6 @@
 /**
- * `zen` CLI install / uninstall logic for the desktop main process.
+ * `zn` CLI install / uninstall logic for the desktop main process (#126: the
+ * command was renamed from `zen` to avoid clashing with Zen Browser on PATH).
  *
  * The wrapper script `build/zen` ships in the packaged app at
  * Contents/Resources/zen (macOS) or resources/zen (Linux). Installing
@@ -27,6 +28,14 @@ const execFileAsync = promisify(execFile)
 
 const SUDO_FALLBACK_DIR = '/usr/local/bin'
 
+// #126: the installed command is `zn` (renamed from `zen`, which collides with
+// Zen Browser on PATH — Linux and macOS/Homebrew). WRAPPER_NAME is the bundled
+// wrapper file (an internal resource, never on PATH) that the `zn` symlink points
+// at. LEGACY_CLI_NAMES are old symlink names we migrate away from and clean up.
+const CLI_NAME = 'zn'
+const WRAPPER_NAME = 'zen'
+const LEGACY_CLI_NAMES = ['zen']
+
 /* ---------- Wrapper resolution ---------------------------------------- */
 
 interface WrapperLocation {
@@ -39,7 +48,7 @@ async function locateWrapper(): Promise<WrapperLocation | null> {
 
   if (app.isPackaged) {
     candidates.push({
-      wrapperPath: path.join(process.resourcesPath, 'zen'),
+      wrapperPath: path.join(process.resourcesPath, WRAPPER_NAME),
       cliJsPath: path.join(process.resourcesPath, 'cli.js')
     })
   }
@@ -67,7 +76,7 @@ async function locateWrapper(): Promise<WrapperLocation | null> {
 
 async function ensureDevWrapper(cliJsPath: string): Promise<string> {
   const dir = path.join(app.getPath('userData'), 'cli')
-  const target = path.join(dir, 'zen')
+  const target = path.join(dir, WRAPPER_NAME)
   await fsp.mkdir(dir, { recursive: true })
   const electronBinary = process.execPath
   const script = [
@@ -139,7 +148,7 @@ async function isWritableDir(dir: string): Promise<boolean> {
 }
 
 interface InstallTarget {
-  /** Absolute path to <dir>/zen — where the symlink would land. */
+  /** Absolute path to <dir>/zn — where the symlink would land. */
   linkPath: string
   /** Whether <dir> is already on the user's $PATH. */
   onPath: boolean
@@ -161,7 +170,7 @@ async function pickInstallTarget(): Promise<InstallTarget> {
     if (!onPath.has(dir)) continue
     if (await isWritableDir(dir)) {
       return {
-        linkPath: path.join(dir, 'zen'),
+        linkPath: path.join(dir, CLI_NAME),
         onPath: true,
         requiresSudo: false,
         pathHint: null
@@ -182,7 +191,7 @@ async function pickInstallTarget(): Promise<InstallTarget> {
     }
     if (await isWritableDir(dir)) {
       return {
-        linkPath: path.join(dir, 'zen'),
+        linkPath: path.join(dir, CLI_NAME),
         onPath: false,
         requiresSudo: false,
         pathHint: pathExportSnippet(dir)
@@ -193,7 +202,7 @@ async function pickInstallTarget(): Promise<InstallTarget> {
   // Pass 3: fall back to /usr/local/bin with a sudo prompt. This is
   // the historical install location and still on PATH almost
   // everywhere, so the binary will be callable immediately.
-  const target = path.join(SUDO_FALLBACK_DIR, 'zen')
+  const target = path.join(SUDO_FALLBACK_DIR, CLI_NAME)
   return {
     linkPath: target,
     onPath: onPath.has(SUDO_FALLBACK_DIR),
@@ -228,7 +237,7 @@ async function findExistingInstall(
   wrapper: WrapperLocation | null
 ): Promise<ExistingInstall | null> {
   for (const dir of candidateDirs()) {
-    const candidate = path.join(dir, 'zen')
+    const candidate = path.join(dir, CLI_NAME)
     try {
       const linkTarget = await fsp.readlink(candidate)
       const resolved = path.isAbsolute(linkTarget)
@@ -298,6 +307,40 @@ export async function getCliInstallStatus(): Promise<CliInstallStatus> {
   }
 }
 
+/**
+ * Remove ZenNotes-managed symlinks with the given names across candidate dirs —
+ * used to migrate off the legacy `zen` name and to clean up on uninstall. Only
+ * unlinks symlinks that resolve to OUR wrapper, never a foreign binary such as
+ * Zen Browser's `zen`. (#126)
+ */
+export async function removeManagedLinks(
+  names: readonly string[],
+  wrapper: WrapperLocation | null
+): Promise<string[]> {
+  const removed: string[] = []
+  for (const dir of candidateDirs()) {
+    for (const name of names) {
+      const candidate = path.join(dir, name)
+      try {
+        const linkTarget = await fsp.readlink(candidate)
+        const resolved = path.isAbsolute(linkTarget)
+          ? linkTarget
+          : path.resolve(dir, linkTarget)
+        const byUs = wrapper
+          ? sameFile(resolved, wrapper.wrapperPath)
+          : looksLikeOurInstall(resolved)
+        if (byUs) {
+          await fsp.rm(candidate, { force: true })
+          removed.push(candidate)
+        }
+      } catch {
+        /* not a symlink / missing / unreadable — leave it alone */
+      }
+    }
+  }
+  return removed
+}
+
 /* ---------- Install --------------------------------------------------- */
 
 export async function installCli(): Promise<CliInstallStatus> {
@@ -348,6 +391,10 @@ export async function installCli(): Promise<CliInstallStatus> {
     }
   }
 
+  // #126: migrate off the legacy `zen` name — drop any ZenNotes-managed `zen`
+  // symlink now that `zn` is installed.
+  await removeManagedLinks(LEGACY_CLI_NAMES, wrapper)
+
   return await getCliInstallStatus()
 }
 
@@ -379,7 +426,7 @@ async function elevateAndSymlink(source: string, target: string): Promise<void> 
         throw new Error('Install canceled.')
       }
       throw new Error(
-        `Could not install zen to ${target}. Tried osascript with admin privileges and failed: ${stderr || (err as Error).message}`
+        `Could not install ${CLI_NAME} to ${target}. Tried osascript with admin privileges and failed: ${stderr || (err as Error).message}`
       )
     }
   }
@@ -452,10 +499,13 @@ export async function uninstallCli(): Promise<CliInstallStatus> {
       throw err
     }
   }
+  // #126: sweep any strays too — a legacy `zen` in another dir, or a second `zn`
+  // — so uninstall fully removes ZenNotes-managed links.
+  await removeManagedLinks([CLI_NAME, ...LEGACY_CLI_NAMES], wrapper)
   return await getCliInstallStatus()
 }
 
-/* ---------- Used by mcp-integrations.ts to prefer `zen mcp` ----------- */
+/* ---------- Used by mcp-integrations.ts to prefer `zn mcp` ------------ */
 
 export async function findManagedCliBinary(): Promise<string | null> {
   if (process.platform === 'win32') return null

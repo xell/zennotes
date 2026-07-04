@@ -1,9 +1,9 @@
 /**
- * `zen vault info` — print the resolved vault root + a small sanity
- * snapshot. Useful as a sanity check after install (`zen vault info`
+ * `zn vault info` — print the resolved vault root + a small sanity
+ * snapshot. Useful as a sanity check after install (`zn vault info`
  * should match what the GUI shows).
  *
- * `zen vault list` — every vault the app knows about, the default
+ * `zn vault list` — every vault the app knows about, the default
  * marked with `*`. Point any other command at a specific vault with
  * `--vault <name|path>`.
  */

@@ -53,8 +53,8 @@ export async function getMcpServerRuntime(): Promise<McpServerRuntime> {
     exists = false
   }
 
-  // When the user has installed the `zen` CLI from Settings, prefer
-  // that as the MCP launcher: `zen mcp` is one stable absolute path
+  // When the user has installed the `zn` CLI from Settings, prefer
+  // that as the MCP launcher: `zn mcp` is one stable absolute path
   // that survives app moves and reads better in client config files.
   // Otherwise fall back to invoking the Electron binary in plain-Node
   // mode against the bundled mcp.js (the historical install shape;

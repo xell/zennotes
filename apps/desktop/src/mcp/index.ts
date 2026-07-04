@@ -4,7 +4,7 @@
  * implementation lives in ./server. Existing user installs (Claude
  * Code / Desktop / Codex configs that already point at this file)
  * keep working through this shim; new installs prefer the unified
- * `zen mcp` subcommand wired by mcp-integrations.ts.
+ * `zn mcp` subcommand wired by mcp-integrations.ts.
  */
 
 import { runMcpServer } from './server.js'

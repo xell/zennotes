@@ -988,3 +988,35 @@ describe('pdfExportUseTheme — theme in PDF export', () => {
     expect(missing.useStore.getState().pdfExportUseTheme).toBe(false)
   })
 })
+
+describe('date-nav expand state (#301)', () => {
+  it('expand/collapse/toggle add and remove keys', async () => {
+    installZen()
+    const { useStore } = await loadStore()
+    const s = () => useStore.getState()
+
+    expect(s().dateNavExpanded).toEqual([])
+
+    s().expandDateNav('d:2026')
+    expect(s().dateNavExpanded).toContain('d:2026')
+
+    // idempotent — expanding an already-open group adds no duplicate
+    s().expandDateNav('d:2026')
+    expect(s().dateNavExpanded.filter((k) => k === 'd:2026')).toHaveLength(1)
+
+    s().expandDateNav('d:2026:7')
+    expect(s().dateNavExpanded).toEqual(['d:2026', 'd:2026:7'])
+
+    s().collapseDateNav('d:2026')
+    expect(s().dateNavExpanded).toEqual(['d:2026:7'])
+
+    // collapsing an absent key is a no-op
+    s().collapseDateNav('nope')
+    expect(s().dateNavExpanded).toEqual(['d:2026:7'])
+
+    s().toggleDateNav('w:2026')
+    expect(s().dateNavExpanded).toContain('w:2026')
+    s().toggleDateNav('w:2026')
+    expect(s().dateNavExpanded).not.toContain('w:2026')
+  })
+})

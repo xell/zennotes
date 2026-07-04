@@ -1,5 +1,5 @@
 /**
- * Pretty `zen --help` rendering.
+ * Pretty `zn --help` rendering.
  *
  * No dependencies — just ANSI escape codes and box-drawing characters.
  * Colors are gated on TTY detection and the standard NO_COLOR /
@@ -11,7 +11,7 @@
 import appPackage from '../../package.json'
 
 const RESET = '\x1b[0m'
-// Track the app version so `zen --version` matches the About page (#243),
+// Track the app version so `zn --version` matches the About page (#243),
 // instead of a hand-maintained string that drifts every release.
 const HELP_VERSION = appPackage.version
 const TERMINAL_COLUMNS_FALLBACK = 80
@@ -166,7 +166,7 @@ const SECTIONS: Array<{ heading: string; rows: CommandRow[] }> = [
 ]
 
 const GLOBAL_FLAGS: CommandRow[] = [
-  { name: '--vault <name|path>', description: 'Target a specific vault (see `zen vault list`)' },
+  { name: '--vault <name|path>', description: 'Target a specific vault (see `zn vault list`)' },
   { name: '--json', description: 'Emit machine-readable JSON output' },
   { name: '--no-color', description: 'Disable ANSI color even on a TTY' },
   { name: '--help, -h', description: 'Show this help' },
@@ -180,13 +180,13 @@ const ENVIRONMENT: CommandRow[] = [
 ]
 
 const EXAMPLES: string[] = [
-  'zen capture "Meeting takeaways" --tag work',
-  'pbpaste | zen append "inbox/Daily.md" --body -',
-  'zen search "deadline" --json | jq \'.[].path\'',
-  'zen list --tag idea --limit 5',
-  'zen list --vault work --limit 5',
-  'zen task list --unchecked --tag work',
-  'zen open ~/Downloads/notes.md'
+  'zn capture "Meeting takeaways" --tag work',
+  'pbpaste | zn append "inbox/Daily.md" --body -',
+  'zn search "deadline" --json | jq \'.[].path\'',
+  'zn list --tag idea --limit 5',
+  'zn list --vault work --limit 5',
+  'zn task list --unchecked --tag work',
+  'zn open ~/Downloads/notes.md'
 ]
 
 function header(width: number): string[] {
@@ -194,7 +194,7 @@ function header(width: number): string[] {
   // lines up regardless of color codes.
   const inner = width - 4
   const tagline = 'ZenNotes CLI · capture, search, edit your vault from any terminal'
-  const titleLine = `${bold(cyan('zen'))} ${dim(`v${HELP_VERSION}`)}`
+  const titleLine = `${bold(cyan('zn'))} ${dim(`v${HELP_VERSION}`)}`
   const taglineWrapped = wrapLines(tagline, inner).map((l) => dim(l))
   const lines = [titleLine, ...taglineWrapped]
   const top = '╭' + '─'.repeat(width - 2) + '╮'
@@ -234,7 +234,7 @@ export function renderHelp(): string {
   out.push(...header(width))
   out.push('')
   out.push(bold(yellow('USAGE')))
-  out.push('  ' + cyan('zen') + ' ' + magenta('<command>') + ' ' + dim('[arguments] [flags]'))
+  out.push('  ' + cyan('zn') + ' ' + magenta('<command>') + ' ' + dim('[arguments] [flags]'))
   out.push('')
   for (const s of SECTIONS) {
     out.push(...section(s.heading, s.rows, width))
@@ -250,13 +250,13 @@ export function renderHelp(): string {
   }
   out.push('')
   out.push(
-    italic(dim('  Install `zen` from Settings → CLI in the ZenNotes app. Quote note paths that contain spaces.'))
+    italic(dim('  Install `zn` from Settings → CLI in the ZenNotes app. Quote note paths that contain spaces.'))
   )
-  out.push(italic(dim('  Run `zen <command>` to try one out.')))
+  out.push(italic(dim('  Run `zn <command>` to try one out.')))
   out.push('')
   return out.join('\n')
 }
 
 export function renderVersion(): string {
-  return `${cyan(bold('zen'))} ${dim('v' + HELP_VERSION)}\n`
+  return `${cyan(bold('zn'))} ${dim('v' + HELP_VERSION)}\n`
 }

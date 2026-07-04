@@ -353,12 +353,13 @@ export function toIsoDateLocal(d: Date): string {
   return toIsoDate(d)
 }
 
-/** Tasks scheduled for the given local date (ISO YYYY-MM-DD). Excludes
- *  done and waiting tasks. */
+/** Tasks scheduled for the given local date (ISO YYYY-MM-DD). Excludes done
+ *  (checked) tasks but KEEPS `@waiting` tasks, so a waiting task with a due date
+ *  still appears on its date — matching `bucketTasksByDueDate` and the Tasks
+ *  calendar. Without this the sidepanel calendar under-counted `@waiting` tasks
+ *  the Tasks calendar showed. (#311, complementing #236) */
 export function tasksDueOn(tasks: VaultTask[], iso: string): VaultTask[] {
-  return tasks.filter(
-    (t) => !t.checked && !t.waiting && t.due === iso
-  )
+  return tasks.filter((t) => !t.checked && t.due === iso)
 }
 
 /**

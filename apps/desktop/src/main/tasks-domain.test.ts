@@ -25,7 +25,7 @@ describe('toIsoDateLocal', () => {
 })
 
 describe('tasksDueOn', () => {
-  it('returns only unchecked, non-waiting tasks matching the iso', () => {
+  it('returns unchecked tasks — including @waiting — matching the iso, dropping done (#311)', () => {
     const all = tasks(
       [
         '- [ ] today  due:2026-04-30',
@@ -35,8 +35,10 @@ describe('tasksDueOn', () => {
       ].join('\n')
     )
     const due = tasksDueOn(all, '2026-04-30')
-    expect(due).toHaveLength(1)
-    expect(due[0].content).toBe('today')
+    // #311: a @waiting task with a due date must appear here too (the sidepanel
+    // calendar was under-counting them vs the Tasks calendar). Only done
+    // (checked) and other-date tasks are excluded.
+    expect(due.map((t) => t.content).sort()).toEqual(['today', 'waiting'])
   })
 })
 

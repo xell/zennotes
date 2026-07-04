@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { EditorView } from '@codemirror/view'
 import { Vim, getCM } from '@replit/codemirror-vim'
+import { registerDisplayLineMotion } from '../lib/cm-vim-display-line'
 import { moveLineDown, moveLineUp } from '@codemirror/commands'
 import { foldAll, unfoldAll, foldCode, unfoldCode } from '@codemirror/language'
 import { isTagsViewActive, isTasksViewActive, useStore } from '../store'
@@ -319,6 +320,11 @@ function alertEditorError(message: string): void {
   focusEditorNormalMode()
 }
 
+// Minimal shape of the CodeMirror-Vim adapter + state the display-line motion
+// touches (the package's own types don't surface these helpers).
+// The j/k display-line motion (#290) now lives in lib/cm-vim-display-line.ts,
+// shared with the Quick Note window so both editors behave identically (#312).
+
 function registerVimCommands(): void {
   if (vimCommandsRegistered) return
   vimCommandsRegistered = true
@@ -348,6 +354,10 @@ function registerVimCommands(): void {
   })
   Vim.mapCommand('J', 'action', 'zenMoveSelectionDown', {}, { context: 'visual' })
   Vim.mapCommand('K', 'action', 'zenMoveSelectionUp', {}, { context: 'visual' })
+
+  // #290/#312: make j/k move by display line through soft-wrapped content.
+  // Shared with the Quick Note window (QuickCaptureApp) via the same helper.
+  registerDisplayLineMotion()
 
   Vim.defineEx('write', 'w', () => {
     void useStore.getState().persistActive()

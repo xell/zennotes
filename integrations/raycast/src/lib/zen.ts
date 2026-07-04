@@ -75,7 +75,7 @@ function execFileWithClosedStdin(
 export function parseNoteList(stdout: string): ZenNote[] {
   const parsed = JSON.parse(stdout) as unknown;
   if (!Array.isArray(parsed)) {
-    throw new Error("Expected `zen list --json` to return an array of notes.");
+    throw new Error("Expected `zn list --json` to return an array of notes.");
   }
   return parsed.map(parseNote).filter((note): note is ZenNote => note !== null);
 }
@@ -188,14 +188,14 @@ export function toLoadError(err: unknown): LoadError {
     return {
       title: "ZenNotes CLI not found",
       message:
-        "Install the zen command from ZenNotes Settings -> CLI, then run `zen list` in Terminal to verify it.",
+        "Install the zn command from ZenNotes Settings -> CLI, then run `zn list` in Terminal to verify it.",
     };
   }
 
   const stderr =
     isRecord(err) && typeof err.stderr === "string" ? err.stderr.trim() : "";
   const message =
-    stderr.replace(/^zen:\s*/i, "") ||
+    stderr.replace(/^(?:zn|zen):\s*/i, "") ||
     (err instanceof Error ? err.message : String(err));
   return {
     title: "Could not load notes",
@@ -204,7 +204,7 @@ export function toLoadError(err: unknown): LoadError {
 }
 
 export function cliSetupCopyActionContent(): string {
-  return "Open ZenNotes -> Settings -> CLI, install the zen command, then run `zen list` in Terminal to verify it.";
+  return "Open ZenNotes -> Settings -> CLI, install the zn command, then run `zn list` in Terminal to verify it.";
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -212,14 +212,18 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function zenCandidates(): string[] {
-  const candidates = ["zen"];
+  // #126: the CLI is `zn` now (renamed from `zen`, which clashes with Zen
+  // Browser). Prefer `zn`; fall back to a legacy `zen` for un-migrated installs.
   const home = process.env.HOME;
+  const dirs = ["/opt/homebrew/bin", "/usr/local/bin"];
   if (home) {
-    candidates.push(path.join(home, ".local", "bin", "zen"));
-    candidates.push(path.join(home, "bin", "zen"));
+    dirs.unshift(path.join(home, ".local", "bin"), path.join(home, "bin"));
   }
-  candidates.push("/opt/homebrew/bin/zen");
-  candidates.push("/usr/local/bin/zen");
+  const candidates: string[] = [];
+  for (const name of ["zn", "zen"]) {
+    candidates.push(name); // resolved via PATH
+    for (const dir of dirs) candidates.push(path.join(dir, name));
+  }
   return Array.from(new Set(candidates));
 }
 

@@ -30,6 +30,7 @@ const ALLOWED_RENDERED_URI_RE =
   /^(?:(?:https?|mailto|zen|zen-asset|blob|data):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
 const ALLOWED_RENDERED_DATA_ATTRS = [
   'data-callout',
+  'data-embed-src',
   'data-function-plot-source',
   'data-jsxgraph-source',
   'data-local-asset-href',

@@ -35,6 +35,11 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="2.10.0" date="2026-07-02">
+      <description>
+        <p>Transclusion — embed a note's rendered content inline with ![[Note]] in the reading view and PDF export — plus backlinks for standard Markdown links, reorderable database columns, opt-in persistent self-host sessions, a CLI renamed to zn so it no longer clashes with Zen Browser, and nine fixes.</p>
+      </description>
+    </release>
     <release version="2.9.0" date="2026-07-01">
       <description>
         <p>Bring your own theme — author full CSS themes, layer quick overrides on any theme, or recolor and resize with no-code Quick tweaks — plus the new Rosé Pine theme, per-vault view settings with synced workspaces, themed PDF export, and fixes across PDF export, tables, Vim, and keymaps.</p>

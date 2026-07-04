@@ -42,6 +42,8 @@ import {
 import { Vim, vim } from '@replit/codemirror-vim'
 import { history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { vimAwareDefaultKeymap } from '../lib/cm-vim-default-keymap'
+import { registerDisplayLineMotion } from '../lib/cm-vim-display-line'
+import { toggleWrap, wrapLink } from '../lib/cm-format'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
@@ -199,6 +201,10 @@ let vimRegistered = false
 function registerCaptureVimCommands(): void {
   if (vimRegistered) return
   vimRegistered = true
+
+  // #312: this window is a separate Electron renderer with its own Vim, so it
+  // needs its own registration to get the main editor's j/k display-line motion.
+  registerDisplayLineMotion()
 
   Vim.defineEx('write', 'w', () => {
     setTimeout(() => {
@@ -430,6 +436,22 @@ export function QuickCaptureApp(): JSX.Element {
           appMarkdownSnippetExtension(),
           vimImeControl(),
           new Compartment().of(prefs.vimMode ? vim() : []),
+          // #312: inline-format shortcuts (bold/italic/code/strike/highlight/
+          // math/link) — the same markers the main editor's VimNav binds — so
+          // the Quick Note window formats identically instead of falling through
+          // to a default (⌘I selecting the line). Highest precedence so they beat
+          // vim's Ctrl chords (Mod = Ctrl on Linux/Windows) and editor defaults.
+          Prec.highest(
+            keymap.of([
+              { key: 'Mod-b', run: (v) => toggleWrap(v, '**') },
+              { key: 'Mod-i', run: (v) => toggleWrap(v, '*') },
+              { key: 'Mod-e', run: (v) => toggleWrap(v, '`') },
+              { key: 'Shift-Mod-s', run: (v) => toggleWrap(v, '~~') },
+              { key: 'Shift-Mod-h', run: (v) => toggleWrap(v, '==') },
+              { key: 'Shift-Mod-m', run: (v) => toggleWrap(v, '$') },
+              { key: 'Mod-k', run: (v) => wrapLink(v) }
+            ])
+          ),
           history(),
           drawSelection(),
           highlightActiveLine(),

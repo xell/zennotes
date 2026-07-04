@@ -6,7 +6,7 @@
  *
  * The transport-binding entry `runMcpServer()` is shared between the
  * legacy stdio entry (./index.ts, kept for backwards-compat with
- * already-installed clients) and the new `zen mcp` CLI subcommand.
+ * already-installed clients) and the new `zn mcp` CLI subcommand.
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'

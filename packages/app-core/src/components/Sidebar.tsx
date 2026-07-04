@@ -1960,16 +1960,11 @@ export function Sidebar(): JSX.Element {
     };
   }, [notes, vaultSettings]);
 
-  // Local (session) expand state for the pinned date-nav, default all collapsed.
-  const [dateNavExpanded, setDateNavExpanded] = useState<Set<string>>(() => new Set());
-  const toggleDateNav = useCallback((key: string) => {
-    setDateNavExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
+  // Expand state for the pinned date-nav now lives in the store (ephemeral) so
+  // VimNav's keyboard navigation can drive it like real folders. (#301)
+  const dateNavExpandedKeys = useStore((s) => s.dateNavExpanded);
+  const toggleDateNav = useStore((s) => s.toggleDateNav);
+  const dateNavExpanded = useMemo(() => new Set(dateNavExpandedKeys), [dateNavExpandedKeys]);
 
   const treeSortComparator = useMemo<
     ((a: NoteMeta, b: NoteMeta) => number) | null
@@ -6321,7 +6316,7 @@ function TreeRow({
   sidebarIdx?: number;
   vimHighlight?: boolean;
   sidebarFocused?: boolean;
-  sidebarData?: { type: string; folder: string; subpath: string; key: string };
+  sidebarData?: { type: string; folder: string; subpath: string; key: string; dateNavKey?: string };
   selectionKey?: string;
   /** Optional inline action(s) shown on the right edge, revealed on hover. */
   trailing?: JSX.Element;
@@ -6384,6 +6379,9 @@ function TreeRow({
             "data-sidebar-folder": sidebarData?.folder,
             "data-sidebar-subpath": sidebarData?.subpath,
             "data-sidebar-key": sidebarData?.key,
+            // #301: present only on Daily/Weekly date-group rows — VimNav reads
+            // it to expand/collapse them via the store's date-nav actions.
+            "data-sidebar-datenav-key": sidebarData?.dateNavKey,
             "data-sidebar-expandable": String(expandable),
             "data-sidebar-collapsed": String(collapsed),
             "data-sidebar-select-key": selectionKey,
@@ -7000,6 +6998,7 @@ function DateNotesNav({
           folder: "inbox",
           subpath: sidebarSubpath,
           key: "",
+          dateNavKey: key,
         }}
       />
     );

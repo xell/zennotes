@@ -3240,13 +3240,13 @@ export function SettingsModal(): JSX.Element {
       id: 'cli',
       title: 'CLI',
       description:
-        'Install the `zen` command-line tool for terminal workflows, MCP, and launcher integrations like Raycast.',
+        'Install the `zn` command-line tool for terminal workflows, MCP, and launcher integrations like Raycast.',
       keywords: [
         'cli',
         'command line',
         'terminal',
         'shell',
-        'zen',
+        'zn',
         'raycast',
         'launcher',
         'script',
@@ -3258,14 +3258,14 @@ export function SettingsModal(): JSX.Element {
       searchItems: [
         {
           id: 'zen-command-line-tool',
-          title: 'zen command-line tool',
-          description: 'Install the `zen` shell command for terminal-based note workflows.',
-          keywords: ['cli', 'command line', 'terminal', 'shell', 'zen', 'install', 'path']
+          title: 'zn command-line tool',
+          description: 'Install the `zn` shell command for terminal-based note workflows.',
+          keywords: ['cli', 'command line', 'terminal', 'shell', 'zn', 'install', 'path']
         },
         {
           id: 'cli-quick-reference',
           title: 'CLI quick reference',
-          description: 'A handful of the most useful `zen` commands.',
+          description: 'A handful of the most useful `zn` commands.',
           keywords: ['cli', 'help', 'commands', 'reference']
         },
         {
@@ -5199,7 +5199,7 @@ function CliSettings(): JSX.Element {
       <div className="space-y-6">
         <Section
           title="Command-Line Tool"
-          description="Install the `zen` shell command for terminal-based note workflows."
+          description="Install the `zn` shell command for terminal-based note workflows."
           settingId="zen-command-line-tool"
         >
           <InlineNote>Checking install status…</InlineNote>
@@ -5213,7 +5213,7 @@ function CliSettings(): JSX.Element {
       <div className="space-y-6">
         <Section
           title="Command-Line Tool"
-          description="Install the `zen` shell command for terminal-based note workflows."
+          description="Install the `zn` shell command for terminal-based note workflows."
           settingId="zen-command-line-tool"
         >
           <InlineNote>{status.reason ?? 'Not supported on this platform yet.'}</InlineNote>
@@ -5236,7 +5236,7 @@ function CliSettings(): JSX.Element {
     <div className="space-y-6">
       <Section
         title="Command-Line Tool"
-        description="The `zen` CLI talks to your vault directly from any terminal — perfect for scripts, cron jobs, editor plugins, shell pipelines, MCP, and launcher integrations like Raycast. Once installed, try `zen --help` or pipe text in: `pbpaste | zen capture`."
+        description="The `zn` CLI talks to your vault directly from any terminal — perfect for scripts, cron jobs, editor plugins, shell pipelines, MCP, and launcher integrations like Raycast. Once installed, try `zn --help` or pipe text in: `pbpaste | zn capture`."
         settingId="zen-command-line-tool"
       >
         <div className="flex flex-col gap-3 px-5 py-4">
@@ -5255,7 +5255,7 @@ function CliSettings(): JSX.Element {
               </div>
               <div className="mt-1 text-xs leading-5 text-ink-500">
                 {installed && ours
-                  ? `Active. Run \`zen --help\` from any terminal.`
+                  ? `Active. Run \`zn --help\` from any terminal.`
                   : installed && !ours
                     ? `An unmanaged \`zen\` already exists at this path. Remove it before installing if you want ZenNotes to take over.`
                     : status.requiresSudo
@@ -5340,14 +5340,14 @@ function CliSettings(): JSX.Element {
 
       <Section
         title="Quick reference"
-        description="A handful of the most useful commands. Quote paths with spaces, or pass them with `--path`. Run `zen --help` for the full list."
+        description="A handful of the most useful commands. Quote paths with spaces, or pass them with `--path`. Run `zn --help` for the full list."
         settingId="cli-quick-reference"
       >
         <div className="space-y-2 px-5 py-4 font-mono text-xs leading-6 text-ink-800">
           <div>zen list --tag idea</div>
           <div>zen read "inbox/Project.md"</div>
           <div>zen read --path "hellointerview/system design.md"</div>
-          <div>echo "hello" | zen capture</div>
+          <div>echo "hello" | zn capture</div>
           <div>zen append daily.md --body "- talked to alice"</div>
           <div>zen search "deadline" --json | jq .</div>
           <div>zen mcp           # used by Claude Code/Desktop/Codex</div>

@@ -204,8 +204,32 @@ The container reads these on startup. Set them in `docker-compose.yml`
 or via the orchestrator of your choice.
 
 - `ZENNOTES_AUTH_TOKEN` — bootstrap token. Required for non-loopback binds.
-- `ZENNOTES_AUTH_TOKEN_FILE` — read the token from a file path. Use this
-  with Docker/Kubernetes secrets so the value never lives in `.env`.
+- `ZENNOTES_AUTH_TOKEN_FILE` — read the token from a file instead of an env
+  var (the Docker/Kubernetes `*_FILE` secrets convention), so the value never
+  lives in `.env` or `docker-compose.yml`. Details:
+  - It is used **only when `ZENNOTES_AUTH_TOKEN` is unset** — a set
+    `ZENNOTES_AUTH_TOKEN` always wins.
+  - The path must **exist and be readable by the container's user**, and the
+    file's contents are **trimmed** of surrounding whitespace/newlines.
+  - If the file is missing, unreadable, or empty, the server logs a clear
+    `ZENNOTES_AUTH_TOKEN_FILE … could not be read` (or `… is empty`) line and
+    then refuses to start on a non-loopback bind — check `docker logs`.
+  - A bare `ZENNOTES_AUTH_TOKEN_FILE=${ZENNOTES_AUTH_TOKEN_FILE}` in Compose
+    resolves to an **empty** value (and is ignored) unless that variable is set
+    on the host — point it at the mounted secret path directly instead:
+
+    ```yaml
+    services:
+      zennotes:
+        image: adibhanna/zennotes
+        environment:
+          ZENNOTES_AUTH_TOKEN_FILE: /run/secrets/zennotes_auth_token
+        secrets:
+          - zennotes_auth_token
+    secrets:
+      zennotes_auth_token:
+        file: ./secrets/zennotes_auth_token.txt
+    ```
 - `ZENNOTES_BEHIND_TLS=1` — declare that a TLS-terminating proxy is in
   front. Enables `Secure` cookies and `Strict-Transport-Security`.
 - `ZENNOTES_TRUSTED_PROXIES` — comma-separated CIDR list. Required if
@@ -229,6 +253,14 @@ or via the orchestrator of your choice.
   change on disk) stop. Set this where inotify is restricted or unstable —
   notably **unprivileged LXC containers**, where inotify on a bind-mount can
   wedge the process and lock the volume (see Common problems below).
+- `ZENNOTES_PERSIST_SESSIONS=1` — **opt-in**: keep browser logins across
+  restarts. By default the server holds sessions in memory, so restarting the
+  container (or the host) invalidates every login and the browser re-prompts for
+  the token — even though the token itself is unchanged. With this on, sessions
+  are saved to `sessions.json` beside your host config (on the `/data` volume)
+  and reloaded on startup, so you stay logged in. It writes session tokens to
+  disk (mode `0600`, alongside the auth token that already lives there); leave it
+  off if you'd rather sessions never touch disk.
 
 ## Reverse-proxy with a path prefix
 
@@ -271,6 +303,12 @@ list, see:
 - [Security Reference](../reference/security-reference.md)
 
 ## Common problems
+
+### I have to re-enter the token after every restart
+
+By default the server keeps browser sessions **in memory**, so restarting the container (or the host) forgets every login — your browser's saved cookie is no longer recognized and you're re-prompted for the token, even though the token itself hasn't changed.
+
+Set **`ZENNOTES_PERSIST_SESSIONS=1`** to keep sessions across restarts: they're saved to `sessions.json` on the `/data` volume (mode `0600`) and reloaded on startup. It's opt-in — see the environment-variables list above for the on-disk trade-off; leave it off if you'd rather sessions never touch disk.
 
 ### The browser opens, but `Connect to server vault` does nothing
 
