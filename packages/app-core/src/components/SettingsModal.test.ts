@@ -43,6 +43,7 @@ const mocks = vi.hoisted(() => {
       },
       vaultTextSearchBackend: 'auto',
       vimInsertEscape: '',
+      vimKeymap: '',
       vimMode: false,
       whichKeyHintMode: 'timed',
       whichKeyHintTimeoutMs: 1200,
@@ -64,9 +65,13 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('../store', () => ({
-  useStore: (selector: (state: typeof mocks.state) => unknown) => selector(mocks.state)
-}))
+vi.mock('../store', () => {
+  const useStore = (selector: (state: typeof mocks.state) => unknown) => selector(mocks.state)
+  // Some code paths (e.g. committing a settings field) read the store
+  // imperatively via useStore.getState(), so the mock must expose it too.
+  useStore.getState = () => mocks.state
+  return { useStore }
+})
 
 vi.mock('../lib/system-fonts', () => ({
   hasSystemFontAccess: () => false,

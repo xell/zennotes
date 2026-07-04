@@ -9,6 +9,9 @@ export default defineConfig({
     }
   },
   test: {
-    include: ['src/**/*.test.ts']
+    include: ['src/**/*.test.ts'],
+    // Installs a localStorage polyfill when the environment lacks one (Node 26
+    // shadows jsdom's). No-op where jsdom's localStorage already works.
+    setupFiles: ['./vitest.setup.ts']
   }
 })

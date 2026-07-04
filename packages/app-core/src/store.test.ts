@@ -67,6 +67,12 @@ function installZen(overrides: Record<string, unknown> = {}): void {
       getVaultSettings: vi.fn().mockResolvedValue({}),
       closeVault: vi.fn().mockResolvedValue(null),
       readNote: vi.fn().mockResolvedValue(makeNote('- [ ] old task')),
+      // refreshNotes() loads the manual-order sidecar first; without these it
+      // throws (swallowed), leaving notes empty. Mocking them by default keeps
+      // note-loading assertions independent of test order (the module-level
+      // manualOrderLoadedForRoot cache otherwise makes it flaky).
+      getManualOrder: vi.fn().mockResolvedValue({}),
+      setManualOrder: vi.fn().mockResolvedValue(undefined),
       ...overrides
     }
   })

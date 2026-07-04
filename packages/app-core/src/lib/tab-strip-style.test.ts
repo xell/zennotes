@@ -21,10 +21,15 @@ describe('workspace tab strip overflow styles', () => {
       "tabStripOverflowing ? 'overflow-x-auto' : 'overflow-x-hidden'"
     )
     expect(editorPaneSource).toContain('items-stretch')
-    expect(stylesSource).not.toContain('::-webkit-scrollbar')
-    expect(stylesSource).not.toContain('scrollbar-color')
+    // The tab strip must not HIDE its scrollbar (overflow stays visible). Scope
+    // the check to the tab strip itself — unrelated surfaces such as the
+    // terminal's xterm viewport legitimately style their own ::-webkit-scrollbar,
+    // so a stylesheet-wide `not.toContain('::-webkit-scrollbar')` is too broad.
     expect(stylesSource).not.toMatch(
       /\.workspace-tab-strip::-webkit-scrollbar\s*\{[^}]*display:\s*none/s
+    )
+    expect(stylesSource).not.toMatch(
+      /\.workspace-tab-strip[^{]*\{[^}]*scrollbar-width:\s*none/s
     )
   })
 
