@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { markdownListHangingIndentCh } from './cm-markdown-list-indent'
+import {
+  markdownListContentOffset,
+  markdownListHangingIndentCh
+} from './cm-markdown-list-indent'
 
 describe('markdownListHangingIndentCh', () => {
   it('aligns wrapped unordered and ordered list text after the marker', () => {
@@ -20,5 +23,20 @@ describe('markdownListHangingIndentCh', () => {
   it('does not treat paragraphs or horizontal rules as list items', () => {
     expect(markdownListHangingIndentCh('plain paragraph')).toBeNull()
     expect(markdownListHangingIndentCh('---')).toBeNull()
+  })
+})
+
+describe('markdownListContentOffset', () => {
+  it('returns the char offset where list content begins (for px measuring)', () => {
+    expect(markdownListContentOffset('- item')).toBe(2)
+    expect(markdownListContentOffset('  - nested item')).toBe(4)
+    expect(markdownListContentOffset('10. ordered item')).toBe(4)
+    expect(markdownListContentOffset('- [ ] task item')).toBe(6)
+    expect(markdownListContentOffset('> - quoted item', 2)).toBe(4)
+  })
+
+  it('returns null for non-list lines', () => {
+    expect(markdownListContentOffset('plain paragraph')).toBeNull()
+    expect(markdownListContentOffset('---')).toBeNull()
   })
 })

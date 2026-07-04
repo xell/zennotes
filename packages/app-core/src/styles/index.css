@@ -1471,8 +1471,12 @@ textarea,
   line-height: var(--z-editor-line-height, 1.7);
 }
 .cm-editor .cm-line.cm-markdown-list-line {
+  /* --z-list-hanging-indent = the content column (depth step + own prefix);
+     --z-list-marker-indent = the item's own prefix (marker + gap). The negative
+     text-indent pulls the first line back so the marker sits at the nesting
+     column and wrapped lines hang under the content. */
   padding-left: var(--z-list-hanging-indent, 0);
-  text-indent: calc(var(--z-list-hanging-indent, 0) * -1);
+  text-indent: calc(var(--z-list-marker-indent, var(--z-list-hanging-indent, 0)) * -1);
 }
 .cm-editor .cm-cursor,
 .cm-editor .cm-dropCursor {
@@ -4295,6 +4299,11 @@ textarea,
 .cm-wysiwyg .cm-editor .cm-wq-bullet {
   color: rgb(var(--z-grey-1));
   font-weight: 700;
+  /* Override knob: set --z-list-marker-gap (e.g. 2em) to widen the space
+     between the bullet and the text. The hanging indent is measured, so it
+     tracks this automatically (and, since the step is the bullet width, the
+     nesting widens with it, keeping the staircase tidy). */
+  margin-right: var(--z-list-marker-gap, 0);
 }
 
 /* Horizontal rule rendered in place of `---` / `***` / `___`. */

@@ -26,6 +26,21 @@ const OVERRIDES_STYLE_ID = 'zen-overrides'
 const TWEAKS_STYLE_ID = 'zen-tweaks'
 
 /**
+ * Fired whenever a managed style layer (theme / overrides / tweaks) actually
+ * changes. Some layout that depends on measured metrics — e.g. the markdown
+ * list hanging indent — can't be recomputed by CodeMirror's geometry watcher
+ * when a horizontal-only CSS change (like a bullet margin) leaves line heights
+ * untouched, so those consumers listen for this to re-measure.
+ */
+export const MANAGED_STYLES_CHANGED_EVENT = 'zen:managed-styles-changed'
+
+function notifyManagedStylesChanged(): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(MANAGED_STYLES_CHANGED_EVENT))
+  }
+}
+
+/**
  * Create/update/remove a managed `<style>` by id. Empty `css` removes it.
  * Returns the element (or null when removed / no DOM).
  */
@@ -33,7 +48,10 @@ function applyManagedStyle(id: string, css: string): HTMLStyleElement | null {
   if (typeof document === 'undefined') return null
   let style = document.getElementById(id) as HTMLStyleElement | null
   if (!css) {
-    style?.remove()
+    if (style) {
+      style.remove()
+      notifyManagedStylesChanged()
+    }
     return null
   }
   if (!style) {
@@ -41,7 +59,10 @@ function applyManagedStyle(id: string, css: string): HTMLStyleElement | null {
     style.id = id
     document.head.appendChild(style)
   }
-  if (style.textContent !== css) style.textContent = css
+  if (style.textContent !== css) {
+    style.textContent = css
+    notifyManagedStylesChanged()
+  }
   return style
 }
 

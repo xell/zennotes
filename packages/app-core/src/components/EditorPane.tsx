@@ -272,7 +272,6 @@ function buildEditorKeymap(vimMode: boolean, overrides: KeymapOverrides): Extens
 function markdownEditingExtensions(): Extension[] {
   return [
     markdown({ base: markdownLanguage, codeLanguages: resolveCodeLanguage, addKeymap: true }),
-    markdownListIndentPlugin,
     frontmatterStyle,
     orderedListRenumber,
     headingFolding(),
@@ -774,6 +773,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const markdownCompartmentRef = useRef<Compartment | null>(null)
   const markdownSyntaxCompartmentRef = useRef<Compartment | null>(null)
   const livePreviewCompartmentRef = useRef<Compartment | null>(null)
+  const listIndentCompartmentRef = useRef<Compartment | null>(null)
   const lineNumbersCompartmentRef = useRef<Compartment | null>(null)
   const wordWrapCompartmentRef = useRef<Compartment | null>(null)
   const diffCompartmentRef = useRef<Compartment | null>(null)
@@ -1469,6 +1469,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       const markdownCompartment = new Compartment()
       const markdownSyntaxCompartment = new Compartment()
       const livePreviewCompartment = new Compartment()
+      const listIndentCompartment = new Compartment()
       const lineNumbersCompartment = new Compartment()
       const wordWrapCompartment = new Compartment()
       const historyCompartment = new Compartment()
@@ -1478,6 +1479,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       markdownCompartmentRef.current = markdownCompartment
       markdownSyntaxCompartmentRef.current = markdownSyntaxCompartment
       livePreviewCompartmentRef.current = livePreviewCompartment
+      listIndentCompartmentRef.current = listIndentCompartment
       lineNumbersCompartmentRef.current = lineNumbersCompartment
       wordWrapCompartmentRef.current = wordWrapCompartment
       historyCompartmentRef.current = historyCompartment
@@ -1520,6 +1522,12 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
             s0.livePreview && !deferInitialRichMarkdown && modeRef.current !== 'split'
               ? wysiwygExtensions(s0.renderTablesInLivePreview)
               : []
+          ),
+          listIndentCompartment.of(
+            // The list-indent plugin hides the leading indent spaces for a tidy
+            // hierarchy; split mode's editor half is raw source, so keep the
+            // real spaces there (editable) by disabling it.
+            modeRef.current !== 'split' ? markdownListIndentPlugin : []
           ),
           lineNumbersCompartment.of(lineNumberExtension(s0.lineNumberMode)),
           tooltips({ parent: document.body }),
@@ -1914,6 +1922,16 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       )
     })
   }, [livePreview, renderTablesInLivePreview, hideActiveLineMarkup, mode])
+  // Disable the list-indent plugin in split mode so the editor half keeps the
+  // real leading-indent spaces (editable raw source); re-enable it otherwise.
+  useEffect(() => {
+    const view = viewRef.current
+    const comp = listIndentCompartmentRef.current
+    if (!view || !comp) return
+    view.dispatch({
+      effects: comp.reconfigure(mode !== 'split' ? markdownListIndentPlugin : [])
+    })
+  }, [mode])
   useEffect(() => {
     const view = viewRef.current
     const comp = lineNumbersCompartmentRef.current
