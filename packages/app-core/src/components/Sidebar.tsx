@@ -472,6 +472,7 @@ export function Sidebar(): JSX.Element {
   const moveAssetAndRewriteReferences = useStore((s) => s.moveAssetAndRewriteReferences);
   const pinAssetReference = useStore((s) => s.pinAssetReference);
   const pinAssetReferenceForNote = useStore((s) => s.pinAssetReferenceForNote);
+  const pinReference = useStore((s) => s.pinReference);
   const sidebarWidth = useStore((s) => s.sidebarWidth);
   const setSidebarWidth = useStore((s) => s.setSidebarWidth);
   const noteSortOrder = useStore((s) => s.noteSortOrder);
@@ -2886,6 +2887,12 @@ export function Sidebar(): JSX.Element {
         await window.zen.openNoteWindow(n.path);
       },
     });
+    items.push({
+      label: "Open as Reference (Global)",
+      onSelect: async () => {
+        await pinReference(n.path);
+      },
+    });
     if (canRevealInFileManager) {
       items.push({
         label: "Reveal in File Manager",
@@ -2981,6 +2988,7 @@ export function Sidebar(): JSX.Element {
     absolutePathLabel,
     tabsEnabled,
     openNoteInTab,
+    pinReference,
     toggleFavorite,
     openIconPicker,
     openColorPicker,
