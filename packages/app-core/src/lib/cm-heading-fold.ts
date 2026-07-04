@@ -28,7 +28,7 @@ import {
   syntaxTree
 } from '@codemirror/language'
 import type { SyntaxNode } from '@lezer/common'
-import type { EditorState, Extension } from '@codemirror/state'
+import type { EditorState, Extension, StateEffect } from '@codemirror/state'
 import {
   Decoration,
   type DecorationSet,
@@ -322,6 +322,39 @@ const headingArrowPlugin = ViewPlugin.fromClass(
     decorations: (plugin) => plugin.decorations
   }
 )
+
+/**
+ * Fold *every* heading at every level, creating one fold per heading.
+ *
+ * CodeMirror's stock `foldAll` folds only the outermost foldable range at each
+ * position and then jumps past it, so a top-level heading (whose fold already
+ * spans its whole subtree) hides the nested headings without ever folding them.
+ * That leaves a single fold covering the section, so unfolding the parent
+ * (`zo`) reveals everything at once instead of one level at a time. Building a
+ * fold for each heading gives the nested fold state that per-level unfolding
+ * needs: `zo` on a parent removes only the parent's fold, leaving the child
+ * headings folded. Used by `zM`, `:foldall`, and the "Fold All Headings"
+ * command.
+ */
+export function headingFoldRanges(state: EditorState): { from: number; to: number }[] {
+  const ranges: { from: number; to: number }[] = []
+  for (let n = 1; n <= state.doc.lines; n++) {
+    const level = headingLevelAt(state, n)
+    if (level === null) continue
+    const range = rangeForHeading(state, n, level)
+    if (range) ranges.push(range)
+  }
+  return ranges
+}
+
+export function foldAllHeadings(view: EditorView): boolean {
+  const effects: StateEffect<unknown>[] = headingFoldRanges(view.state).map((r) =>
+    foldEffect.of(r)
+  )
+  if (effects.length === 0) return false
+  view.dispatch({ effects })
+  return true
+}
 
 export function headingFolding(): Extension {
   const service = foldService.of((state, from, _to) => {

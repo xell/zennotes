@@ -12,7 +12,8 @@ import type { EditorView } from '@codemirror/view'
 import { Vim, getCM } from '@replit/codemirror-vim'
 import { registerDisplayLineMotion } from '../lib/cm-vim-display-line'
 import { moveLineDown, moveLineUp } from '@codemirror/commands'
-import { foldAll, unfoldAll, foldCode, unfoldCode } from '@codemirror/language'
+import { unfoldAll, foldCode, unfoldCode } from '@codemirror/language'
+import { foldAllHeadings } from '../lib/cm-heading-fold'
 import { isTagsViewActive, isTasksViewActive, useStore } from '../store'
 import { buildCommands, type Command } from '../lib/commands'
 import { rankItems } from '../lib/fuzzy-score'
@@ -861,7 +862,7 @@ function registerVimNoteCommands(): void {
   }
   Vim.defineAction('foldHeadingAtCursor', () => runFold(foldCode as never))
   Vim.defineAction('unfoldHeadingAtCursor', () => runFold(unfoldCode as never))
-  Vim.defineAction('foldAllHeadings', () => runFold(foldAll as never))
+  Vim.defineAction('foldAllHeadings', () => runFold(foldAllHeadings as never))
   Vim.defineAction('unfoldAllHeadings', () => runFold(unfoldAll as never))
   Vim.defineAction('zenHalfPageDown', (cm: ReturnType<typeof getCM>) =>
     editorHalfPage((cm as unknown as { cm6?: EditorView }).cm6, true)
@@ -871,7 +872,7 @@ function registerVimNoteCommands(): void {
   )
   Vim.defineEx('fold', 'fold', () => runFold(foldCode as never))
   Vim.defineEx('unfold', 'unfold', () => runFold(unfoldCode as never))
-  Vim.defineEx('foldall', 'foldall', () => runFold(foldAll as never))
+  Vim.defineEx('foldall', 'foldall', () => runFold(foldAllHeadings as never))
   Vim.defineEx('unfoldall', 'unfoldall', () => runFold(unfoldAll as never))
 }
 

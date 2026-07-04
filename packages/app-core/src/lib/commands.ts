@@ -18,6 +18,7 @@ import { selectedInboxFolderForIsolation, goUpIsolationWithConfirm } from './sid
 import { getKeymapDisplay, type KeymapId } from './keymaps'
 import { dispatchKeyboardContextMenu, findTabContextMenuTarget } from './keyboard-context-menu'
 import { resolveSystemFolderLabels } from './system-folder-labels'
+import { foldAllHeadings } from './cm-heading-fold'
 import { normalizeVaultSettings } from './vault-layout'
 import { DEMO_TOUR_START_PATH } from '@shared/demo-tour'
 
@@ -32,8 +33,14 @@ type FoldCommand = 'foldCode' | 'unfoldCode' | 'foldAll' | 'unfoldAll'
 async function runFoldCommand(command: FoldCommand): Promise<void> {
   const view = useStore.getState().editorViewRef
   if (!view) return
-  const foldModule = await import('@codemirror/language')
-  foldModule[command](view)
+  if (command === 'foldAll') {
+    // Custom nested fold-all (folds every heading level) so per-level unfolding
+    // works; the stock foldAll only folds the outermost heading. Matches `zM`.
+    foldAllHeadings(view)
+  } else {
+    const foldModule = await import('@codemirror/language')
+    foldModule[command](view)
+  }
   view.focus()
 }
 
