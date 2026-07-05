@@ -3888,6 +3888,56 @@ textarea,
 /* A GFM pipe table rendered as a real, editable <table>. Mirrors Obsidian's
    cm-table-widget: rounded bordered grid, header tint, hover add-buttons, and
    in-cell editing. Source stays authoritative; see cm-table.ts. */
+/* "Compatible" styled table (cm-table-styled.ts) — keeps cells as real,
+   editable text (no block widget) so the accessibility surface stays continuous
+   for Grammarly. Static styling only: hide the pipes and the `|---|` row, and
+   pin cells to a measured per-column width (see cm-table-styled.ts for the
+   Obsidian-style responsive-width + content-proportional column algorithm).
+   Minimal, Notion-style rule lines rather than a full grid: a vertical hairline
+   between columns (not around the outside) and a horizontal hairline under
+   each row — no boxed cells, no background tint. */
+.cm-editor .cm-line.cm-stbl-row {
+  /* nowrap keeps the inline-block cells side-by-side on one row; each cell
+     wraps its OWN text (white-space: normal below) when its column is narrow. */
+  white-space: nowrap;
+  border-bottom: 1px solid rgb(var(--z-bg-3) / 0.6);
+}
+.cm-editor .cm-line.cm-stbl-row.cm-stbl-head {
+  font-weight: 600;
+  border-bottom: 1px solid rgb(var(--z-fg) / 0.35);
+}
+.cm-editor .cm-stbl-cell {
+  display: inline-block;
+  box-sizing: content-box;
+  width: var(--z-stbl-col, auto);
+  padding: 4px 14px 4px 0;
+  border-right: 1px solid rgb(var(--z-bg-3) / 0.6);
+  vertical-align: top;
+  /* Content wraps to fit the measured column width; long words break rather
+     than overflow. `normal` also collapses the markdown `| a |` padding
+     spaces, so cells read flush-left. */
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+.cm-editor .cm-stbl-cell.cm-stbl-cell-last {
+  border-right: none;
+}
+.cm-editor .cm-stbl-pipe {
+  /* Hide the raw `|` separators but keep them in the text (still editable). */
+  display: inline-block;
+  width: 0;
+  color: transparent;
+  overflow: hidden;
+}
+.cm-editor .cm-line.cm-stbl-delimiter {
+  /* Collapse the `|---|` alignment row — the header's own border-bottom is
+     the header/body divider, so this row is unneeded and just hidden. */
+  font-size: 0;
+  line-height: 0;
+  color: transparent;
+}
+
 .cm-table-widget {
   /* Use PADDING, not vertical margin, for the block gap: CodeMirror measures a
      block widget's height via offsetHeight, which excludes margins — a vertical

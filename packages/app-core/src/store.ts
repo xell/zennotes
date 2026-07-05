@@ -69,6 +69,7 @@ import { DEFAULT_THEME_ID, THEMES, type ThemeFamily, type ThemeMode } from './li
 import type { PaneMode } from './lib/pane-mode'
 import { DEFAULT_VIM_KEYMAP } from './lib/vim-keymap-defaults'
 import { isCustomThemeId } from './lib/custom-themes'
+import { isTableRenderMode, type TableRenderMode } from './lib/table-render-mode'
 import { customThemeSlugFromId, type CustomTheme } from '@shared/custom-themes'
 import type { Override } from '@shared/overrides'
 import { formatMarkdown } from './lib/format-markdown'
@@ -402,9 +403,10 @@ interface Prefs {
   /** Input-source id used for Vim normal mode (e.g. com.apple.keylayout.ABC). Blank falls back to ABC. */
   imeEnglishLayoutId: string | null
   livePreview: boolean      // hide markdown syntax on inactive lines
-  /** Render Markdown tables as interactive WYSIWYG widgets in live preview.
-   *  Off keeps tables as plain editable markdown — full keyboard/Vim editing. */
-  renderTablesInLivePreview: boolean
+  /** How Markdown tables render in live preview: `off` (plain editable
+   *  markdown), `rich` (interactive block widget), or `compatible` (CSS-styled,
+   *  accessibility-safe editable text). See TableRenderMode. */
+  renderTablesInLivePreview: TableRenderMode
   /** Hide Markdown markup even on the caret's line in live preview, so moving
    *  the cursor doesn't flash marks in and out. Off keeps Obsidian-style
    *  reveal-on-active-line for editing the syntax. */
@@ -649,7 +651,7 @@ export const DEFAULT_PREFS: Prefs = {
   imeSwitcherBinaryPath: null,
   imeEnglishLayoutId: null,
   livePreview: true,
-  renderTablesInLivePreview: true,
+  renderTablesInLivePreview: 'rich',
   hideActiveLineMarkup: false,
   markdownSnippets: true,
   hideBuiltinTemplates: false,
@@ -781,9 +783,13 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
         : DEFAULT_PREFS.imeEnglishLayoutId,
     livePreview:
       typeof p.livePreview === 'boolean' ? p.livePreview : DEFAULT_PREFS.livePreview,
-    renderTablesInLivePreview:
-      typeof p.renderTablesInLivePreview === 'boolean'
+    renderTablesInLivePreview: isTableRenderMode(p.renderTablesInLivePreview)
+      ? p.renderTablesInLivePreview
+      : // Migrate the old boolean: true → the rich widget, false → plain markdown.
+        typeof p.renderTablesInLivePreview === 'boolean'
         ? p.renderTablesInLivePreview
+          ? 'rich'
+          : 'off'
         : DEFAULT_PREFS.renderTablesInLivePreview,
     hideActiveLineMarkup:
       typeof p.hideActiveLineMarkup === 'boolean'
@@ -1677,7 +1683,7 @@ function collectPrefs(s: {
   imeSwitcherBinaryPath: string | null
   imeEnglishLayoutId: string | null
   livePreview: boolean
-  renderTablesInLivePreview: boolean
+  renderTablesInLivePreview: TableRenderMode
   hideActiveLineMarkup: boolean
   markdownSnippets: boolean
   hideBuiltinTemplates: boolean
@@ -2183,7 +2189,7 @@ interface Store {
   /** Input-source id used for Vim normal mode. Blank falls back to com.apple.keylayout.ABC. */
   imeEnglishLayoutId: string | null
   livePreview: boolean
-  renderTablesInLivePreview: boolean
+  renderTablesInLivePreview: TableRenderMode
   /** Hide Markdown markup on the caret's line in live preview. Persisted. */
   hideActiveLineMarkup: boolean
   /** Auto-close markdown delimiters while typing. Persisted. */
@@ -2615,7 +2621,7 @@ interface Store {
   setImeSwitcherBinaryPath: (path: string | null) => void
   setImeEnglishLayoutId: (id: string | null) => void
   setLivePreview: (on: boolean) => void
-  setRenderTablesInLivePreview: (on: boolean) => void
+  setRenderTablesInLivePreview: (mode: TableRenderMode) => void
   setHideActiveLineMarkup: (on: boolean) => void
   setMarkdownSnippets: (on: boolean) => void
   setHideBuiltinTemplates: (hidden: boolean) => void
@@ -5685,8 +5691,8 @@ export const useStore = create<Store>((set, get) => {
     set({ livePreview: on })
     savePrefs(collectPrefs(get()))
   },
-  setRenderTablesInLivePreview: (on) => {
-    set({ renderTablesInLivePreview: on })
+  setRenderTablesInLivePreview: (mode) => {
+    set({ renderTablesInLivePreview: mode })
     savePrefs(collectPrefs(get()))
   },
   setHideActiveLineMarkup: (on) => {

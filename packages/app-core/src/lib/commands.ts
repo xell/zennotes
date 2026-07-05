@@ -62,11 +62,39 @@ export interface Command {
 }
 
 /**
- * Run a registry command by its stable id (e.g. 'note.daily.today').
- * Used by the Vim `zen:<command-id>` key mappings. Honors the command's
- * `when()` availability guard; unknown or unavailable ids no-op with a warning.
+ * Actions reachable only via a Vim `zen:<id>` mapping (e.g. `nmap gT
+ * zen:toggle-table-mode`) — deliberately NOT in `buildCommands()`, so they
+ * never show up in the command palette, the `:` ex-command bridge, `:cmd`
+ * fuzzy search, or the Help view's shortcut list. Use this for
+ * power-user/vim-only actions that don't belong in those general surfaces.
+ */
+const vimOnlyActions: Record<string, () => void> = {
+  'toggle-table-mode': () => {
+    const { renderTablesInLivePreview, setRenderTablesInLivePreview } = useStore.getState()
+    // A pure two-state toggle between the two live-preview table renderers.
+    // `off` is deliberately not part of the cycle — someone who's turned
+    // tables off entirely shouldn't have an accidental gT flip them into a
+    // rendered mode; do nothing (and say why) in that case.
+    if (renderTablesInLivePreview === 'off') {
+      console.info('[zen:command] toggle-table-mode: table rendering is Off, nothing to toggle')
+      return
+    }
+    setRenderTablesInLivePreview(renderTablesInLivePreview === 'rich' ? 'compatible' : 'rich')
+  }
+}
+
+/**
+ * Run a registry command by its stable id (e.g. 'note.daily.today'), or a
+ * vim-only action (see `vimOnlyActions`). Used by the Vim `zen:<id>` key
+ * mappings. Honors the command's `when()` availability guard; unknown or
+ * unavailable ids no-op with a warning.
  */
 export function runCommandById(id: string): void {
+  const vimOnly = vimOnlyActions[id]
+  if (vimOnly) {
+    vimOnly()
+    return
+  }
   const cmd = buildCommands({ includeUnavailable: true }).find((c) => c.id === id)
   if (!cmd) {
     console.warn(`[zen:command] unknown command id: ${id}`)

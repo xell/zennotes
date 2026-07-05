@@ -2,10 +2,12 @@ import type { Extension } from '@codemirror/state'
 import { livePreviewPlugin } from './cm-live-preview'
 import { codeBlockFlairPlugin } from './cm-code-block-flair'
 import { tablePlugin, tableVimEntry } from './cm-table'
+import { styledTableExtension } from './cm-table-styled'
 import { wysiwygBlocksPlugin } from './cm-wysiwyg-blocks'
 import { hashtagExtension } from './cm-hashtags'
 import { highlightExtension } from './cm-highlight'
 import { wikilinkRenderExtension } from './cm-wikilink-render'
+import type { TableRenderMode } from './table-render-mode'
 
 /**
  * Live-preview ("WYSIWYG") rendering bundle: the base marker-hiding/inline
@@ -25,13 +27,19 @@ import { wikilinkRenderExtension } from './cm-wikilink-render'
  * frontmatter-properties panel is intentionally excluded — it depends on
  * the PR's breaking database restructure.
  */
-export function wysiwygExtensions(renderTables: boolean): Extension[] {
+export function wysiwygExtensions(tableMode: TableRenderMode): Extension[] {
   return [
     livePreviewPlugin,
     codeBlockFlairPlugin,
-    // Table widgets are gated on a setting — off keeps tables as plain editable
-    // markdown for full keyboard/Vim editing (#232).
-    ...(renderTables ? [tablePlugin, tableVimEntry] : []),
+    // Table rendering is a three-way setting. `off` keeps tables as plain
+    // editable markdown (full keyboard/Vim editing, #232); `rich` is the
+    // interactive block widget; `compatible` is the accessibility-safe styled
+    // renderer (see TableRenderMode above).
+    ...(tableMode === 'rich'
+      ? [tablePlugin, tableVimEntry]
+      : tableMode === 'compatible'
+        ? [styledTableExtension]
+        : []),
     wysiwygBlocksPlugin,
     ...hashtagExtension,
     ...highlightExtension,

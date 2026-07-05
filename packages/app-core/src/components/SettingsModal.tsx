@@ -1854,12 +1854,17 @@ export function SettingsModal(): JSX.Element {
             />
             {livePreview && (
               <>
-                <ToggleRow
+                <SegmentedRow
                   label="Render tables in live preview"
-                  description="Show Markdown tables as interactive widgets. Turn off to keep tables as plain markdown text, so you can edit them with the keyboard (and Vim motions) like any other line."
+                  description="Off keeps tables as plain editable markdown (full keyboard/Vim editing). Rich is the interactive table — column resize, drag-reorder, cell navigation. Compatible is a static styled table whose cells stay editable text, so accessibility tools like Grammarly keep checking prose after it."
                   value={renderTablesInLivePreview}
                   settingId="render-tables"
-                  onChange={setRenderTablesInLivePreview}
+                  options={[
+                    { value: 'off', label: 'Off' },
+                    { value: 'rich', label: 'Rich' },
+                    { value: 'compatible', label: 'Compatible' }
+                  ]}
+                  onChange={(next) => setRenderTablesInLivePreview(next)}
                 />
                 <ToggleRow
                   label="Hide current line marks"

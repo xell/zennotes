@@ -100,7 +100,7 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
   renderTablesInLivePreview: {
     section: 'editor',
     tomlKey: 'render_tables',
-    comment: 'render tables as widgets in live preview; off keeps them as plain text'
+    comment: 'off | rich (interactive widget) | compatible (styled, accessibility-safe)'
   },
   hideActiveLineMarkup: {
     section: 'editor',

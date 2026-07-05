@@ -143,7 +143,7 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   ripgrepBinaryPath: null,
   fzfBinaryPath: null,
   livePreview: true,
-  renderTablesInLivePreview: true,
+  renderTablesInLivePreview: 'rich',
   hideActiveLineMarkup: false,
   markdownSnippets: true,
   hideBuiltinTemplates: false,
