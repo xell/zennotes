@@ -2966,7 +2966,7 @@ function registerIpc(): void {
       cols: opts.cols,
       rows: opts.rows,
       cwd: opts.cwd,
-      env: { ...process.env, TERM: 'xterm-256color' } as Record<string, string>
+      env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' } as Record<string, string>
     })
     const wcId = event.sender.id
     ptySessions.set(id, { pty, webContentsId: wcId })
