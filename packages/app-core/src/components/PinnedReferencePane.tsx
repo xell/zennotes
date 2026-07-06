@@ -435,7 +435,11 @@ export function PinnedReferencePane(): JSX.Element | null {
       : null
   const assetKind: LocalAssetKind | null =
     pinnedRefPath && isAsset ? classifyLocalAssetHref(pinnedRefPath) ?? 'file' : null
-  const useAssetIframe = assetKind === 'pdf' || assetKind === 'file'
+  // 'text' used to fall under the generic 'file' bucket (still iframe-eligible
+  // here); keep it grouped with 'file' so a pinned .txt reference doesn't
+  // silently stop rendering now that classifyLocalAssetHref gives it its own
+  // kind. The nicer, font-matched read-only view is EditorPane-tab-specific.
+  const useAssetIframe = assetKind === 'pdf' || assetKind === 'file' || assetKind === 'text'
 
   // Track every asset URL the user has pinned this session. One iframe
   // per unique URL stays mounted for the life of the app — show/hide

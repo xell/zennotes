@@ -3592,6 +3592,57 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   )
 }
 
+/**
+ * Read-only viewer for a `.txt`/`.text` asset. Fetches the raw content and
+ * renders it directly in the page — not an iframe — so it can use the same
+ * `--z-text-font`/`--z-editor-font-size`/`--z-editor-line-height` CSS
+ * variables the note editor uses (see `.zn-text-asset-view` in index.css),
+ * keeping typography consistent with the Markdown editor's own font
+ * settings. Chromium's native plain-text viewer (what a bare iframe would
+ * fall back to) has no such hook — it's a fixed, unstylable browser UI.
+ */
+function TextAssetView({ assetUrl }: { assetUrl: string }): JSX.Element {
+  const [state, setState] = useState<{ status: 'loading' | 'ready' | 'error'; text: string }>({
+    status: 'loading',
+    text: ''
+  })
+
+  useEffect(() => {
+    let cancelled = false
+    setState({ status: 'loading', text: '' })
+    fetch(assetUrl)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.text()
+      })
+      .then((text) => {
+        if (!cancelled) setState({ status: 'ready', text })
+      })
+      .catch(() => {
+        if (!cancelled) setState({ status: 'error', text: '' })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [assetUrl])
+
+  if (state.status === 'loading') return <div className="min-h-0 flex-1" />
+  if (state.status === 'error') {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-ink-400">
+        Couldn't read this file.
+      </div>
+    )
+  }
+  return (
+    <div className="min-h-0 min-w-0 flex-1 overflow-auto bg-paper-50 px-8 py-6">
+      <pre className="zn-text-asset-view whitespace-pre-wrap break-words text-ink-900">
+        {state.text}
+      </pre>
+    </div>
+  )
+}
+
 function AssetTabView({
   tabPath,
   vaultRoot
@@ -3646,6 +3697,8 @@ function AssetTabView({
       sandbox="allow-scripts allow-forms"
       className="min-h-0 min-w-0 flex-1 border-0 bg-white"
     />
+  ) : assetKind === 'text' ? (
+    <TextAssetView assetUrl={assetUrl} />
   ) : (
     <iframe
       src={assetUrl}

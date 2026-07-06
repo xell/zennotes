@@ -1439,6 +1439,25 @@ textarea,
 .cm-editor.cm-focused {
   outline: none !important;
 }
+/* Read-only .txt/.text asset viewer (TextAssetView, EditorPane.tsx) — same
+   font/size/line-height variables as .cm-editor above, so plain-text display
+   matches the Markdown editor's typography settings exactly (including live
+   updates from Settings and editor zoom, since both read the same vars). */
+.zn-text-asset-view {
+  font-family: var(
+    --z-text-font,
+    "SF Mono",
+    "SFMono-Regular",
+    ui-monospace,
+    "JetBrains Mono",
+    Menlo,
+    Consolas,
+    "Liberation Mono",
+    monospace
+  );
+  font-size: var(--z-editor-font-size, 16px);
+  line-height: var(--z-editor-line-height, 1.7);
+}
 .cm-editor .cm-scroller {
   font-family: inherit;
   line-height: var(--z-editor-line-height, 1.7);

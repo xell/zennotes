@@ -766,6 +766,9 @@ function mimeTypeForPath(absPath: string): string {
     case '.html':
     case '.htm':
       return 'text/html'
+    case '.txt':
+    case '.text':
+      return 'text/plain'
     case '.woff2':
       return 'font/woff2'
     case '.woff':

@@ -15,8 +15,9 @@ const PDF_EXTENSIONS = new Set(['.pdf'])
 const AUDIO_EXTENSIONS = new Set(['.aac', '.flac', '.m4a', '.mp3', '.ogg', '.wav'])
 const VIDEO_EXTENSIONS = new Set(['.m4v', '.mov', '.mp4', '.ogv', '.webm'])
 const HTML_EXTENSIONS = new Set(['.html', '.htm'])
+const TEXT_EXTENSIONS = new Set(['.txt', '.text'])
 
-export type LocalAssetKind = 'image' | 'pdf' | 'audio' | 'video' | 'html' | 'file'
+export type LocalAssetKind = 'image' | 'pdf' | 'audio' | 'video' | 'html' | 'text' | 'file'
 
 function stripQueryAndHash(href: string): string {
   return href.split('#')[0]?.split('?')[0] ?? href
@@ -68,6 +69,7 @@ export function classifyLocalAssetHref(href: string): LocalAssetKind | null {
   if (AUDIO_EXTENSIONS.has(ext)) return 'audio'
   if (VIDEO_EXTENSIONS.has(ext)) return 'video'
   if (HTML_EXTENSIONS.has(ext)) return 'html'
+  if (TEXT_EXTENSIONS.has(ext)) return 'text'
   return 'file'
 }
 
@@ -267,7 +269,7 @@ function buildImageEmbed(
 }
 
 function buildEmbed(
-  kind: Exclude<LocalAssetKind, 'image' | 'html' | 'file'>,
+  kind: Exclude<LocalAssetKind, 'image' | 'html' | 'text' | 'file'>,
   url: string,
   label: string,
   href: string,
@@ -464,7 +466,10 @@ export function enhanceLocalAssetNodes(
     // 'html' stays a plain click-to-open link inline (no auto-embed), so
     // its script never executes just because a note scrolled into view —
     // it renders only on a deliberate open, in a sandboxed tab iframe.
-    if (kind === 'file' || kind === 'image' || kind === 'html') return
+    // 'text' is read-only either way, but a large .txt/.log file rendered
+    // as a giant inline block would still be an unpleasant surprise
+    // mid-note, so it gets the same plain-link treatment.
+    if (kind === 'file' || kind === 'image' || kind === 'html' || kind === 'text') return
 
     const paragraph = isStandaloneAnchorParagraph(anchor)
     if (!paragraph || paragraph.dataset.assetEmbed === 'true') return
