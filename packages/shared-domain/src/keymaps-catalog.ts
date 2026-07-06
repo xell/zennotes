@@ -52,6 +52,7 @@ export const KEYMAP_CATALOG: KeymapCatalogEntry[] = [
   { id: "global.modeDiff", group: "global", defaultBinding: "Mod+7", title: "Switch to diff mode" },
   { id: "global.toggleZenMode", group: "global", defaultBinding: "Mod+.", title: "Toggle Zen mode" },
   { id: "global.closeActiveTab", group: "global", defaultBinding: "Mod+W", title: "Close active tab" },
+  { id: "global.closeWindow", group: "global", defaultBinding: "Shift+Mod+W", title: "Close app window" },
   { id: "global.reopenClosedTab", group: "global", defaultBinding: "Shift+Mod+T", title: "Reopen closed tab" },
   { id: "global.toggleWordWrap", group: "global", defaultBinding: "Alt+Z", title: "Toggle word wrap" },
   { id: "global.exportNotePdf", group: "global", defaultBinding: "Shift+Mod+E", title: "Export note as PDF" },

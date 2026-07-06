@@ -647,9 +647,13 @@ function App(): JSX.Element {
         // On Linux/Windows `Mod+W` (close tab) resolves to Ctrl+W, which is also
         // the vim pane-focus prefix (`<C-w>hjkl`) and insert-mode word delete.
         // When vim mode is on AND a tab is open, reserve Ctrl+W for vim (close
-        // tabs via :q / :bd / the palette). With no tab open the prefix has
-        // nothing to act on, so fall through and close the window. On macOS
-        // close-tab is Cmd+W, so the vim guard never matches there.
+        // tabs via :q / :bd / the palette). On macOS close-tab is Cmd+W, so
+        // the vim guard never matches there.
+        //
+        // `selectedPath` mirrors the active pane's activeTab for every tab
+        // kind (see activeFieldsFrom) — real note or virtual (Tasks, Tags,
+        // Archive, etc.) — and is null exactly when there's no tab left to
+        // show, which is exactly when the Home tab is showing instead.
         const hasActiveTab = !!state.selectedPath
         if (
           state.vimMode &&
@@ -661,11 +665,17 @@ function App(): JSX.Element {
         e.preventDefault()
         if (hasActiveTab) {
           void state.closeActiveNote()
-        } else {
-          // No tab left to close — close the window, matching native Cmd+W
-          // (macOS) / Ctrl+W behavior even with vim mode on (#192).
-          window.zen.windowClose()
         }
+        // No tab left to close (Home is showing) — do nothing. This used to
+        // fall through to closing the whole window, which made Cmd+W on the
+        // Home tab a surprise "quit the window" shortcut; Home is a
+        // legitimate resting state now, not an empty one, so there's nothing
+        // for Cmd+W to do here.
+        return
+      }
+      if (matchesShortcut(e, overrides, 'global.closeWindow')) {
+        e.preventDefault()
+        void state.closeWindowWithConfirm()
         return
       }
       if (matchesShortcut(e, overrides, 'global.reopenClosedTab')) {

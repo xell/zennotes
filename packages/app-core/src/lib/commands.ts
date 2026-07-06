@@ -511,6 +511,14 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       run: () => getState().closeActiveNote()
     },
     {
+      id: 'app.close-window',
+      title: 'Close App Window',
+      category: 'Tabs',
+      keywords: 'quit exit close all tabs window',
+      shortcut: shortcut('global.closeWindow'),
+      run: () => getState().closeWindowWithConfirm()
+    },
+    {
       id: 'tab.reopen',
       title: 'Reopen Closed Tab',
       category: 'Tabs',

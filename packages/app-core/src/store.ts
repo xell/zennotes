@@ -2589,6 +2589,10 @@ interface Store {
    */
   importDroppedMarkdownFiles: (files: File[]) => Promise<void>
   closeActiveNote: () => Promise<void>
+  /** Closes the whole window — confirms first if any tab is open (in any
+   *  pane); closes immediately only when there are none, i.e. the Home tab
+   *  is showing. */
+  closeWindowWithConfirm: () => Promise<void>
   reopenLastClosedTab: () => Promise<void>
   trashActive: () => Promise<void>
   restoreActive: () => Promise<void>
@@ -5354,6 +5358,32 @@ export const useStore = create<Store>((set, get) => {
     const path = state.selectedPath
     if (!path) return
     await get().closeTabInPane(state.activePaneId, path)
+  },
+
+  closeWindowWithConfirm: async () => {
+    // Count every tab across every pane, not just the active one — closing
+    // the window discards all of them, so a split with 2 panes of 1 tab each
+    // is just as much "tabs open" as 1 pane with 2 tabs.
+    const totalTabs = allLeaves(get().paneLayout).reduce(
+      (sum, leaf) => sum + leaf.tabs.length,
+      0
+    )
+    // 0 tabs means the Home tab is showing (nothing to lose) — the only case
+    // that closes immediately with no prompt. Any tab at all, even a single
+    // one, warns first.
+    if (totalTabs > 0) {
+      const ok = await confirmApp({
+        title: 'Close this window?',
+        description:
+          totalTabs === 1
+            ? 'This window has 1 tab open. Closing it will close that tab too.'
+            : `This window has ${totalTabs} tabs open. Closing it will close all of them.`,
+        confirmLabel: 'Close Window',
+        danger: true
+      })
+      if (!ok) return
+    }
+    window.zen.windowClose()
   },
 
   reopenLastClosedTab: async () => {

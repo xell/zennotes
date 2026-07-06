@@ -33,6 +33,7 @@ export type KeymapId =
   | "global.modeDiff"
   | "global.toggleZenMode"
   | "global.closeActiveTab"
+  | "global.closeWindow"
   | "global.reopenClosedTab"
   | "global.toggleWordWrap"
   | "global.exportNotePdf"
@@ -378,6 +379,16 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Close active tab",
     description: "Close the current note or virtual tab.",
     defaultBinding: "Mod+W",
+  },
+  {
+    id: "global.closeWindow",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Close app window",
+    description:
+      "Close the whole window. Asks first if any tab is open; closes immediately only when the Home tab is showing.",
+    defaultBinding: "Shift+Mod+W",
   },
   {
     id: "global.reopenClosedTab",
