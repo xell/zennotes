@@ -94,6 +94,12 @@ export type KeymapId =
   | "nav.openResult"
   | "nav.back"
   | "nav.toggleFolder"
+  | "nav.collapseAll"
+  | "nav.expandAll"
+  | "nav.jumpFolderUp"
+  | "nav.jumpFolderDown"
+  | "nav.pageUp"
+  | "nav.pageDown"
   | "nav.isolateUp"
   | "nav.filter"
   | "nav.filterNext"
@@ -1016,6 +1022,72 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Toggle folder",
     description: "Expand or collapse the current sidebar folder.",
     defaultBinding: "o",
+    maxTokens: 1,
+  },
+  {
+    id: "nav.collapseAll",
+    kind: "sequence",
+    scope: "lists",
+    group: "navigation",
+    title: "Collapse all folders",
+    description:
+      "Collapse every folder in the Notes tree — the same scope as the sidebar's \"Collapse all\" button.",
+    defaultBinding: "z M",
+    maxTokens: 2,
+  },
+  {
+    id: "nav.expandAll",
+    kind: "sequence",
+    scope: "lists",
+    group: "navigation",
+    title: "Expand all folders",
+    description:
+      "Expand every folder in the Notes tree — the same scope as the sidebar's \"Collapse all\" button.",
+    defaultBinding: "z R",
+    maxTokens: 2,
+  },
+  {
+    id: "nav.jumpFolderUp",
+    kind: "sequence",
+    scope: "lists",
+    group: "navigation",
+    title: "Jump to folder above",
+    description:
+      "Move the cursor to the nearest folder row above, at any depth (like jumping to the previous heading regardless of level).",
+    defaultBinding: "z k",
+    maxTokens: 2,
+  },
+  {
+    id: "nav.jumpFolderDown",
+    kind: "sequence",
+    scope: "lists",
+    group: "navigation",
+    title: "Jump to folder below",
+    description:
+      "Move the cursor to the nearest folder row below, at any depth (like jumping to the next heading regardless of level).",
+    defaultBinding: "z j",
+    maxTokens: 2,
+  },
+  {
+    id: "nav.pageUp",
+    kind: "sequence",
+    scope: "lists",
+    group: "navigation",
+    title: "Scroll a page up",
+    description:
+      "Scroll the sidebar up by roughly a page and move the cursor to the row now at the top.",
+    defaultBinding: "Ctrl+k",
+    maxTokens: 1,
+  },
+  {
+    id: "nav.pageDown",
+    kind: "sequence",
+    scope: "lists",
+    group: "navigation",
+    title: "Scroll a page down",
+    description:
+      "Scroll the sidebar down by roughly a page and move the cursor to the row now at the top.",
+    defaultBinding: "Ctrl+j",
     maxTokens: 1,
   },
   {

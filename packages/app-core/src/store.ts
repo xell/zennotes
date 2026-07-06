@@ -2685,6 +2685,10 @@ interface Store {
   setShowSidebarChevrons: (on: boolean) => void
   toggleCollapseFolder: (key: string) => void
   setCollapsedFolders: (keys: string[]) => void
+  /** Collapse/expand every folder in the Notes (inbox) tree — the "Collapse
+   *  all" button's own scope, and reachable the same way from VimNav's `zM`. */
+  collapseAllFolders: () => void
+  expandAllFolders: () => void
   /* Daily/Weekly date-nav tree expand state — reachable from VimNav (#301) */
   expandDateNav: (key: string) => void
   collapseDateNav: (key: string) => void
@@ -5985,6 +5989,19 @@ export const useStore = create<Store>((set, get) => {
   },
   setCollapsedFolders: (keys) => {
     set({ collapsedFolders: keys })
+    savePrefs(collectPrefs(get()))
+  },
+  collapseAllFolders: () => {
+    const s = get()
+    const keys = [
+      'inbox:',
+      ...s.folders.filter((f) => f.folder === 'inbox').map((f) => `inbox:${f.subpath}`)
+    ]
+    set({ collapsedFolders: keys })
+    savePrefs(collectPrefs(get()))
+  },
+  expandAllFolders: () => {
+    set({ collapsedFolders: [] })
     savePrefs(collectPrefs(get()))
   },
 

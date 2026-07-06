@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { EditorView } from '@codemirror/view'
 import { isTagsViewActive, isTasksViewActive, useStore, type SidebarRevealTarget } from '../store'
+import { noteFolderSubpath, vaultRelativeFolderPath } from '../lib/vault-layout'
+import { parentDirOf } from '../lib/manual-order'
 import { HintOverlay } from './HintOverlay'
 import { WhichKeyOverlay, type WhichKeyItem } from './WhichKeyOverlay'
 import {
@@ -23,7 +25,8 @@ import {
   getSequenceTokens,
   matchesSequenceToken,
   matchesShortcutBinding,
-  sequenceTokenFromEvent
+  sequenceTokenFromEvent,
+  type KeymapId
 } from '../lib/keymaps'
 import { toggleWrap, wrapLink } from '../lib/cm-format'
 import {
@@ -63,8 +66,16 @@ export function VimNav(): JSX.Element | null {
   const previousBufferPending = useRef(0)
   const nextBufferPending = useRef(0)
   const leaderPending = useRef<'leader' | 'leader-l' | 'leader-s' | null>(null)
+  // Sidebar `z`-prefixed folder-nav family (zM/zR/zk/zj): they share one
+  // first token, so — unlike jumpTop's single "g g" binding — this tracks
+  // *which* first token is pending, not just a token count.
+  const zFolderNavPending = useRef<string | null>(null)
+  // In-flight retry loop from zM's post-collapse cursor re-anchor (see
+  // reanchorSidebarCursor) — cancelled if a new one starts before it settles.
+  const collapseAllReanchorRaf = useRef(0)
   const ctrlWTimer = useRef<ReturnType<typeof setTimeout>>()
   const jumpTopTimer = useRef<ReturnType<typeof setTimeout>>()
+  const zFolderNavTimer = useRef<ReturnType<typeof setTimeout>>()
   const previousBufferTimer = useRef<ReturnType<typeof setTimeout>>()
   const nextBufferTimer = useRef<ReturnType<typeof setTimeout>>()
   const leaderTimer = useRef<ReturnType<typeof setTimeout>>()
@@ -285,8 +296,11 @@ export function VimNav(): JSX.Element | null {
     jumpTopPending.current = 0
     previousBufferPending.current = 0
     nextBufferPending.current = 0
+    zFolderNavPending.current = null
+    if (collapseAllReanchorRaf.current) cancelAnimationFrame(collapseAllReanchorRaf.current)
     if (ctrlWTimer.current) clearTimeout(ctrlWTimer.current)
     if (jumpTopTimer.current) clearTimeout(jumpTopTimer.current)
+    if (zFolderNavTimer.current) clearTimeout(zFolderNavTimer.current)
     if (previousBufferTimer.current) clearTimeout(previousBufferTimer.current)
     if (nextBufferTimer.current) clearTimeout(nextBufferTimer.current)
     if (leaderTimer.current) clearTimeout(leaderTimer.current)
@@ -1117,6 +1131,16 @@ export function VimNav(): JSX.Element | null {
       matchesSequenceToken(e, overrides, 'nav.contextMenu') ||
       key === 'ContextMenu' ||
       (e.shiftKey && key === 'F10')
+    // Pure peek (no state mutation) for the wantsHandledKey gate below: would
+    // this keystroke start, continue, or complete a z-folder-nav sequence?
+    // The actual state machine runs later, in handleFolderZSequence.
+    const zPeekToken = sequenceTokenFromEvent(e)
+    const wantsFolderZKey =
+      !!zPeekToken &&
+      (zFolderNavPending.current !== null ||
+        FOLDER_Z_IDS.some(
+          (id) => getKeymapBinding(overrides, id).split(/\s+/)[0] === zPeekToken
+        ))
 
     // Always consume single-char nav keys when sidebar is focused,
     // even if the sidebar is empty — prevents them leaking to the editor.
@@ -1129,6 +1153,9 @@ export function VimNav(): JSX.Element | null {
       matchesSequenceToken(e, overrides, 'nav.back') ||
       matchesSequenceToken(e, overrides, 'nav.toggleFolder') ||
       matchesSequenceToken(e, overrides, 'nav.filter') ||
+      matchesSequenceToken(e, overrides, 'nav.pageUp') ||
+      matchesSequenceToken(e, overrides, 'nav.pageDown') ||
+      wantsFolderZKey ||
       key === 'Enter' ||
       key === 'Escape' ||
       key === 'ArrowDown' ||
@@ -1145,6 +1172,13 @@ export function VimNav(): JSX.Element | null {
 
     if (count === 0) return // nothing to navigate
 
+    // Must run before moveDown/moveUp: while a z-sequence is pending, its
+    // second key (k/j for jumpFolderUp/Down) is *also* the plain move
+    // binding — if move claimed it first, the z-sequence could never
+    // complete and would just time out instead.
+    if (handleFolderZSequence(e, state, items, currentPos)) {
+      return
+    }
     if (matchesSequenceToken(e, overrides, 'nav.moveDown') || key === 'ArrowDown') {
       scrollToIndexedElement(items[Math.min(currentPos + 1, max)], 'sidebarIdx', state.setSidebarCursorIndex)
       return
@@ -1173,6 +1207,14 @@ export function VimNav(): JSX.Element | null {
         300
       )
     ) {
+      return
+    }
+    if (matchesSequenceToken(e, overrides, 'nav.pageUp')) {
+      pageScrollSidebar(-1, state)
+      return
+    }
+    if (matchesSequenceToken(e, overrides, 'nav.pageDown')) {
+      pageScrollSidebar(1, state)
       return
     }
     if (key === 'Enter' || matchesSequenceToken(e, overrides, 'nav.openSideItem') || key === 'ArrowRight') {
@@ -1224,6 +1266,351 @@ export function VimNav(): JSX.Element | null {
       openContextMenuForIndexedElement(items[currentPos])
       return
     }
+  }
+
+  // zM/zR/zk/zj all share "z" as their first token, so (unlike jumpTop's
+  // single "g g" binding) advanceSequence's one-binding-per-call shape
+  // doesn't fit — this fans a single pending "z" out to whichever of the
+  // four completes on the next keystroke.
+  const FOLDER_Z_IDS: KeymapId[] = [
+    'nav.collapseAll',
+    'nav.expandAll',
+    'nav.jumpFolderUp',
+    'nav.jumpFolderDown'
+  ]
+
+  /** Re-locates the sidebar cursor to whatever `resolveTarget()` currently
+   *  returns, retrying across frames until its idx holds steady. Mirrors the
+   *  sidebarRevealRequest effect's step loop (Sidebar.tsx) — same reason:
+   *  `data-sidebar-idx` keeps getting reassigned for a few frames while a
+   *  big collapse/expand settles, and pinning to a value read only once
+   *  strands the cursor on whatever row later inherits that same number (a
+   *  footer button, in practice). Re-invoking `resolveTarget` every frame
+   *  (rather than a fixed selector) also lets a caller pick "whichever of
+   *  these candidates currently sorts last," which depends on the live DOM
+   *  and can't be precomputed once up front. */
+  function reanchorSidebarCursor(
+    resolveTarget: () => HTMLElement | null,
+    state: ReturnType<typeof useStore.getState>
+  ): void {
+    if (collapseAllReanchorRaf.current) cancelAnimationFrame(collapseAllReanchorRaf.current)
+    let waits = 0
+    let frames = 0
+    let stableFrames = 0
+    let lastIdx = -1
+    const step = (): void => {
+      const el = resolveTarget()
+      if (!el) {
+        if (waits++ < 12) collapseAllReanchorRaf.current = requestAnimationFrame(step)
+        return
+      }
+      const idx = Number(el.dataset.sidebarIdx)
+      if (Number.isFinite(idx)) {
+        state.setSidebarCursorIndex(idx)
+        if (idx !== lastIdx) {
+          el.scrollIntoView({ block: 'nearest' })
+          lastIdx = idx
+          stableFrames = 0
+        } else {
+          stableFrames++
+        }
+      }
+      if (stableFrames < 3 && frames++ < 30) collapseAllReanchorRaf.current = requestAnimationFrame(step)
+    }
+    collapseAllReanchorRaf.current = requestAnimationFrame(step)
+  }
+
+  /** A CSS selector for the row the cursor should land on after collapse-all:
+   *  `el` itself if it's already top-level, otherwise its top-level ancestor
+   *  folder. Collapsing reassigns every row's idx (fewer rows get counted
+   *  ahead of anything after a now-collapsed folder), so even an unmoved,
+   *  already-top-level row needs re-locating by identity — its *old* idx
+   *  number generally points at something else once the tree shrinks.
+   *
+   *  For notes, `data-sidebar-path` is `note.path` verbatim, which — unlike
+   *  folder paths — drops the "inbox/" section prefix entirely when the
+   *  vault has notes-at-root enabled (`vaultRelativeFolderPath`'s same
+   *  special case). So the section and subpath must come from the note's
+   *  real metadata (`noteFolderSubpath`), not by splitting the raw path on
+   *  "/" — that misreads the first folder segment as the section name.
+   *  Null only when `el` isn't a note/folder row, or the note can't be
+   *  found (shouldn't happen for a row that's currently rendered). */
+  function collapseAllTargetSelector(
+    el: HTMLElement | undefined,
+    state: ReturnType<typeof useStore.getState>
+  ): string | null {
+    if (!el) return null
+    const type = el.dataset.sidebarType
+    if (type === 'folder') {
+      const folder = el.dataset.sidebarFolder
+      const subpath = el.dataset.sidebarSubpath ?? ''
+      if (!folder) return null
+      const top = subpath ? subpath.split('/')[0] : ''
+      return `[data-sidebar-type="folder"][data-sidebar-folder="${folder}"][data-sidebar-subpath="${escapeForAttr(top)}"]`
+    }
+    if (type === 'note') {
+      const path = el.dataset.sidebarPath
+      if (!path) return null
+      const note = state.notes.find((n) => n.path === path)
+      if (!note) return null
+      const subpath = noteFolderSubpath(note, state.vaultSettings)
+      if (!subpath) {
+        // Already at the section root — notes aren't hidden by
+        // folder-collapse, so target the note's own row.
+        return `[data-sidebar-type="note"][data-sidebar-path="${escapeForAttr(path)}"]`
+      }
+      const top = subpath.split('/')[0]
+      return `[data-sidebar-type="folder"][data-sidebar-folder="${note.folder}"][data-sidebar-subpath="${escapeForAttr(top)}"]`
+    }
+    return null
+  }
+
+  /** Resolves a sidebar row element to its vault-relative identity path
+   *  (a note's `.path`, or a folder's `vaultRelativeFolderPath`), using real
+   *  metadata rather than parsing the DOM path string — see
+   *  collapseAllTargetSelector's note for why that matters under
+   *  notes-at-root. Null for anything that isn't a note/folder row. */
+  function pathOfSidebarEl(el: HTMLElement | undefined, state: ReturnType<typeof useStore.getState>): string | null {
+    if (!el) return null
+    const type = el.dataset.sidebarType
+    if (type === 'note') return el.dataset.sidebarPath ?? null
+    if (type === 'folder') {
+      const folder = el.dataset.sidebarFolder as 'inbox' | 'quick' | 'archive' | 'trash' | undefined
+      const subpath = el.dataset.sidebarSubpath ?? ''
+      if (!folder) return null
+      return vaultRelativeFolderPath(folder, subpath, state.vaultSettings) || folder
+    }
+    return null
+  }
+
+  /** The vault-relative paths of `parentDir`'s direct children — as a plain
+   *  *set*, in no particular order. Deliberately not sorted here: the real
+   *  visual order depends on whatever sort mode is active (manual, name,
+   *  date, or file order), and `manualNoteOrder` only reflects one of those
+   *  (Manual) — using it unconditionally would silently disagree with the
+   *  sidebar whenever a different sort mode is active but the vault still
+   *  has leftover manual-order data from once having used Manual sort.
+   *  Ordering among this set is instead read live off the rendered DOM (see
+   *  lastByDomOrder below), which is always correct for whichever sort mode
+   *  is actually in effect. */
+  function unorderedSiblingPaths(parentDir: string, state: ReturnType<typeof useStore.getState>): string[] {
+    const result: string[] = []
+    for (const n of state.notes) {
+      if (parentDirOf(n.path) === parentDir) result.push(n.path)
+    }
+    for (const f of state.folders) {
+      if (!f.subpath) continue
+      const path = vaultRelativeFolderPath(f.folder, f.subpath, state.vaultSettings)
+      if (path && parentDirOf(path) === parentDir) result.push(path)
+    }
+    return result
+  }
+
+  /** Among `paths` that are currently rendered, whichever is visually last
+   *  under the active sort mode right now. Ordered by actual screen
+   *  position (getIndexedElements' own sort), not by comparing
+   *  `data-sidebar-idx` numbers directly — idx is only a stable per-row
+   *  identifier here, not a reliable ordering key: a folder row gets its
+   *  idx lazily (assigned inside its own SubTree component, when React
+   *  renders it), while a note row's idx is assigned immediately, inline,
+   *  during the *parent's* render pass — so a note can end up with a lower
+   *  idx than folders that visually come before it. j/k's own move-up/down
+   *  already accounts for this the same way (see getIndexedElements' sort
+   *  comparator). Null if none of `paths` are currently visible (e.g. a
+   *  folder whose children haven't rendered yet after an expand). */
+  function lastByDomOrder(paths: string[], state: ReturnType<typeof useStore.getState>): HTMLElement | null {
+    const pathSet = new Set(paths)
+    const allRows = getIndexedElements('[data-sidebar-idx]', 'sidebarIdx')
+    let best: HTMLElement | null = null
+    for (const row of allRows) {
+      const path = pathOfSidebarEl(row, state)
+      if (path && pathSet.has(path)) best = row // last match wins — allRows is in screen-position order
+    }
+    return best
+  }
+
+  /** Shared "next sibling by screen position, else bubble up to the
+   *  parent's position and repeat" used by zj for both an empty folder and
+   *  a last-in-level note: both cases reduce to "this item has nothing
+   *  further at its own level, so treat its enclosing folder as the item
+   *  and try again one level up." All levels involved are already visible
+   *  (we could see `itemPath` itself), so ordering can be read directly off
+   *  the live DOM without needing anything expanded first. Ordered by
+   *  screen position for the same reason as lastByDomOrder above. */
+  function nextSiblingOrBubbleUp(
+    itemPath: string,
+    itemParentDir: string,
+    state: ReturnType<typeof useStore.getState>
+  ): HTMLElement | null {
+    const allRows = getIndexedElements('[data-sidebar-idx]', 'sidebarIdx')
+    const rowPaths = allRows.map((row) => pathOfSidebarEl(row, state))
+    let currentItem = itemPath
+    let currentParent = itemParentDir
+    for (let depth = 0; depth < 64; depth++) {
+      const candidateSet = new Set(unorderedSiblingPaths(currentParent, state))
+      const levelIndices: number[] = []
+      for (let i = 0; i < allRows.length; i++) {
+        const p = rowPaths[i]
+        if (p && candidateSet.has(p)) levelIndices.push(i)
+      }
+      const posInLevel = levelIndices.findIndex((i) => rowPaths[i] === currentItem)
+      if (posInLevel !== -1 && posInLevel < levelIndices.length - 1) {
+        return allRows[levelIndices[posInLevel + 1]]
+      }
+      if (!currentParent) return null // at a section root with nothing after — nowhere further to bubble
+      const grandParent = parentDirOf(currentParent)
+      if (grandParent === currentParent) return null // safety net against a malformed dir string
+      currentItem = currentParent // the enclosing folder becomes the item to place next-of
+      currentParent = grandParent
+    }
+    return null
+  }
+
+  function dispatchFolderZAction(
+    id: KeymapId,
+    state: ReturnType<typeof useStore.getState>,
+    items: HTMLElement[],
+    currentPos: number
+  ): void {
+    if (id === 'nav.collapseAll') {
+      // Collapsing reshuffles idx values throughout the tree — leave the
+      // cursor's stored index untouched and it resolves to some unrelated
+      // row (or the last row) once the tree shrinks. Re-locate it by
+      // identity instead: the collapsed item's top-level ancestor folder, or
+      // itself if it was already top-level.
+      const targetSelector = collapseAllTargetSelector(items[currentPos], state)
+      state.collapseAllFolders()
+      if (targetSelector) {
+        reanchorSidebarCursor(() => document.querySelector<HTMLElement>(targetSelector), state)
+      }
+      return
+    }
+    if (id === 'nav.expandAll') {
+      state.expandAllFolders()
+      return
+    }
+    if (id === 'nav.jumpFolderUp') {
+      for (let i = currentPos - 1; i >= 0; i--) {
+        if (items[i].dataset.sidebarType === 'folder') {
+          scrollToIndexedElement(items[i], 'sidebarIdx', state.setSidebarCursorIndex)
+          return
+        }
+      }
+      return
+    }
+    if (id === 'nav.jumpFolderDown') {
+      const sourceEl = items[currentPos]
+      const sourcePath = pathOfSidebarEl(sourceEl, state)
+      if (!sourcePath) return
+      const sourceKind = sourceEl?.dataset.sidebarType === 'folder' ? 'folder' : 'note'
+
+      if (sourceKind === 'folder') {
+        // "Has children" is a plain existence check (order doesn't matter
+        // here), so it's safe to ask before anything is necessarily
+        // rendered/expanded.
+        const childPaths = unorderedSiblingPaths(sourcePath, state)
+        if (childPaths.length > 0) {
+          // Descending into the source folder's own children — they won't
+          // be rendered yet if it's currently collapsed. Expand, then let
+          // the resolver re-evaluate "whichever child currently sorts last"
+          // each frame until the children have rendered and settled.
+          const collapseKey = sourceEl?.dataset.sidebarKey
+          if (collapseKey && state.collapsedFolders.includes(collapseKey)) {
+            state.toggleCollapseFolder(collapseKey)
+          }
+          reanchorSidebarCursor(() => lastByDomOrder(childPaths, state), state)
+          return
+        }
+        const bubbled = nextSiblingOrBubbleUp(sourcePath, parentDirOf(sourcePath), state)
+        if (bubbled) reanchorSidebarCursor(() => bubbled, state)
+        return
+      }
+
+      // note
+      const parentDir = parentDirOf(sourcePath)
+      const siblingPaths = unorderedSiblingPaths(parentDir, state)
+      const sourceIdx = Number(sourceEl?.dataset.sidebarIdx)
+      const last = lastByDomOrder(siblingPaths, state)
+      if (last && Number.isFinite(sourceIdx) && Number(last.dataset.sidebarIdx) !== sourceIdx) {
+        // Not already the last of its level — jump straight there.
+        reanchorSidebarCursor(() => lastByDomOrder(siblingPaths, state), state)
+        return
+      }
+      const bubbled = nextSiblingOrBubbleUp(sourcePath, parentDir, state)
+      if (bubbled) reanchorSidebarCursor(() => bubbled, state)
+    }
+  }
+
+  /** Returns true if this keystroke was consumed by the z-folder-nav family
+   *  (either starting a pending sequence or completing/abandoning one). */
+  function handleFolderZSequence(
+    e: KeyboardEvent,
+    state: ReturnType<typeof useStore.getState>,
+    items: HTMLElement[],
+    currentPos: number
+  ): boolean {
+    const overrides = state.keymapOverrides
+    const tokensFor = (id: KeymapId): string[] =>
+      getKeymapBinding(overrides, id)
+        .split(/\s+/)
+        .map((t) => t.trim())
+        .filter(Boolean)
+    const token = sequenceTokenFromEvent(e)
+    if (!token) return false
+
+    const reset = (): void => {
+      zFolderNavPending.current = null
+      if (zFolderNavTimer.current) clearTimeout(zFolderNavTimer.current)
+      zFolderNavTimer.current = undefined
+    }
+
+    if (zFolderNavPending.current) {
+      const first = zFolderNavPending.current
+      reset()
+      const matchedId = FOLDER_Z_IDS.find((id) => {
+        const tokens = tokensFor(id)
+        return tokens.length === 2 && tokens[0] === first && tokens[1] === token
+      })
+      if (matchedId) dispatchFolderZAction(matchedId, state, items, currentPos)
+      // Whether matched or abandoned, this keystroke was the second half of
+      // a z-sequence — consume it either way (simpler than replicating vim's
+      // fall-through-to-a-fresh-command semantics for a rare mistyped case).
+      return true
+    }
+
+    const startsSequence = FOLDER_Z_IDS.some((id) => {
+      const tokens = tokensFor(id)
+      return tokens.length === 2 && tokens[0] === token
+    })
+    if (startsSequence) {
+      zFolderNavPending.current = token
+      // Generously long: unlike "gg" (same bare key twice), zM/zR need a
+      // modifier switch (holding Shift) between the two keys, which takes
+      // longer — and there's little cost to waiting, since nothing else
+      // claims a lone "z" in the sidebar.
+      zFolderNavTimer.current = setTimeout(reset, 2000)
+      return true
+    }
+    return false
+  }
+
+  /** Ctrl+j/Ctrl+k: scroll the sidebar by roughly a page, then move the
+   *  cursor to whatever row ends up at the top of the new view. */
+  function pageScrollSidebar(direction: 1 | -1, state: ReturnType<typeof useStore.getState>): void {
+    const container = document.querySelector<HTMLElement>('[data-sidebar-scroll-container]')
+    if (!container) return
+    container.scrollTop += direction * container.clientHeight
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const rows = getIndexedElements('[data-sidebar-idx]', 'sidebarIdx')
+        if (rows.length === 0) return
+        const containerTop = container.getBoundingClientRect().top
+        const topRow =
+          rows.find((row) => row.getBoundingClientRect().top >= containerTop - 1) ??
+          rows[rows.length - 1]
+        scrollToIndexedElement(topRow, 'sidebarIdx', state.setSidebarCursorIndex)
+      })
+    })
   }
 
   function handleNoteListKey(e: KeyboardEvent, state: ReturnType<typeof useStore.getState>): void {

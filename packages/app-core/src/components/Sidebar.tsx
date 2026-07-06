@@ -1126,6 +1126,8 @@ export function Sidebar(): JSX.Element {
   const collapsedList = useStore((s) => s.collapsedFolders);
   const toggleCollapseAction = useStore((s) => s.toggleCollapseFolder);
   const setCollapsedFoldersAction = useStore((s) => s.setCollapsedFolders);
+  const collapseAllFoldersAction = useStore((s) => s.collapseAllFolders);
+  const expandAllFoldersAction = useStore((s) => s.expandAllFolders);
   const collapsed = useMemo(() => new Set(collapsedList), [collapsedList]);
   const toggleCollapse = useCallback(
     (key: string): void => {
@@ -2099,8 +2101,8 @@ export function Sidebar(): JSX.Element {
     return keys;
   }, [trees]);
 
-  const collapseAll = (): void => setCollapsed(new Set(allFolderKeys));
-  const expandAll = (): void => setCollapsed(new Set());
+  const collapseAll = (): void => collapseAllFoldersAction();
+  const expandAll = (): void => expandAllFoldersAction();
 
   /**
    * Auto-reveal: whenever the active note changes, expand every
@@ -4067,6 +4069,10 @@ export function Sidebar(): JSX.Element {
         // Programmatically focusable (not in the Tab order) so `focusSidebar`
         // can pull real DOM focus here, off the terminal/editor.
         tabIndex={-1}
+        // Lets VimNav find this scrollable element directly (Ctrl+j/Ctrl+k
+        // page scroll) without needing a prop/ref threaded across components —
+        // same cross-component convention as the other data-sidebar-* attrs.
+        data-sidebar-scroll-container="true"
         className="mt-3 min-h-0 flex-1 overflow-y-auto px-3 outline-none"
         onDragOver={handleTreeDragOver}
         onDrop={handleTreeDrop}

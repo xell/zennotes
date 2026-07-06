@@ -545,6 +545,43 @@ describe('getOrderedSiblingPaths', () => {
   })
 })
 
+// collapseAllFolders/expandAllFolders back the sidebar's "Collapse all"
+// button and VimNav's zM/zR — both call the same store action, so this is
+// the one place their shared scope (Notes/inbox only) needs pinning down.
+describe('collapseAllFolders / expandAllFolders', () => {
+  it('collapses every inbox folder (and the inbox root), leaving quick/archive folders alone', async () => {
+    installZen()
+    const { useStore } = await loadStore()
+    useStore.setState({
+      folders: [
+        { folder: 'inbox', subpath: 'Projects', siblingOrder: 0 },
+        { folder: 'inbox', subpath: 'Projects/Nested', siblingOrder: 0 },
+        { folder: 'quick', subpath: 'Ideas', siblingOrder: 0 },
+        { folder: 'archive', subpath: 'Old', siblingOrder: 0 }
+      ],
+      collapsedFolders: []
+    })
+
+    useStore.getState().collapseAllFolders()
+
+    expect(new Set(useStore.getState().collapsedFolders)).toEqual(
+      new Set(['inbox:', 'inbox:Projects', 'inbox:Projects/Nested'])
+    )
+  })
+
+  it('expands everything back out', async () => {
+    installZen()
+    const { useStore } = await loadStore()
+    useStore.setState({
+      collapsedFolders: ['inbox:', 'inbox:Projects']
+    })
+
+    useStore.getState().expandAllFolders()
+
+    expect(useStore.getState().collapsedFolders).toEqual([])
+  })
+})
+
 describe('local vault shortcuts', () => {
   it('stores known local vaults for the sidebar switcher', async () => {
     const localVaults = [
