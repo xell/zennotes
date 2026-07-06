@@ -2655,6 +2655,11 @@ interface Store {
   setSidebarWidth: (px: number) => void
   setNoteListWidth: (px: number) => void
   setNoteSortOrder: (order: NoteSortOrder) => void
+  /** The direct children (notes + folders) of `parentDir`, in current Manual
+   *  sort order. Read-only derivation from `notes`/`folders`/`manualNoteOrder`;
+   *  used by `placeItemManually` and by anything else that needs to know a
+   *  sibling's position (e.g. "is this the last item", "what comes after it"). */
+  getOrderedSiblingPaths: (parentDir: string) => string[]
   /** Place an item at a position in `parentDir`'s manual order: before
    *  `beforePath`, or appended when it's null. `draggedPath` must already live in
    *  `parentDir` (callers that move across folders run the filesystem move
@@ -5870,11 +5875,7 @@ export const useStore = create<Store>((set, get) => {
     savePrefs(collectPrefs(get()))
     persistVaultViewOverride({ noteSortOrder: order })
   },
-  placeItemManually: (draggedPath, parentDir, beforePath) => {
-    if (parentDirOf(draggedPath) !== parentDir) return
-    // Dropping an item just before itself is a no-op; without this it would be
-    // filtered out and then re-appended to the end of the folder.
-    if (beforePath === draggedPath) return
+  getOrderedSiblingPaths: (parentDir) => {
     const s = get()
     const existing = s.manualNoteOrder[parentDir]
     const siblings: ManualOrderItem[] = []
@@ -5895,9 +5896,17 @@ export const useStore = create<Store>((set, get) => {
         })
       }
     }
-    const ordered = siblings
+    return siblings
       .sort((a, b) => manualItemCompare(existing, a, b))
       .map((item) => item.path)
+  },
+  placeItemManually: (draggedPath, parentDir, beforePath) => {
+    if (parentDirOf(draggedPath) !== parentDir) return
+    // Dropping an item just before itself is a no-op; without this it would be
+    // filtered out and then re-appended to the end of the folder.
+    if (beforePath === draggedPath) return
+    const s = get()
+    const ordered = s.getOrderedSiblingPaths(parentDir)
     const next = applyManualPlace(ordered, draggedPath, beforePath)
     const nextMap = { ...s.manualNoteOrder, [parentDir]: next }
     set({ manualNoteOrder: nextMap })

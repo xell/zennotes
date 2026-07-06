@@ -476,6 +476,75 @@ describe('favorites reorder', () => {
   })
 })
 
+// getOrderedSiblingPaths is the read-only sibling list placeItemManually was
+// already building inline; extracted so the keyboard reorder commands (a
+// supplement to drag-to-reorder) can reuse the exact same ordering instead of
+// re-deriving it. These tests pin down the extraction didn't change behavior.
+describe('getOrderedSiblingPaths', () => {
+  function orderTestSettings() {
+    return {
+      primaryNotesLocation: 'inbox' as const,
+      dailyNotes: { enabled: true, directory: 'Daily Notes', titlePattern: 'yyyy-MM-dd', locale: 'en-US' },
+      weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+      folderIcons: {},
+      folderColors: {},
+      favorites: [] as string[]
+    }
+  }
+
+  it('sorts unlisted notes and folders with folders first, then applies a manual override on top', async () => {
+    installZen()
+    const { useStore } = await loadStore()
+    useStore.setState({
+      vaultSettings: orderTestSettings(),
+      notes: [
+        { ...makeNote('a'), path: 'inbox/A.md', siblingOrder: 1 },
+        { ...makeNote('b'), path: 'inbox/B.md', siblingOrder: 0 }
+      ],
+      folders: [{ folder: 'inbox', subpath: 'Projects', siblingOrder: 0 }],
+      manualNoteOrder: {}
+    })
+
+    // Nothing manually ordered yet: folders sort before notes, notes by
+    // siblingOrder (file order) — same default `manualItemCompare` fallback.
+    expect(useStore.getState().getOrderedSiblingPaths('inbox')).toEqual([
+      'inbox/Projects',
+      'inbox/B.md',
+      'inbox/A.md'
+    ])
+
+    useStore.setState({
+      manualNoteOrder: { inbox: ['inbox/A.md', 'inbox/Projects', 'inbox/B.md'] }
+    })
+    expect(useStore.getState().getOrderedSiblingPaths('inbox')).toEqual([
+      'inbox/A.md',
+      'inbox/Projects',
+      'inbox/B.md'
+    ])
+  })
+
+  it('placeItemManually still reorders correctly through the extracted helper', async () => {
+    const setVaultSettings = vi.fn()
+    installZen({ setVaultSettings })
+    const { useStore } = await loadStore()
+    useStore.setState({
+      vaultSettings: orderTestSettings(),
+      notes: [
+        { ...makeNote('a'), path: 'inbox/A.md', siblingOrder: 0 },
+        { ...makeNote('b'), path: 'inbox/B.md', siblingOrder: 1 }
+      ],
+      folders: [],
+      manualNoteOrder: {}
+    })
+
+    useStore.getState().placeItemManually('inbox/B.md', 'inbox', 'inbox/A.md')
+
+    expect(useStore.getState().manualNoteOrder).toEqual({
+      inbox: ['inbox/B.md', 'inbox/A.md']
+    })
+  })
+})
+
 describe('local vault shortcuts', () => {
   it('stores known local vaults for the sidebar switcher', async () => {
     const localVaults = [

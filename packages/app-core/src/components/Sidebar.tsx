@@ -982,6 +982,15 @@ export function Sidebar(): JSX.Element {
     y: number;
     path: string;
   } | null>(null);
+  // Keyboard-driven reorder mode (a supplement to drag-to-reorder): "Reorder…"
+  // on a note/folder stashes it here, then the conditional "Reorder Above" /
+  // "Below" / "Inside" / "Out of Folder" commands on some other item's context
+  // menu (opened via mouse or the `m` vim binding — both funnel through the
+  // same menu builders) carry it to a position. Deliberately not persisted;
+  // it's fine to start this and never finish it.
+  const [reorderSource, setReorderSource] = useState<
+    Extract<DragPayload, { kind: "note" } | { kind: "folder" }> | null
+  >(null);
   // Icon/color customization targets — keyed by an arbitrary string so it works
   // for folders (`folder:subpath`), notes/databases (vault-relative path), and
   // anything else. Folder keys contain ':'; note paths never do, so they coexist
@@ -2486,9 +2495,130 @@ export function Sidebar(): JSX.Element {
     vaultSettings,
   ]);
 
+  // Where a keyboard "Reorder …" command would land the pending item, from the
+  // perspective of one candidate target row. `isTop` folders (a section's own
+  // root, e.g. inbox itself) can only be an "Inside" target — sections aren't
+  // siblings of anything, so above/below/out-of-folder make no sense on them.
+  type ReorderTarget =
+    | { kind: "note"; path: string; parentDir: string; section: NoteFolder }
+    | {
+        kind: "folder";
+        path: string;
+        parentDir: string;
+        section: NoteFolder;
+        isTop: boolean;
+      };
+
+  // Builds the conditional "Reorder Above/Below/Inside/Out of Folder" items
+  // for `target`, or [] when reorder mode is off or `target` isn't a valid
+  // destination for the pending item. Guards mirror the mouse drag resolver:
+  // same section only (`lib/sidebar-drop-resolver.ts` filters candidate rows
+  // to the hovered row's section), and a folder can never land inside its own
+  // subtree.
+  const buildReorderCommands = useCallback(
+    (target: ReorderTarget): ContextMenuItem[] => {
+      if (noteSortOrder !== "manual" || !reorderSource) return [];
+      const sourcePath =
+        reorderSource.kind === "note"
+          ? reorderSource.path
+          : vaultRelativeFolderPath(
+              reorderSource.folder,
+              reorderSource.subpath,
+              vaultSettings,
+            );
+      const sourceSection =
+        reorderSource.kind === "note"
+          ? (notes.find((n) => n.path === reorderSource.path)?.folder ??
+            "inbox")
+          : reorderSource.folder;
+      if (target.section !== sourceSection) return [];
+      if (target.path === sourcePath) return [];
+      if (
+        reorderSource.kind === "folder" &&
+        target.path.startsWith(`${sourcePath}/`)
+      )
+        return [];
+
+      const run = (resolution: DropResolution) => {
+        void performDrop(resolution, reorderSource);
+        setReorderSource(null);
+      };
+      const isTopFolderTarget = target.kind === "folder" && target.isTop;
+      const items: ContextMenuItem[] = [];
+
+      if (!isTopFolderTarget) {
+        items.push({
+          label: "Reorder Above",
+          onSelect: () =>
+            run({
+              parentDir: target.parentDir,
+              beforePath: target.path,
+              depth: 0,
+              valid: true,
+            }),
+        });
+        items.push({
+          label: "Reorder Below",
+          onSelect: () => {
+            const siblings = useStore
+              .getState()
+              .getOrderedSiblingPaths(target.parentDir);
+            const idx = siblings.indexOf(target.path);
+            run({
+              parentDir: target.parentDir,
+              beforePath: idx >= 0 ? (siblings[idx + 1] ?? null) : null,
+              depth: 0,
+              valid: true,
+            });
+          },
+        });
+      }
+      if (target.kind === "folder") {
+        items.push({
+          label: "Reorder Inside",
+          onSelect: () => {
+            const siblings = useStore
+              .getState()
+              .getOrderedSiblingPaths(target.path);
+            run({
+              parentDir: target.path,
+              beforePath: siblings[0] ?? null,
+              depth: 0,
+              valid: true,
+            });
+          },
+        });
+      }
+      if (!isTopFolderTarget) {
+        const sectionRoot = vaultRelativeFolderPath(target.section, "", vaultSettings);
+        if (target.parentDir !== sectionRoot) {
+          items.push({
+            label: "Reorder Out of Folder",
+            onSelect: () => {
+              const grandParentDir = parentDirOf(target.parentDir);
+              const siblings = useStore
+                .getState()
+                .getOrderedSiblingPaths(grandParentDir);
+              const idx = siblings.indexOf(target.parentDir);
+              run({
+                parentDir: grandParentDir,
+                beforePath: idx >= 0 ? (siblings[idx + 1] ?? null) : null,
+                depth: 0,
+                valid: true,
+              });
+            },
+          });
+        }
+      }
+      return items.length > 0 ? [{ kind: "separator" }, ...items] : [];
+    },
+    [noteSortOrder, reorderSource, notes, vaultSettings, performDrop],
+  );
+
   const folderMenuItems = useMemo<ContextMenuItem[]>(() => {
     if (!folderMenu) return [];
     const { folder, subpath } = folderMenu;
+    const targetFolderPath = vaultRelativeFolderPath(folder, subpath, vaultSettings) || folder;
     if (
       bulkSelectionMenuItems &&
       selectedSidebarKeys.has(folderSelectionKey(folder, subpath))
@@ -2644,6 +2774,18 @@ export function Sidebar(): JSX.Element {
           }
         },
       });
+      if (folder !== "trash" && noteSortOrder === "manual") {
+        const isThisSource =
+          reorderSource?.kind === "folder" &&
+          reorderSource.folder === folder &&
+          reorderSource.subpath === subpath;
+        items.push({
+          label: isThisSource ? "Cancel Reorder" : "Reorder…",
+          onSelect: () => {
+            setReorderSource(isThisSource ? null : { kind: "folder", folder, subpath });
+          },
+        });
+      }
       if (primaryNotesAtRoot && folder === "inbox" && subpath.includes("/")) {
         items.push({
           label: "Move to vault root",
@@ -2763,9 +2905,20 @@ export function Sidebar(): JSX.Element {
       });
     }
 
+    items.push(
+      ...buildReorderCommands({
+        kind: "folder",
+        path: targetFolderPath,
+        parentDir: parentDirOf(targetFolderPath),
+        section: folder,
+        isTop,
+      }),
+    );
+
     return items;
   }, [
     folderMenu,
+    buildReorderCommands,
     notes,
     allFolders,
     vault,
@@ -2795,6 +2948,8 @@ export function Sidebar(): JSX.Element {
     selectedSidebarKeys,
     isolatedRoot,
     enterIsolation,
+    noteSortOrder,
+    reorderSource,
   ]);
 
   // Items for the empty-area (vault root) context menu.
@@ -2913,6 +3068,16 @@ export function Sidebar(): JSX.Element {
           await selectNote(meta.path);
         },
       });
+      if (noteSortOrder === "manual") {
+        const isThisSource =
+          reorderSource?.kind === "note" && reorderSource.path === n.path;
+        items.push({
+          label: isThisSource ? "Cancel Reorder" : "Reorder…",
+          onSelect: () => {
+            setReorderSource(isThisSource ? null : { kind: "note", path: n.path });
+          },
+        });
+      }
       items.push({ kind: "separator" });
       items.push({
         label: "Change icon…",
@@ -3045,6 +3210,14 @@ export function Sidebar(): JSX.Element {
         },
       });
     }
+    items.push(
+      ...buildReorderCommands({
+        kind: "note",
+        path: n.path,
+        parentDir: parentDirOf(n.path),
+        section: n.folder,
+      }),
+    );
     return items;
   }, [
     noteMenu,
@@ -3066,6 +3239,9 @@ export function Sidebar(): JSX.Element {
     vaultSettings.favorites,
     bulkSelectionMenuItems,
     selectedSidebarKeys,
+    noteSortOrder,
+    reorderSource,
+    buildReorderCommands,
     folderLabels.archive,
     folderLabels.inbox,
     folderLabels.trash,
