@@ -2113,8 +2113,16 @@ export function Sidebar(): JSX.Element {
    */
   const activePath =
     selectedPath && !selectedPath.startsWith("zen://") ? selectedPath : null;
+  // Tracks the last path this effect actually revealed, so a selectedPath
+  // that merely bounces null-then-back-to-the-same-note (e.g. setView()
+  // nulling it while browsing a folder, then something restoring it because
+  // selectedPath also mirrors the still-open editor tab) doesn't re-trigger
+  // the expand+scroll — only a genuine change to a *different* note does.
+  const lastRevealedPathRef = useRef<string | null>(null);
   useEffect(() => {
     if (!autoReveal || !activePath) return;
+    if (activePath === lastRevealedPathRef.current) return;
+    lastRevealedPathRef.current = activePath;
     const startedAt = performance.now();
     const parts = activePath.split("/");
     const folder = parts[0] as NoteFolder;
@@ -3664,6 +3672,27 @@ export function Sidebar(): JSX.Element {
     // folder row in non-unified mode). The cursor stays user-driven; VimNav
     // handles scrolling the cursor row into view.
     if (quicklookActive) return;
+
+    // The cursor may already be exactly right for the current folder view —
+    // e.g. right after keyboard `l`/Enter expands a folder, which calls
+    // setView() and (as a side effect) nulls selectedPath. selectedPath still
+    // mirrors the active pane's real open tab (see activeFieldsFrom) though,
+    // so something unrelated can restore it moments later even though no note
+    // was actually (re)selected. Without this check, the branches below would
+    // then "helpfully" relocate the cursor to that unrelated open note's row,
+    // hijacking a keyboard action that never touched note selection at all.
+    if (view.kind === "folder") {
+      const currentEl = document.querySelector<HTMLElement>(
+        `[data-sidebar-idx="${sidebarCursorIndex}"]`,
+      );
+      if (
+        currentEl?.dataset.sidebarType === "folder" &&
+        currentEl.dataset.sidebarFolder === view.folder &&
+        currentEl.dataset.sidebarSubpath === view.subpath
+      ) {
+        return;
+      }
+    }
 
     const findTarget = (): HTMLElement | null => {
       if (
