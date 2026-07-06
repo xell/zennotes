@@ -3838,17 +3838,27 @@ export function Sidebar(): JSX.Element {
                   const idx = idxCounter.current.value++;
                   const vimHighlight = vimCursor === idx;
                   if (item.kind === "note") {
+                    // Custom icon / color set via the note's right-click menu
+                    // (keyed by path) — same source NoteLeaf reads, so a
+                    // favorited note matches its Notes-tree appearance
+                    // instead of always showing the plain document icon.
+                    const customIconId = vaultSettings.folderIcons[item.path];
+                    const customColorId = vaultSettings.folderColors[item.path];
+                    const colorClass = colorGlyphClassById(customColorId);
                     return (
                       <FavoriteRow
                         key={item.key}
                         label={item.title || "Untitled"}
                         icon={
-                          item.isDrawing ? (
+                          customIconId ? (
+                            iconOptionById(customIconId).icon
+                          ) : item.isDrawing ? (
                             <ExcalidrawIcon width={13} height={13} />
                           ) : (
                             <DocumentIcon width={13} height={13} />
                           )
                         }
+                        colorClass={colorClass ?? undefined}
                         active={selectedPath === item.path}
                         onClick={() => {
                           setFocusedPanel("editor");
@@ -6560,6 +6570,7 @@ function TaskSidebarRow({
 function FavoriteRow({
   label,
   icon,
+  colorClass,
   active,
   onClick,
   onContextMenu,
@@ -6570,6 +6581,8 @@ function FavoriteRow({
 }: {
   label: string;
   icon: JSX.Element;
+  /** Custom note color (from "Change Color…"), if any — see NoteLeaf. */
+  colorClass?: string;
   active: boolean;
   onClick: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
@@ -6594,11 +6607,13 @@ function FavoriteRow({
       className={[
         "group select-none flex h-[var(--z-sidebar-row-h)] items-center gap-1.5 rounded-lg px-1 text-left text-sm outline-none transition-colors focus:outline-none",
         active
-          ? vimHighlight
-            ? "vim-cursor-on-active bg-paper-300/70 text-ink-900 font-medium"
-            : sidebarFocused
-              ? "text-accent"
-              : "bg-paper-300/70 text-ink-900 font-medium"
+          ? colorClass
+            ? `bg-accent/20 ring-1 ring-inset ring-accent/60${vimHighlight ? " vim-cursor-on-active" : ""}`
+            : vimHighlight
+              ? "vim-cursor-on-active bg-paper-300/70 text-ink-900 font-medium"
+              : sidebarFocused
+                ? "text-accent"
+                : "bg-paper-300/70 text-ink-900 font-medium"
           : vimHighlight
             ? "vim-cursor"
             : "text-ink-800 hover:bg-paper-200/70",
@@ -6607,7 +6622,7 @@ function FavoriteRow({
       {...(sidebarIdx != null ? { "data-sidebar-idx": sidebarIdx } : {})}
       {...dataAttrs}
     >
-      <SidebarGlyph active={strongActive} rowActive={active}>
+      <SidebarGlyph active={strongActive} rowActive={active} colorClass={colorClass}>
         {icon}
       </SidebarGlyph>
       <span className="flex-1 truncate">{label}</span>
