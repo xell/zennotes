@@ -108,4 +108,30 @@ describe('note search', () => {
       }).map((n) => n.title)
     ).toEqual(['Old quick', 'Archive', 'New inbox'])
   })
+
+  it('uses plain recency (MRU) ordering for the Search Notes empty-query state', () => {
+    const entries = buildNoteSearchIndex([
+      note('inbox/mid.md', 'Middle', { updatedAt: 20 }),
+      note('quick/oldest.md', 'Oldest quick', { folder: 'quick', updatedAt: 1 }),
+      note('archive/newest.md', 'Newest', { folder: 'archive', updatedAt: 30 })
+    ])
+
+    // No quick-folder pinning here, unlike quick-first-recent — purely by
+    // modification time, newest first.
+    expect(
+      searchNoteIndex(entries, '', { limit: 10, defaultOrder: 'recent' }).map((n) => n.title)
+    ).toEqual(['Newest', 'Middle', 'Oldest quick'])
+  })
+
+  it('caps the empty-query recency list at the given limit', () => {
+    const entries = buildNoteSearchIndex([
+      note('inbox/a.md', 'A', { updatedAt: 3 }),
+      note('inbox/b.md', 'B', { updatedAt: 2 }),
+      note('inbox/c.md', 'C', { updatedAt: 1 })
+    ])
+
+    expect(
+      searchNoteIndex(entries, '', { limit: 2, defaultOrder: 'recent' }).map((n) => n.title)
+    ).toEqual(['A', 'B'])
+  })
 })

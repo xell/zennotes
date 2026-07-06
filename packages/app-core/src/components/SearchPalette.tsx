@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import type { NoteMeta } from '@shared/ipc'
-import { isPaletteNextKey, isPalettePreviousKey } from '../lib/palette-nav'
+import { isPaletteNextKey, isPalettePreviousKey, paletteJumpIndexFromEvent } from '../lib/palette-nav'
 import { isImeComposing } from '../lib/ime'
+import { isMacPlatform } from '../lib/keymaps'
 import {
   buildNoteSearchIndex,
   parseNoteSearchQuery,
@@ -29,6 +30,11 @@ export function SearchPalette(): JSX.Element {
   const { tagTokens } = useMemo(() => parseNoteSearchQuery(query), [query])
 
   const results = useMemo(() => {
+    // Palette just opened, nothing typed yet: show a most-recently-modified
+    // list instead of the backend's arbitrary listing order.
+    if (query.trim() === '') {
+      return searchNoteIndex(searchIndex, query, { limit: 10, defaultOrder: 'recent' })
+    }
     return searchNoteIndex(searchIndex, query, { limit: 20 })
   }, [query, searchIndex])
 
@@ -65,6 +71,19 @@ export function SearchPalette(): JSX.Element {
             onKeyDown={(e) => {
               // While composing (IME), let the input own Enter/Arrows. (#183)
               if (isImeComposing(e)) return
+              const jumpIndex = paletteJumpIndexFromEvent(e)
+              if (jumpIndex != null) {
+                // Stopping propagation here (React attaches listeners on the
+                // real DOM tree, so this halts the native event too) keeps
+                // Cmd+1..9 scoped to this palette — otherwise it bubbles to
+                // App.tsx's global handler and fires the main window's
+                // sidebar/pane-mode shortcuts underneath the modal.
+                e.preventDefault()
+                e.stopPropagation()
+                const note = results[jumpIndex]
+                if (note) open(note)
+                return
+              }
               if (isPaletteNextKey(e)) {
                 e.preventDefault()
                 e.stopPropagation()
@@ -116,6 +135,9 @@ export function SearchPalette(): JSX.Element {
                   i === active ? 'bg-paper-200' : 'hover:bg-paper-200/70'
                 ].join(' ')}
               >
+                <span className="w-3 shrink-0 text-right text-xs tabular-nums text-ink-400/70">
+                  {i < 9 ? i + 1 : ''}
+                </span>
                 <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink-900">
                   {n.title}
                 </span>
@@ -131,6 +153,12 @@ export function SearchPalette(): JSX.Element {
             <kbd className="rounded bg-paper-200 px-1">↑↓</kbd>{' '}
             <kbd className="rounded bg-paper-200 px-1">Ctrl+N/P</kbd>{' '}
             <kbd className="rounded bg-paper-200 px-1">Ctrl+J/K</kbd> move
+          </span>
+          <span>
+            <kbd className="rounded bg-paper-200 px-1">
+              {isMacPlatform() ? '⌘1-9' : 'Ctrl+1-9'}
+            </kbd>{' '}
+            jump
           </span>
           <span>
             <kbd className="rounded bg-paper-200 px-1">↵</kbd> open

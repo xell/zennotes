@@ -17,7 +17,7 @@ export interface ParsedNoteSearchQuery {
   tagTokens: string[]
 }
 
-export type NoteSearchDefaultOrder = 'current' | 'quick-first-recent'
+export type NoteSearchDefaultOrder = 'current' | 'quick-first-recent' | 'recent'
 
 const LONG_QUERY_EXACT_FIRST_CHARS = 16
 
@@ -59,6 +59,7 @@ function defaultSort(
   order: NoteSearchDefaultOrder
 ): NoteSearchEntry[] {
   if (order === 'current') return entries
+  if (order === 'recent') return [...entries].sort((a, b) => b.note.updatedAt - a.note.updatedAt)
   return [...entries].sort((a, b) => {
     if (a.note.folder === 'quick' && b.note.folder !== 'quick') return -1
     if (b.note.folder === 'quick' && a.note.folder !== 'quick') return 1
