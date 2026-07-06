@@ -3643,6 +3643,43 @@ function TextAssetView({ assetUrl }: { assetUrl: string }): JSX.Element {
   )
 }
 
+/**
+ * Centered "not supported" message for any asset kind with no real viewer —
+ * classifyLocalAssetHref's generic 'file' bucket, everything past
+ * image/pdf/audio/video/html/text. This used to fall through to a bare,
+ * unsandboxed `<iframe src={assetUrl}>`: mimeTypeForPath only hands out a
+ * browser-renderable Content-Type to the kinds that already have their own
+ * branch above, so almost anything landing here (.docx, .zip, an unknown
+ * binary, …) got `application/octet-stream` and Chromium just downloaded it
+ * — an intrusive surprise for what looked like a normal "open" click (see
+ * data/non-note-files.md). No iframe, no fetch attempt; just say so, the
+ * same way a folder's Quicklook overlay states plainly what it's showing
+ * instead of trying to render folder contents as a document.
+ */
+function UnsupportedAssetView({ assetPath }: { assetPath: string }): JSX.Element {
+  const dot = assetPath.lastIndexOf('.')
+  const ext = dot > assetPath.lastIndexOf('/') + 1 ? assetPath.slice(dot) : null
+  return (
+    // pb pushes the visual center of mass up from true-center — dead center
+    // of the whole pane reads as a bit low for a short, three-line message.
+    <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center px-6 pb-16">
+      <div className="flex max-w-sm flex-col items-center gap-3 text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-paper-300/70 bg-paper-100/80 text-ink-500">
+          <DocumentIcon width={20} height={20} />
+        </div>
+        <div>
+          <p className="text-sm font-medium text-ink-900">This file type isn't supported</p>
+          <p className="mt-1 text-sm text-ink-500">
+            {ext
+              ? `ZenNotes doesn't have a viewer for ${ext} files.`
+              : "ZenNotes doesn't have a viewer for this file."}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function AssetTabView({
   tabPath,
   vaultRoot
@@ -3683,6 +3720,17 @@ function AssetTabView({
         <audio src={assetUrl} controls className="w-full" />
       </div>
     </div>
+  ) : assetKind === 'pdf' ? (
+    // No dedicated PDF UI needed — mimeTypeForPath serves a real
+    // application/pdf Content-Type, which Chromium's built-in PDF viewer
+    // renders natively inline for a plain iframe (unlike the true
+    // UnsupportedAssetView fallback below, which exists for kinds that have
+    // no such native inline renderer and would otherwise just download).
+    <iframe
+      src={assetUrl}
+      title={title}
+      className="min-h-0 min-w-0 flex-1 border-0 bg-paper-50"
+    />
   ) : assetKind === 'html' ? (
     // HTML is the one executable asset kind, so it renders inside a
     // sandbox — allow-scripts/allow-forms only, deliberately WITHOUT
@@ -3700,11 +3748,7 @@ function AssetTabView({
   ) : assetKind === 'text' ? (
     <TextAssetView assetUrl={assetUrl} />
   ) : (
-    <iframe
-      src={assetUrl}
-      title={title}
-      className="min-h-0 min-w-0 flex-1 border-0 bg-paper-50"
-    />
+    <UnsupportedAssetView assetPath={assetPath} />
   )
 
   return (
