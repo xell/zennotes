@@ -2390,6 +2390,9 @@ interface Store {
    *  persisted). Kept in the store — not Sidebar-local — so the keyboard nav in
    *  VimNav can expand/collapse date groups like real folders. (#301) */
   dateNavExpanded: string[]
+  /** Whether the sidebar's Favorites section is collapsed (ephemeral UI, not
+   *  persisted — same choice as dateNavExpanded above). */
+  favoritesCollapsed: boolean
   noteListCursorIndex: number
   connectionsCursorIndex: number
   connectionPreview: ConnectionPreviewState | null
@@ -2677,6 +2680,7 @@ interface Store {
   expandDateNav: (key: string) => void
   collapseDateNav: (key: string) => void
   toggleDateNav: (key: string) => void
+  toggleFavoritesCollapsed: () => void
 
   /* Pinned reference pane */
   pinReference: (path: string) => Promise<void>
@@ -3883,6 +3887,7 @@ export const useStore = create<Store>((set, get) => {
   quicklookActive: false,
   quicklookInfo: null,
   dateNavExpanded: [],
+  favoritesCollapsed: false,
   noteListCursorIndex: 0,
   connectionsCursorIndex: 0,
   connectionPreview: null,
@@ -6648,6 +6653,7 @@ export const useStore = create<Store>((set, get) => {
         ? { dateNavExpanded: s.dateNavExpanded.filter((k) => k !== key) }
         : { dateNavExpanded: [...s.dateNavExpanded, key] }
     ),
+  toggleFavoritesCollapsed: () => set((s) => ({ favoritesCollapsed: !s.favoritesCollapsed })),
   setNoteListCursorIndex: (idx) => set({ noteListCursorIndex: idx }),
   setConnectionsCursorIndex: (idx) => set({ connectionsCursorIndex: idx }),
   setConnectionPreview: (preview) => set({ connectionPreview: preview }),

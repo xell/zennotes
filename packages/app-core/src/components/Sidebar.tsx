@@ -222,16 +222,59 @@ function SidebarGlyph({
 function SidebarSectionHeading({
   label,
   onDropPayload,
+  collapsed,
+  onToggleCollapse,
+  sidebarIdx,
+  vimHighlight,
 }: {
   label: string;
   onDropPayload?: (payload: DragPayload) => void | Promise<void>;
+  /** When provided (with onToggleCollapse), the heading becomes clickable,
+   *  vim-navigable (j/k lands on it, h/l collapse/expand it like a folder —
+   *  see VimNav's data-sidebar-favorites-heading handling), and shows a
+   *  rotating angle indicator on the right. Favorites is the only caller
+   *  that opts in today. */
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
+  sidebarIdx?: number;
+  vimHighlight?: boolean;
 }): JSX.Element {
   const [dragHover, setDragHover] = useState(false);
   const droppable = !!onDropPayload;
+  const foldable = !!onToggleCollapse;
 
   return (
     <div
-      className="px-2 pb-2 pt-4 text-xs font-medium uppercase tracking-wide text-accent"
+      role={foldable ? "button" : undefined}
+      tabIndex={foldable ? 0 : undefined}
+      onClick={foldable ? onToggleCollapse : undefined}
+      onKeyDown={
+        foldable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onToggleCollapse();
+              }
+            }
+          : undefined
+      }
+      {...(foldable && sidebarIdx != null
+        ? {
+            "data-sidebar-idx": sidebarIdx,
+            "data-sidebar-favorites-heading": "true",
+          }
+        : {})}
+      className={[
+        "flex items-center justify-between px-2 text-xs font-medium uppercase tracking-wide text-accent",
+        // Non-foldable headings keep their original asymmetric spacing
+        // (extra breathing room above, before the list starts) — it was never
+        // meant to be a visible box. The foldable (Favorites) heading can get
+        // a vim-cursor background, so it needs symmetric padding and rounded
+        // corners like every other selectable row, or the highlight looks
+        // bottom-heavy and square next to them.
+        foldable ? "rounded-lg py-3 cursor-pointer select-none" : "pb-2 pt-4",
+        vimHighlight ? "vim-cursor" : "",
+      ].join(" ")}
       onDragOver={
         droppable
           ? (e) => {
@@ -269,6 +312,21 @@ function SidebarSectionHeading({
       >
         {label}
       </span>
+      {foldable && (
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`shrink-0 transition-transform ${collapsed ? "" : "rotate-90"}`}
+        >
+          <path d="m9 6 6 6-6 6" />
+        </svg>
+      )}
     </div>
   );
 }
@@ -421,6 +479,8 @@ export function Sidebar(): JSX.Element {
   const activeNote = useStore((s) => s.activeNote);
   const activeDirty = useStore((s) => s.activeDirty);
   const vaultSettings = useStore((s) => s.vaultSettings);
+  const favoritesCollapsed = useStore((s) => s.favoritesCollapsed);
+  const toggleFavoritesCollapsed = useStore((s) => s.toggleFavoritesCollapsed);
   const rootContentHiddenByInboxMode = useStore((s) => s.rootContentHiddenByInboxMode);
   const rootContentBannerDismissed = useStore((s) => s.rootContentBannerDismissed);
   const dismissRootContentBanner = useStore((s) => s.dismissRootContentBanner);
@@ -3833,8 +3893,14 @@ export function Sidebar(): JSX.Element {
         >
           {!filtering && favoriteItems.length > 0 && (
             <>
-              <SidebarSectionHeading label="Favorites" />
-              {favoriteItems.map((item) => {
+              <SidebarSectionHeading
+                label="Favorites"
+                collapsed={favoritesCollapsed}
+                onToggleCollapse={toggleFavoritesCollapsed}
+                sidebarIdx={idxCounter.current.value++}
+                vimHighlight={vimCursor === idxCounter.current.value - 1}
+              />
+              {!favoritesCollapsed && favoriteItems.map((item) => {
                   const idx = idxCounter.current.value++;
                   const vimHighlight = vimCursor === idx;
                   if (item.kind === "note") {

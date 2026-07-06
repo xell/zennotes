@@ -1948,6 +1948,13 @@ export function VimNav(): JSX.Element | null {
       state.expandDateNav(dateNavKey)
       return
     }
+    // The Favorites heading acts like a folder for vim purposes but isn't
+    // one — `l`/Enter/Right only ever expands (mirrors the real-folder
+    // branch below, which also only toggles when currently collapsed).
+    if (el.dataset.sidebarFavoritesHeading === 'true') {
+      if (state.favoritesCollapsed) state.toggleFavoritesCollapsed()
+      return
+    }
     const itemType = el.dataset.sidebarType
     if (itemType === 'folder') {
       const folder = el.dataset.sidebarFolder as 'inbox' | 'quick' | 'archive' | 'trash'
@@ -2055,6 +2062,13 @@ export function VimNav(): JSX.Element | null {
       state.collapseDateNav(dateNavKey)
       return
     }
+    // The Favorites heading acts like a folder for vim purposes but isn't
+    // one — `h`/Left only ever collapses (no parent to fall back to, so
+    // it's a no-op rather than moving focus when already collapsed).
+    if (el.dataset.sidebarFavoritesHeading === 'true') {
+      if (!state.favoritesCollapsed) state.toggleFavoritesCollapsed()
+      return
+    }
 
     const collapseFolder = (folderEl: HTMLElement | null): void => {
       if (!folderEl) return
@@ -2104,6 +2118,10 @@ export function VimNav(): JSX.Element | null {
     const dateNavKey = el.dataset.sidebarDatenavKey
     if (dateNavKey) {
       state.toggleDateNav(dateNavKey)
+      return
+    }
+    if (el.dataset.sidebarFavoritesHeading === 'true') {
+      state.toggleFavoritesCollapsed()
       return
     }
     if (el.dataset.sidebarType !== 'folder') return
