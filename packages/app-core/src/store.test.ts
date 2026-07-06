@@ -390,6 +390,92 @@ describe('date note pattern history', () => {
   })
 })
 
+// Favorites is a flat list — its own storage (vaultSettings.favorites), not the
+// tree's manual-order sidecar — so reordering is a plain array move via
+// applyManualPlace, persisted through the existing applyFavorites path.
+describe('favorites reorder', () => {
+  function favoritesSettings(favorites: string[]) {
+    return {
+      primaryNotesLocation: 'inbox' as const,
+      dailyNotes: { enabled: true, directory: 'Daily Notes', titlePattern: 'yyyy-MM-dd', locale: 'en-US' },
+      weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+      folderIcons: {},
+      folderColors: {},
+      favorites
+    }
+  }
+
+  it('moves an item to before another and persists', async () => {
+    const setVaultSettings = vi.fn().mockImplementation(async (s) => s)
+    installZen({ setVaultSettings })
+    const { useStore } = await loadStore()
+    useStore.setState({
+      vaultSettings: favoritesSettings(['inbox/A.md', 'inbox/B.md', 'inbox/C.md'])
+    })
+
+    await useStore.getState().reorderFavorite('inbox/C.md', 'inbox/A.md')
+
+    expect(useStore.getState().vaultSettings.favorites).toEqual([
+      'inbox/C.md',
+      'inbox/A.md',
+      'inbox/B.md'
+    ])
+    expect(setVaultSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        favorites: ['inbox/C.md', 'inbox/A.md', 'inbox/B.md']
+      })
+    )
+  })
+
+  it('appends to the end when beforeKey is null', async () => {
+    const setVaultSettings = vi.fn().mockImplementation(async (s) => s)
+    installZen({ setVaultSettings })
+    const { useStore } = await loadStore()
+    useStore.setState({
+      vaultSettings: favoritesSettings(['inbox/A.md', 'inbox/B.md', 'inbox/C.md'])
+    })
+
+    await useStore.getState().reorderFavorite('inbox/A.md', null)
+
+    expect(useStore.getState().vaultSettings.favorites).toEqual([
+      'inbox/B.md',
+      'inbox/C.md',
+      'inbox/A.md'
+    ])
+  })
+
+  it('is a no-op (and does not write to disk) when dropped before itself', async () => {
+    const setVaultSettings = vi.fn().mockImplementation(async (s) => s)
+    installZen({ setVaultSettings })
+    const { useStore } = await loadStore()
+    useStore.setState({
+      vaultSettings: favoritesSettings(['inbox/A.md', 'inbox/B.md'])
+    })
+
+    await useStore.getState().reorderFavorite('inbox/A.md', 'inbox/A.md')
+
+    expect(useStore.getState().vaultSettings.favorites).toEqual(['inbox/A.md', 'inbox/B.md'])
+    expect(setVaultSettings).not.toHaveBeenCalled()
+  })
+
+  it('reorders a favorited folder key the same way as a note path', async () => {
+    const setVaultSettings = vi.fn().mockImplementation(async (s) => s)
+    installZen({ setVaultSettings })
+    const { useStore } = await loadStore()
+    useStore.setState({
+      vaultSettings: favoritesSettings(['inbox/A.md', 'folder:Projects', 'inbox/B.md'])
+    })
+
+    await useStore.getState().reorderFavorite('folder:Projects', null)
+
+    expect(useStore.getState().vaultSettings.favorites).toEqual([
+      'inbox/A.md',
+      'inbox/B.md',
+      'folder:Projects'
+    ])
+  })
+})
+
 describe('local vault shortcuts', () => {
   it('stores known local vaults for the sidebar switcher', async () => {
     const localVaults = [

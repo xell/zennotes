@@ -481,6 +481,7 @@ export function Sidebar(): JSX.Element {
   const vaultSettings = useStore((s) => s.vaultSettings);
   const favoritesCollapsed = useStore((s) => s.favoritesCollapsed);
   const toggleFavoritesCollapsed = useStore((s) => s.toggleFavoritesCollapsed);
+  const reorderFavorite = useStore((s) => s.reorderFavorite);
   const rootContentHiddenByInboxMode = useStore((s) => s.rootContentHiddenByInboxMode);
   const rootContentBannerDismissed = useStore((s) => s.rootContentBannerDismissed);
   const dismissRootContentBanner = useStore((s) => s.dismissRootContentBanner);
@@ -1910,6 +1911,21 @@ export function Sidebar(): JSX.Element {
     // setCollapsed is stable enough; deliberately only re-run on request change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sidebarRevealRequest]);
+
+  // Drag-to-reorder within Favorites: a flat list, so this is a plain
+  // before/after array move (applyManualPlace + reorderFavorite), entirely
+  // separate from the tree's manual-order sidecar/resolver (dropLine/
+  // dropHighlight/dropResolutionRef above) — Favorites has its own storage
+  // (vaultSettings.favorites) and doesn't need that system's folder-nesting
+  // machinery. Refs, not state, for the in-flight drag bookkeeping — only the
+  // line indicator needs to trigger a render.
+  const draggedFavoriteKeyRef = useRef<string | null>(null);
+  const favoritesDropBeforeKeyRef = useRef<string | null>(null);
+  const [favoritesDropLine, setFavoritesDropLine] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
 
   // Resolve favorite keys to live notes/folders. Keys whose target no longer
   // exists (renamed away, deleted, trashed) are silently skipped — the Favorites
@@ -3882,6 +3898,16 @@ export function Sidebar(): JSX.Element {
             }}
           />
         )}
+        {favoritesDropLine && (
+          <div
+            className="pointer-events-none fixed z-50 h-0.5 rounded-full bg-accent"
+            style={{
+              top: favoritesDropLine.top - 1,
+              left: favoritesDropLine.left,
+              width: favoritesDropLine.width,
+            }}
+          />
+        )}
         <div
           className="flex min-h-full flex-col pb-2"
           onContextMenu={(e) => {
@@ -3900,9 +3926,57 @@ export function Sidebar(): JSX.Element {
                 sidebarIdx={idxCounter.current.value++}
                 vimHighlight={vimCursor === idxCounter.current.value - 1}
               />
-              {!favoritesCollapsed && favoriteItems.map((item) => {
+              {!favoritesCollapsed && favoriteItems.map((item, favIndex) => {
                   const idx = idxCounter.current.value++;
                   const vimHighlight = vimCursor === idx;
+                  // Drag-to-reorder within Favorites: a flat before/after move
+                  // (see draggedFavoriteKeyRef's declaration above for why this
+                  // stays independent of the tree's own manual-order system).
+                  // stopPropagation on dragover/drop keeps this from also being
+                  // read by the main tree's container-level drop handler, which
+                  // scrapes any element carrying data-sidebar-idx (as this row
+                  // does, for vim nav) when the global sort is "Manual".
+                  const dragHandlers = {
+                    onDragStartItem: (e: React.DragEvent<HTMLDivElement>) => {
+                      draggedFavoriteKeyRef.current = item.key;
+                      setDragPayload(
+                        e,
+                        item.kind === "note"
+                          ? { kind: "note" as const, path: item.path }
+                          : { kind: "folder" as const, folder: item.folder, subpath: item.subpath },
+                      );
+                    },
+                    onDragOverItem: (e: React.DragEvent<HTMLDivElement>) => {
+                      if (!draggedFavoriteKeyRef.current) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const isAbove = e.clientY < rect.top + rect.height / 2;
+                      setFavoritesDropLine({
+                        top: isAbove ? rect.top : rect.bottom,
+                        left: rect.left,
+                        width: rect.width,
+                      });
+                      favoritesDropBeforeKeyRef.current = isAbove
+                        ? item.key
+                        : (favoriteItems[favIndex + 1]?.key ?? null);
+                    },
+                    onDropItem: (e: React.DragEvent<HTMLDivElement>) => {
+                      const dragged = draggedFavoriteKeyRef.current;
+                      if (!dragged) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      void reorderFavorite(dragged, favoritesDropBeforeKeyRef.current);
+                      draggedFavoriteKeyRef.current = null;
+                      favoritesDropBeforeKeyRef.current = null;
+                      setFavoritesDropLine(null);
+                    },
+                    onDragEndItem: () => {
+                      draggedFavoriteKeyRef.current = null;
+                      favoritesDropBeforeKeyRef.current = null;
+                      setFavoritesDropLine(null);
+                    },
+                  };
                   if (item.kind === "note") {
                     // Custom icon / color set via the note's right-click menu
                     // (keyed by path) — same source NoteLeaf reads, so a
@@ -3941,6 +4015,7 @@ export function Sidebar(): JSX.Element {
                           "data-sidebar-type": "note",
                           "data-sidebar-path": item.path,
                         }}
+                        {...dragHandlers}
                       />
                     );
                   }
@@ -3991,6 +4066,7 @@ export function Sidebar(): JSX.Element {
                         // click handler above.
                         "data-sidebar-favorite": "true",
                       }}
+                      {...dragHandlers}
                     />
                   );
                 })}
@@ -6644,6 +6720,10 @@ function FavoriteRow({
   vimHighlight,
   sidebarFocused = false,
   dataAttrs,
+  onDragStartItem,
+  onDragOverItem,
+  onDropItem,
+  onDragEndItem,
 }: {
   label: string;
   icon: JSX.Element;
@@ -6656,13 +6736,26 @@ function FavoriteRow({
   vimHighlight?: boolean;
   sidebarFocused?: boolean;
   dataAttrs: Record<string, string | number>;
+  /** Drag-to-reorder within Favorites (a flat list — plain up/down move, not
+   *  the tree's manual-order sidecar). All four opt in together; omitting
+   *  them just makes the row non-draggable. */
+  onDragStartItem?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragOverItem?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDropItem?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragEndItem?: () => void;
 }): JSX.Element {
   const strongActive = active && (!sidebarFocused || !!vimHighlight);
+  const draggable = !!onDragStartItem;
   return (
     <div
       role="button"
       tabIndex={0}
       onClick={onClick}
+      draggable={draggable}
+      onDragStart={onDragStartItem}
+      onDragOver={onDragOverItem}
+      onDrop={onDropItem}
+      onDragEnd={onDragEndItem}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();

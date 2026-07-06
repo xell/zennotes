@@ -2429,6 +2429,10 @@ interface Store {
   toggleFavoriteActiveNote: () => Promise<void>
   /** @internal Replace the favorites list and persist (no note refresh). */
   applyFavorites: (nextFavorites: string[]) => Promise<void>
+  /** Drag-to-reorder within the Favorites section (flat list — no nesting, so
+   *  this is a plain array move, not the tree's manual-order sidecar/resolver).
+   *  Moves `draggedKey` to just before `beforeKey`, or to the end when null. */
+  reorderFavorite: (draggedKey: string, beforeKey: string | null) => Promise<void>
   setNotes: (notes: NoteMeta[]) => void
   setView: (view: View) => void
   /** Open the Tasks panel as a tab in the active pane. If the tab is
@@ -3949,6 +3953,11 @@ export const useStore = create<Store>((set, get) => {
   toggleFavorite: async (key) => {
     if (!key) return
     await get().applyFavorites(toggleFavoriteKey(get().vaultSettings.favorites, key))
+  },
+  reorderFavorite: async (draggedKey, beforeKey) => {
+    await get().applyFavorites(
+      applyManualPlace(get().vaultSettings.favorites, draggedKey, beforeKey)
+    )
   },
   toggleFavoriteActiveNote: async () => {
     const path = get().activeNote?.path ?? get().selectedPath
