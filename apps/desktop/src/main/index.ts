@@ -464,6 +464,31 @@ function isWorkspaceWindow(win: BrowserWindow): boolean {
   return workspaceWindowIds.has(win.id)
 }
 
+// Electron's declarative `tabbingIdentifier` is enough for the OS to place
+// new sibling windows into a tab group automatically, but it does not
+// reliably retrofit *existing* standalone windows into one — the native
+// `mergeAllWindows()` action silently no-ops depending on the current
+// window arrangement and the system's "prefer tabs" preference. Driving
+// `addTabbedWindow` explicitly is the documented, deterministic way to
+// force separate windows into a single tab group regardless of that state.
+function mergeAllVaultWindows(): void {
+  const vaultWindows = BrowserWindow.getAllWindows().filter(
+    (win) => !win.isDestroyed() && isWorkspaceWindow(win)
+  )
+  if (vaultWindows.length < 2) return
+  const focused = BrowserWindow.getFocusedWindow()
+  const anchor = focused && vaultWindows.includes(focused) ? focused : vaultWindows[0]
+  for (const win of vaultWindows) {
+    if (win === anchor) continue
+    try {
+      anchor.addTabbedWindow(win)
+    } catch (err) {
+      console.error('[window tabs] failed to merge window into tab group', err)
+    }
+  }
+  anchor.focus()
+}
+
 function findWindowForVaultRoot(root: string): BrowserWindow | null {
   const target = path.resolve(root)
   for (const win of BrowserWindow.getAllWindows()) {
@@ -3429,7 +3454,13 @@ function installAppMenu(): void {
         { role: 'toggleTabBar', label: 'Toggle Tab Bar' },
         { role: 'selectNextTab', label: 'Show Next Tab' },
         { role: 'selectPreviousTab', label: 'Show Previous Tab' },
-        { role: 'mergeAllWindows', label: 'Merge All Windows' },
+        { role: 'moveTabToNewWindow', label: 'Move Tab to New Window' },
+        // Not `role: 'mergeAllWindows'` — that native action is unreliable
+        // at grouping already-separate windows (see mergeAllVaultWindows).
+        {
+          label: 'Merge All Windows',
+          click: () => mergeAllVaultWindows()
+        },
         { type: 'separator' },
         { role: 'front' }
       ]
@@ -3748,6 +3779,11 @@ app.whenReady().then(async () => {
     void createWindow({
       inheritWorkspaceFrom: sourceWindow,
       persistInitialVault: false
+    }).then((win) => {
+      // The native "+" only appears once a real tab group exists, but
+      // relying on tabbingIdentifier alone to slot the new window in has
+      // proven unreliable, so make the attachment explicit.
+      if (sourceWindow && !sourceWindow.isDestroyed()) sourceWindow.addTabbedWindow(win)
     })
   })
 
