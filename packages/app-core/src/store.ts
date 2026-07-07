@@ -2414,6 +2414,12 @@ interface Store {
   paneLayout: PaneLayout
   /** ID of the currently focused leaf pane. */
   activePaneId: string
+  /** When set, every pane except this one is hidden (not unmounted — their
+   *  CodeMirror views, scroll position, and undo history stay intact) so
+   *  it fills the whole main pane. Toggling off is instant: paneLayout
+   *  itself is never touched, so the split proportions just reappear.
+   *  Session-only, never persisted; independent of Zen mode. */
+  maximizedPaneId: string | null
   /** Loaded note contents, keyed by path. Shared across panes so the
    *  same note open in two panes stays in sync on edit. */
   noteContents: Record<string, NoteContent>
@@ -2858,6 +2864,10 @@ interface Store {
   }) => Promise<void>
   /** Update sizes on a split node (for divider drag). */
   resizeSplit: (splitId: string, sizes: number[]) => void
+  /** Hide every pane except the active one so it fills the main pane;
+   *  toggling again restores the split instantly (paneLayout is untouched
+   *  the whole time). No effect on the sidebar or the right-hand pane. */
+  togglePaneMaximize: () => void
   /** Pin a tab within a specific pane — sticks it to the left of the
    *  strip and protects it from "Close Others" / "Close Tabs to Right". */
   pinTabInPane: (paneId: string, path: string) => void
@@ -3916,6 +3926,7 @@ export const useStore = create<Store>((set, get) => {
   pendingTitleFocusPath: null,
   paneLayout: initialPane,
   activePaneId: initialPane.id,
+  maximizedPaneId: null,
   noteContents: {},
   noteDirty: {},
   noteComments: {},
@@ -7135,6 +7146,10 @@ export const useStore = create<Store>((set, get) => {
       if (nextLayout === s.paneLayout) return s
       return { paneLayout: nextLayout }
     })
+  },
+
+  togglePaneMaximize: () => {
+    set((s) => ({ maximizedPaneId: s.maximizedPaneId ? null : s.activePaneId }))
   },
 
   pinTabInPane: (paneId, path) => {

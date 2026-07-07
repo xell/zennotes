@@ -1204,6 +1204,17 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       }
     },
     {
+      id: 'view.toggle-pane-maximize',
+      title: (() => {
+        const st = getState()
+        return st.maximizedPaneId ? 'Restore Split Panes' : 'Maximize Current Pane'
+      })(),
+      category: 'View',
+      shortcut: shortcut('global.togglePaneMaximize'),
+      keywords: 'zoom fullscreen split only',
+      run: () => getState().togglePaneMaximize()
+    },
+    {
       id: 'view.dark-sidebar',
       title: getState().darkSidebar ? 'Light Sidebar' : 'Dark Sidebar',
       category: 'View',

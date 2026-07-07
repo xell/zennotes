@@ -867,6 +867,12 @@ function App(): JSX.Element {
         state.setFocusMode(!state.zenMode)
         return
       }
+      // Unbound by default — only fires once the user assigns a binding.
+      if (matchesShortcut(e, overrides, 'global.togglePaneMaximize')) {
+        e.preventDefault()
+        state.togglePaneMaximize()
+        return
+      }
       // ⌘, — open settings (macOS convention)
       if (matchesShortcut(e, overrides, 'global.openSettings')) {
         e.preventDefault()

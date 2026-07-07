@@ -32,6 +32,7 @@ export type KeymapId =
   | "global.modePreview"
   | "global.modeDiff"
   | "global.toggleZenMode"
+  | "global.togglePaneMaximize"
   | "global.closeActiveTab"
   | "global.closeWindow"
   | "global.reopenClosedTab"
@@ -376,6 +377,16 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Toggle Zen mode",
     description: "Hide or restore the app chrome.",
     defaultBinding: "Mod+.",
+  },
+  {
+    id: "global.togglePaneMaximize",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Toggle maximize pane",
+    description:
+      "Hide every other split pane so the current one fills the main pane. Toggling again restores the split instantly. No effect on the sidebar or the right-hand pane. Unbound by default.",
+    defaultBinding: "",
   },
   {
     id: "global.closeActiveTab",

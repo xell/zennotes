@@ -17,8 +17,11 @@ export function TitleBar(): JSX.Element {
   const systemFolderLabels = useStore((s) => s.systemFolderLabels)
   const workspaceMode = useStore((s) => s.workspaceMode)
   const windowChrome = useStore((s) => s.windowChrome)
+  const isMaximized = useStore((s) => !!s.maximizedPaneId)
   const isMac = window.zen.platformSync() === 'darwin'
   const labels = resolveSystemFolderLabels(systemFolderLabels)
+
+  const maximizeGlyph = isMaximized ? <span className="mr-1">▣</span> : null
 
   let titleContent: JSX.Element
   let titleText: string
@@ -32,6 +35,7 @@ export function TitleBar(): JSX.Element {
     titleText = `${vault.name} | ${folderPart}${filenamePart}`
     titleContent = (
       <span className="truncate">
+        {maximizeGlyph}
         {vault.name}
         <span className="mx-1.5 opacity-40">|</span>
         {folderPart}
@@ -57,7 +61,12 @@ export function TitleBar(): JSX.Element {
                     ? vault.name
                     : 'ZenNotes'
     titleText = text
-    titleContent = <span className="truncate">{text}</span>
+    titleContent = (
+      <span className="truncate">
+        {maximizeGlyph}
+        {text}
+      </span>
+    )
   }
 
   // The native title is what a tab shows as its label (and what Mission
@@ -65,10 +74,14 @@ export function TitleBar(): JSX.Element {
   // this bar is actually displaying, tabbed or not. The tab label can't be
   // styled (plain OS text, no color/icons), so isolated mode gets a glyph
   // prefix instead of the accent-colored badge the custom title bar shows.
+  // The maximize marker only matters here for a merged window — the native
+  // tab label is the only visible "title" in that state (see the early
+  // return below); a standalone window shows it in titleContent instead.
   const isolatePrefix = isolatedRoot ? '◎ ' : ''
+  const maximizePrefix = isMaximized && windowChrome.hasTabs ? '▣ ' : ''
   useEffect(() => {
-    window.zen.setWindowTitle(isolatePrefix + titleText)
-  }, [titleText, isolatePrefix])
+    window.zen.setWindowTitle(maximizePrefix + isolatePrefix + titleText)
+  }, [titleText, isolatePrefix, maximizePrefix])
 
   // Once this window is merged into a native tab group, AppKit draws its own
   // opaque title/tab bar (with real traffic lights) over the top of the

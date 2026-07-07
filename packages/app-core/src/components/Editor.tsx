@@ -19,7 +19,7 @@ import { buildCommands, type Command } from '../lib/commands'
 import { rankItems } from '../lib/fuzzy-score'
 import { BUILTIN_TEMPLATES } from '@shared/builtin-templates'
 import { mergeTemplates } from '@shared/template-files'
-import type { PaneLayout, PaneSplit } from '../lib/pane-layout'
+import { findLeaf, type PaneLayout, type PaneSplit } from '../lib/pane-layout'
 import {
   parseCreateNotePath,
   resolveWikilinkTarget,
@@ -1319,6 +1319,7 @@ function installExTabCompletion(): void {
 
 export function Editor(): JSX.Element {
   const paneLayout = useStore((s) => s.paneLayout)
+  const maximizedPaneId = useStore((s) => s.maximizedPaneId)
   const activeNote = useStore((s) => s.activeNote)
   const keymapOverrides = useStore((s) => s.keymapOverrides)
   const vimInsertEscape = useStore((s) => s.vimInsertEscape)
@@ -1346,23 +1347,41 @@ export function Editor(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // A stale maximizedPaneId (its pane got closed some other way) would hide
+  // every pane and show nothing — fall back to the normal layout instead of
+  // trusting the store value blindly.
+  const validMaximizedPaneId =
+    maximizedPaneId && findLeaf(paneLayout, maximizedPaneId) ? maximizedPaneId : null
+
   return (
     <section className="flex min-w-0 flex-1 flex-col">
       <div className="flex min-h-0 min-w-0 flex-1">
-        <PaneTreeView node={paneLayout} />
+        <PaneTreeView node={paneLayout} maximizedPaneId={validMaximizedPaneId} />
       </div>
     </section>
   )
 }
 
-function PaneTreeView({ node }: { node: PaneLayout }): JSX.Element {
+function PaneTreeView({
+  node,
+  maximizedPaneId
+}: {
+  node: PaneLayout
+  maximizedPaneId: string | null
+}): JSX.Element {
   if (node.kind === 'leaf') {
     return <EditorPane pane={node} />
   }
-  return <PaneSplitView split={node} />
+  return <PaneSplitView split={node} maximizedPaneId={maximizedPaneId} />
 }
 
-function PaneSplitView({ split }: { split: PaneSplit }): JSX.Element {
+function PaneSplitView({
+  split,
+  maximizedPaneId
+}: {
+  split: PaneSplit
+  maximizedPaneId: string | null
+}): JSX.Element {
   const resizeSplit = useStore((s) => s.resizeSplit)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const isRow = split.direction === 'row'
@@ -1429,16 +1448,28 @@ function PaneSplitView({ split }: { split: PaneSplit }): JSX.Element {
     const out: JSX.Element[] = []
     split.children.forEach((child, i) => {
       const basis = split.sizes[i] ?? 1 / split.children.length
+      // Maximized: hide every sibling that isn't on the path to the
+      // maximized leaf (display: none, still mounted — its EditorView,
+      // scroll position, and undo history stay intact) and let the one
+      // that is fill the whole split. Un-maximizing needs no layout work
+      // since split.sizes was never touched.
+      const isOnMaximizedPath = maximizedPaneId ? !!findLeaf(child, maximizedPaneId) : true
       out.push(
         <div
           key={child.id}
           className={['flex min-h-0 min-w-0', isRow ? '' : 'flex-col'].join(' ')}
-          style={{ flex: `${basis} 1 0`, minWidth: 0, minHeight: 0 }}
+          style={
+            maximizedPaneId
+              ? isOnMaximizedPath
+                ? { flex: '1 1 auto', minWidth: 0, minHeight: 0 }
+                : { display: 'none' }
+              : { flex: `${basis} 1 0`, minWidth: 0, minHeight: 0 }
+          }
         >
-          <PaneTreeView node={child} />
+          <PaneTreeView node={child} maximizedPaneId={maximizedPaneId} />
         </div>
       )
-      if (i < split.children.length - 1) {
+      if (!maximizedPaneId && i < split.children.length - 1) {
         out.push(
           <ResizeDivider
             key={`handle-${child.id}`}
@@ -1449,7 +1480,7 @@ function PaneSplitView({ split }: { split: PaneSplit }): JSX.Element {
       }
     })
     return out
-  }, [isRow, onHandleMouseDown, split.children, split.sizes])
+  }, [isRow, maximizedPaneId, onHandleMouseDown, split.children, split.sizes])
 
   return (
     <div
