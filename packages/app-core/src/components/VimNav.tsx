@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { EditorView } from '@codemirror/view'
 import { isTagsViewActive, isTasksViewActive, useStore, type SidebarRevealTarget } from '../store'
 import { noteFolderSubpath, vaultRelativeFolderPath } from '../lib/vault-layout'
+import { csvPathForFormDir, isFormDirName } from '@shared/databases'
 import { parentDirOf } from '../lib/manual-order'
 import { HintOverlay } from './HintOverlay'
 import { WhichKeyOverlay, type WhichKeyItem } from './WhichKeyOverlay'
@@ -358,17 +359,6 @@ export function VimNav(): JSX.Element | null {
       ) {
         return
       }
-      // The database/table view runs its own vim-style motion grid; yield to it
-      // so sidebar/note-list navigation doesn't steal j/k/h/l etc. — EXCEPT the
-      // pane prefix (Ctrl+W) and its pending direction key, so the grid can hand
-      // off to pane/tab navigation (Ctrl+W k → tabs) like every other surface.
-      if (
-        target?.closest('[data-zen-db-grid]') &&
-        !ctrlWPending.current &&
-        sequenceTokenFromEvent(e) !== panePrefixToken
-      ) {
-        return
-      }
       // CodeMirror's editor surface is contenteditable; keep global
       // hint/navigation bindings working there. Only skip other
       // unrelated contenteditable widgets.
@@ -507,6 +497,23 @@ export function VimNav(): JSX.Element | null {
         ) {
           return
         }
+      }
+
+      // The database/table view runs its own vim-style motion grid, so past
+      // this point (leader + the sidebar/note-list/connections navigation
+      // below) yield to it — otherwise its j/k/h/l/Space etc. would be stolen
+      // as list navigation or the leader key. Placed AFTER the global shortcuts
+      // above (buffer nav, jump history, inline-format) on purpose: those don't
+      // collide with any grid key, so they must keep working while the grid is
+      // focused instead of the grid being a black hole. Ctrl+W (and its pending
+      // direction key) is still let through so the grid hands off to pane/tab
+      // navigation like every other surface.
+      if (
+        target?.closest('[data-zen-db-grid]') &&
+        !ctrlWPending.current &&
+        sequenceTokenFromEvent(e) !== panePrefixToken
+      ) {
+        return
       }
 
       // ------- Ctrl+w pending → resolve panel / pane switch ------------
@@ -1218,7 +1225,7 @@ export function VimNav(): JSX.Element | null {
       return
     }
     if (key === 'Enter' || matchesSequenceToken(e, overrides, 'nav.openSideItem') || key === 'ArrowRight') {
-      activateSidebarItem(items[currentPos], state)
+      activateSidebarItem(items[currentPos], state, key === 'Enter')
       return
     }
     if (matchesSequenceToken(e, overrides, 'nav.back') || key === 'ArrowLeft') {
@@ -2325,7 +2332,14 @@ export function VimNav(): JSX.Element | null {
     return true
   }
 
-  function activateSidebarItem(el: HTMLElement | undefined, state: ReturnType<typeof useStore.getState>): void {
+  function activateSidebarItem(
+    el: HTMLElement | undefined,
+    state: ReturnType<typeof useStore.getState>,
+    // True only for Enter. `l`/ArrowRight also route here but mean "descend
+    // into the tree" — the difference matters for a database folder, where
+    // Enter opens the grid but `l`/Right must just expand like any folder.
+    isEnter: boolean
+  ): void {
     if (!el) return
     // #301: Daily/Weekly date groups aren't real folders — `l`/Enter/Right
     // expands them via the store's date-nav state instead of navigating (which
@@ -2346,6 +2360,18 @@ export function VimNav(): JSX.Element | null {
     if (itemType === 'folder') {
       const folder = el.dataset.sidebarFolder as 'inbox' | 'quick' | 'archive' | 'trash'
       const subpath = el.dataset.sidebarSubpath ?? ''
+      // A `<Name>.base` folder is a database. Enter opens its grid in the
+      // editor pane, matching the row's click handler (which never touches
+      // the collapse state either). `l`/ArrowRight, though, mean "expand into
+      // the tree" — they fall through to the plain-folder branch below so the
+      // database's record-page notes reveal like any folder's children.
+      if (isEnter && isFormDirName(subpath)) {
+        const csvPath = csvPathForFormDir(
+          vaultRelativeFolderPath(folder, subpath, state.vaultSettings)
+        )
+        void state.openDatabase(csvPath)
+        return
+      }
       // A favorited inbox folder activates into isolation, matching its click.
       if (el.dataset.sidebarFavorite === 'true' && folder === 'inbox' && subpath) {
         state.enterIsolation('inbox', subpath)
