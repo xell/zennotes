@@ -102,6 +102,7 @@ export const IPC = {
   WINDOW_GET_CHROME_SYNC: 'window:get-chrome-sync',
   WINDOW_CHROME_ON_CHANGE: 'window:chrome-on-change',
   WINDOW_SET_TITLE: 'window:set-title',
+  WINDOW_SET_ZEN_MODE: 'window:set-zen-mode',
   WINDOW_OPEN_NOTE: 'window:open-note',
   WINDOW_OPEN_VAULT: 'window:open-vault',
   WINDOW_TOGGLE_QUICK_CAPTURE: 'window:toggle-quick-capture',

@@ -286,6 +286,11 @@ export interface ZenBridge {
    *  TitleBar keeps this in sync with whatever it renders (vault + path,
    *  or the current section label). No-op on web. */
   setWindowTitle(title: string): void
+  /** Tells the main process whether this window is currently in Zen mode,
+   *  so a tabbed window can hide its native tab bar to match (there's no
+   *  way to do this from the renderer — it's real AppKit chrome). No-op
+   *  on web, and on a window that isn't currently tabbed. */
+  setWindowZenMode(active: boolean): void
   /** Persist the portable preferences subset to the config file (debounced by
    *  the caller). No-op on web. */
   setConfig(next: AppConfigPortable): Promise<void>

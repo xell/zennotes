@@ -1586,6 +1586,7 @@ export const httpBridge: ZenBridge = {
   getWindowChromeSync: () => ({ hasTabs: false, topInset: 0 }),
   onWindowChromeChange: () => () => {},
   setWindowTitle: () => {},
+  setWindowZenMode: () => {},
   terminal: {
     create: async () => '',
     input: () => {},

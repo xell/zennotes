@@ -261,6 +261,7 @@ function App(): JSX.Element {
   const sidebarOpen = useStore((s) => s.sidebarOpen)
   const noteListOpen = useStore((s) => s.noteListOpen)
   const zenMode = useStore((s) => s.zenMode)
+  const windowChrome = useStore((s) => s.windowChrome)
   const paneLayout = useStore((s) => s.paneLayout)
   const activePaneId = useStore((s) => s.activePaneId)
   const view = useStore((s) => s.view)
@@ -351,6 +352,14 @@ function App(): JSX.Element {
     initOverrides()
     initWindowChromeSync()
   }, [])
+
+  // Zen mode hides all of ZenNotes's own chrome, but a tabbed window's tab
+  // strip is real AppKit UI the renderer can't touch directly — this tells
+  // the main process to declutter it too. Lives here rather than in
+  // TitleBar since TitleBar itself unmounts in Zen mode.
+  useEffect(() => {
+    window.zen.setWindowZenMode(zenMode)
+  }, [zenMode])
 
   // Drag a markdown file from the OS onto the window to open it. Desktop
   // resolves the file to a path and opens it in place (vault note when it
@@ -954,7 +963,15 @@ function App(): JSX.Element {
   return (
     <div className="zn-app-shell flex w-screen flex-col bg-paper-100 text-ink-900">
       {!zenMode && <TitleBar />}
-      <div className="flex min-h-0 flex-1">
+      <div
+        className="flex min-h-0 flex-1"
+        // TitleBar (and the blank space it reserves for a tabbed window's
+        // native tab bar) doesn't render at all in Zen mode, but that tab
+        // bar can't be hidden — AppKit has no way to do that once a window
+        // has 2+ real tabs — so this still needs the same clearance or it
+        // sits right underneath the tab strip.
+        style={zenMode && windowChrome.hasTabs ? { marginTop: windowChrome.topInset } : undefined}
+      >
         {!zenMode && sidebarOpen && <Sidebar />}
         {!zenMode && noteListOpen && !unifiedSidebar && <NoteList />}
         <Suspense fallback={<EditorLoadingFallback />}>

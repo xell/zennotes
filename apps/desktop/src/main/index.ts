@@ -542,6 +542,7 @@ async function reconcileAndPersistTabGroups(): Promise<void> {
   for (const win of vaultWindows) {
     const members = nativeTabGroupMembers(win).filter((w) => isWorkspaceWindow(w))
     const hasTabs = members.length >= 2
+    syncTabBarForZenMode(win, hasTabs)
     if (DEBUG_TAB_CHROME && tabGroupsNative && hasTabs) {
       try {
         const debugInfo = tabGroupsNative.getChromeDebug(win.getNativeWindowHandle())
@@ -633,6 +634,32 @@ function nudgeWindowLayout(win: BrowserWindow): void {
   const bounds = win.getBounds()
   win.setBounds({ ...bounds, width: bounds.width + 1 })
   win.setBounds(bounds)
+}
+
+// Windows currently reporting themselves as being in Zen mode. Renderer-only
+// UI state — the main process has no other way to know about it.
+const zenModeWindows = new Set<number>()
+// Windows whose native tab bar we've hidden to match Zen mode. Tracked
+// ourselves since Electron has no getter for "is the tab bar currently
+// visible" — toggleTabBar() only flips it, so this is the only way to know
+// which way it's currently flipped and avoid toggling twice (or not at all).
+const tabBarHiddenForZen = new Set<number>()
+
+// Zen mode hides all of ZenNotes's own chrome, but a tabbed window's tab
+// strip is real AppKit UI outside the renderer's control — this is the only
+// way to make Zen mode declutter that too.
+function syncTabBarForZenMode(win: BrowserWindow, hasTabs: boolean): void {
+  if (win.isDestroyed()) return
+  const shouldHide = zenModeWindows.has(win.id) && hasTabs
+  const isHidden = tabBarHiddenForZen.has(win.id)
+  if (shouldHide === isHidden) return
+  try {
+    win.toggleTabBar()
+    if (shouldHide) tabBarHiddenForZen.add(win.id)
+    else tabBarHiddenForZen.delete(win.id)
+  } catch (err) {
+    console.error('[window tabs] failed to toggle tab bar for zen mode', err)
+  }
 }
 
 function mergeAllVaultWindows(): void {
@@ -1232,6 +1259,8 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
     readyWindowIds.delete(win.id)
     pendingWindowNoteOpens.delete(win.id)
     killPtySessionsForWebContents(winWebContentsId)
+    zenModeWindows.delete(win.id)
+    tabBarHiddenForZen.delete(win.id)
     void reconcileAndPersistTabGroups()
     const closedUuid = windowUuids.get(win.id)
     windowUuids.delete(win.id)
@@ -2985,6 +3014,16 @@ function registerIpc(): void {
   on(IPC.WINDOW_SET_TITLE, (e, title: string) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     if (win && !win.isDestroyed() && typeof title === 'string') win.setTitle(title.slice(0, 500))
+  })
+  // Zen mode is a renderer-only concept; this is how it reaches into the one
+  // piece of chrome it can't otherwise touch — a tabbed window's native tab
+  // bar (see syncTabBarForZenMode).
+  on(IPC.WINDOW_SET_ZEN_MODE, (e, active: boolean) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!win || win.isDestroyed()) return
+    if (active) zenModeWindows.add(win.id)
+    else zenModeWindows.delete(win.id)
+    void reconcileAndPersistTabGroups()
   })
 
   handle(IPC.WINDOW_OPEN_NOTE, async (_e, relPath: string) => {

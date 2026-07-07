@@ -540,6 +540,13 @@ const api: ZenBridge = {
       /* ignore */
     }
   },
+  setWindowZenMode: (active: boolean): void => {
+    try {
+      ipcRenderer.send(IPC.WINDOW_SET_ZEN_MODE, active)
+    } catch {
+      /* ignore */
+    }
+  },
   setConfig: (next: AppConfigPortable): Promise<void> =>
     ipcRenderer.invoke(IPC.CONFIG_SET, next),
   getConfigPath: (): Promise<string | null> => ipcRenderer.invoke(IPC.CONFIG_GET_PATH),
