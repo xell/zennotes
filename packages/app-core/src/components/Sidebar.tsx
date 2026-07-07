@@ -4861,18 +4861,24 @@ export function Sidebar(): JSX.Element {
                   },
                 ]
               : []),
-            {
-              label: (() => {
-                const parent = isolatedRoot
-                  ? parentSubpath(isolatedRoot.subpath)
-                  : "";
-                if (!parent) return "Go up (exits isolation)";
-                const name = parent.split("/").slice(-1)[0];
-                return `Go up to ${name.length > 20 ? `${name.slice(0, 20)}…` : name}`;
-              })(),
-              onSelect: () => void goUpIsolationWithConfirm(),
-            },
-            { kind: "separator" as const },
+            // A top-level isolated folder has no parent to walk up to, so
+            // "Go up" would be a second, confirm-gated way to do exactly
+            // what "Quit isolated mode" already does below — skip it rather
+            // than show two menu items for one action.
+            ...(() => {
+              const parent = isolatedRoot
+                ? parentSubpath(isolatedRoot.subpath)
+                : "";
+              if (!parent) return [];
+              const name = parent.split("/").slice(-1)[0];
+              return [
+                {
+                  label: `Go up to ${name.length > 20 ? `${name.slice(0, 20)}…` : name}`,
+                  onSelect: () => void goUpIsolationWithConfirm(),
+                },
+                { kind: "separator" as const },
+              ];
+            })(),
             {
               label: "Quit isolated mode",
               onSelect: () => exitIsolation(),
