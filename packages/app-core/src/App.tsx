@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef } from 'react'
-import { useStore, initConfigSync, initCustomThemes, initOverrides } from './store'
+import { useStore, initConfigSync, initCustomThemes, initOverrides, initWindowChromeSync } from './store'
 import { resolveAuto, findTheme } from './lib/themes'
 import {
   injectActiveTheme,
@@ -349,6 +349,7 @@ function App(): JSX.Element {
     initConfigSync()
     initCustomThemes()
     initOverrides()
+    initWindowChromeSync()
   }, [])
 
   // Drag a markdown file from the OS onto the window to open it. Desktop

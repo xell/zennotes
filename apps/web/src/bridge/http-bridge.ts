@@ -1582,6 +1582,10 @@ export const httpBridge: ZenBridge = {
   // On web, the renderer falls back to localStorage when getConfigSync is null.
   getConfigSync: () => null,
   getWindowId: () => null,
+  // Native window tabs are a macOS desktop feature; web has no concept of it.
+  getWindowChromeSync: () => ({ hasTabs: false, topInset: 0 }),
+  onWindowChromeChange: () => () => {},
+  setWindowTitle: () => {},
   terminal: {
     create: async () => '',
     input: () => {},

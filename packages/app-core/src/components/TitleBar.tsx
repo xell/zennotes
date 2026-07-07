@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useStore } from '../store'
 import { IsolateIcon } from './icons'
 import { isTasksTabPath } from '@shared/tasks'
@@ -15,10 +16,12 @@ export function TitleBar(): JSX.Element {
   const selectedPath = useStore((s) => s.selectedPath)
   const systemFolderLabels = useStore((s) => s.systemFolderLabels)
   const workspaceMode = useStore((s) => s.workspaceMode)
+  const windowChrome = useStore((s) => s.windowChrome)
   const isMac = window.zen.platformSync() === 'darwin'
   const labels = resolveSystemFolderLabels(systemFolderLabels)
 
   let titleContent: JSX.Element
+  let titleText: string
 
   if (activeNote && vault) {
     const pathNoExt = activeNote.path.replace(/\.[^.]+$/, '')
@@ -26,6 +29,7 @@ export function TitleBar(): JSX.Element {
     const folderPart = lastSlash >= 0 ? pathNoExt.slice(0, lastSlash + 1) : ''
     const filenamePart = lastSlash >= 0 ? pathNoExt.slice(lastSlash + 1) : pathNoExt
 
+    titleText = `${vault.name} | ${folderPart}${filenamePart}`
     titleContent = (
       <span className="truncate">
         {vault.name}
@@ -52,7 +56,30 @@ export function TitleBar(): JSX.Element {
                   : vault
                     ? vault.name
                     : 'ZenNotes'
+    titleText = text
     titleContent = <span className="truncate">{text}</span>
+  }
+
+  // The native title is what a tab shows as its label (and what Mission
+  // Control / Cmd+Tab / the Dock menu show) — keep it in sync with whatever
+  // this bar is actually displaying, tabbed or not. The tab label can't be
+  // styled (plain OS text, no color/icons), so isolated mode gets a glyph
+  // prefix instead of the accent-colored badge the custom title bar shows.
+  const isolatePrefix = isolatedRoot ? '◎ ' : ''
+  useEffect(() => {
+    window.zen.setWindowTitle(isolatePrefix + titleText)
+  }, [titleText, isolatePrefix])
+
+  // Once this window is merged into a native tab group, AppKit draws its own
+  // opaque title/tab bar (with real traffic lights) over the top of the
+  // content view — hiddenInset never shrinks the content view to make room
+  // for it, that's the whole point of hiddenInset, so nothing pushes the
+  // rest of the UI down on its own. The native tab's label already shows the
+  // title set above, so there's no content to show here — just leave blank
+  // space of the same height so the sidebar/pane headers don't render
+  // underneath it.
+  if (windowChrome.hasTabs) {
+    return <div className="shrink-0" style={{ height: windowChrome.topInset }} />
   }
 
   return (

@@ -21,6 +21,7 @@ import type {
   VaultTextSearchBackendPreference,
   VaultChangeEvent,
   VaultInfo,
+  WindowChromeState,
   WorkspaceMode
 } from '@shared/ipc'
 import type { VaultTask } from '@shared/tasks'
@@ -2386,6 +2387,12 @@ interface Store {
    */
   quicklookActive: boolean
   quicklookInfo: string | null
+  /** Native tab-group membership and chrome inset for this window. hiddenInset
+   *  windows never shrink the content view for a native tab bar — the app has
+   *  to reserve the space itself — so TitleBar uses topInset to know how much
+   *  blank space to leave instead of getting overlapped or masked by it.
+   *  Session-only, pushed from the main process; always the default on web. */
+  windowChrome: WindowChromeState
   /** Expanded group keys in the Daily/Weekly date-nav tree (ephemeral UI, not
    *  persisted). Kept in the store — not Sidebar-local — so the keyboard nav in
    *  VimNav can expand/collapse date groups like real folders. (#301) */
@@ -3899,6 +3906,7 @@ export const useStore = create<Store>((set, get) => {
   isolatedRoot: null,
   quicklookActive: false,
   quicklookInfo: null,
+  windowChrome: { hasTabs: false, topInset: 0 },
   dateNavExpanded: [],
   favoritesCollapsed: false,
   noteListCursorIndex: 0,
@@ -8297,6 +8305,36 @@ export function initConfigSync(): void {
   if (typeof bridge.onConfigChange === 'function') {
     try {
       bridge.onConfigChange((nextCfg) => applyPortableConfig(nextCfg))
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+let windowChromeSyncInitialized = false
+
+/**
+ * Wire up this window's native tab-group chrome state (whether it's
+ * currently merged with other windows, and how much top space that
+ * chrome covers). Call once on app startup (desktop macOS only — a no-op
+ * elsewhere). Seeds from the synchronous getter so a restored,
+ * already-tabbed window doesn't flash its custom title bar before the
+ * first push arrives, then subscribes for live updates.
+ */
+export function initWindowChromeSync(): void {
+  if (windowChromeSyncInitialized) return
+  const bridge = typeof window !== 'undefined' ? window.zen : undefined
+  if (!bridge || typeof bridge.getWindowChromeSync !== 'function') return
+  windowChromeSyncInitialized = true
+
+  try {
+    useStore.setState({ windowChrome: bridge.getWindowChromeSync() })
+  } catch {
+    /* ignore */
+  }
+  if (typeof bridge.onWindowChromeChange === 'function') {
+    try {
+      bridge.onWindowChromeChange((state) => useStore.setState({ windowChrome: state }))
     } catch {
       /* ignore */
     }

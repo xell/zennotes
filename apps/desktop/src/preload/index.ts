@@ -47,7 +47,8 @@ import type {
   VaultTextSearchBackendPreference,
   VaultTextSearchCapabilities,
   VaultTextSearchMatch,
-  VaultTextSearchToolPaths
+  VaultTextSearchToolPaths,
+  WindowChromeState
 } from '@shared/ipc'
 import type { VaultTask } from '@shared/tasks'
 import type { DatabaseDoc, DatabaseSidecar, DatabaseSummary, DbRow } from '@shared/databases'
@@ -518,6 +519,25 @@ const api: ZenBridge = {
       return ipcRenderer.sendSync(IPC.WINDOW_GET_ID) as string | null
     } catch {
       return null
+    }
+  },
+  getWindowChromeSync: (): WindowChromeState => {
+    try {
+      return ipcRenderer.sendSync(IPC.WINDOW_GET_CHROME_SYNC) as WindowChromeState
+    } catch {
+      return { hasTabs: false, topInset: 0 }
+    }
+  },
+  onWindowChromeChange: (cb: (state: WindowChromeState) => void): (() => void) => {
+    const listener = (_: unknown, state: WindowChromeState): void => cb(state)
+    ipcRenderer.on(IPC.WINDOW_CHROME_ON_CHANGE, listener)
+    return () => ipcRenderer.removeListener(IPC.WINDOW_CHROME_ON_CHANGE, listener)
+  },
+  setWindowTitle: (title: string): void => {
+    try {
+      ipcRenderer.send(IPC.WINDOW_SET_TITLE, title)
+    } catch {
+      /* ignore */
     }
   },
   setConfig: (next: AppConfigPortable): Promise<void> =>

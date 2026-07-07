@@ -456,7 +456,22 @@ function loadNodePty(): typeof import('node-pty') {
 // directory rather than node_modules since it isn't an installed package.
 interface TabGroupsNative {
   getTabGroupHandles(handle: Buffer): Buffer[]
+  /** Points of the content view's top edge currently covered by native
+   *  title bar / tab bar chrome (NSWindow.contentLayoutRect under the
+   *  hood). hiddenInset windows never shrink the content view for this —
+   *  by design, so the app can draw its own chrome there — so this is the
+   *  only way to know how much top space is actually safe to use. */
+  getContentTopInset(handle: Buffer): number
+  /** Diagnostic-only dump of every geometry number that could plausibly be
+   *  the real top inset, plus the frame of every view layered above the
+   *  content view. Logged by DEBUG_TAB_CHROME while pinning down the exact
+   *  right number for getContentTopInset; not used in the actual UI. */
+  getChromeDebug(handle: Buffer): Record<string, unknown>
 }
+// Toggle with the DEBUG_TAB_CHROME env var — this is diagnostic-only, dumping
+// raw window/tab-bar geometry to the console so the getContentTopInset
+// formula can be tuned against real numbers instead of guessed.
+const DEBUG_TAB_CHROME = !!process.env.DEBUG_TAB_CHROME
 function loadTabGroupsNative(): TabGroupsNative | null {
   if (!isMac()) return null
   try {
@@ -500,6 +515,21 @@ function nativeTabGroupMembers(win: BrowserWindow): BrowserWindow[] {
   return members.length > 0 ? members : [win]
 }
 
+// The traffic lights' own tight bounds sit a bit higher than where content
+// should actually start — the single-window title bar has the same kind of
+// breathing room around its content, this just matches it for the tabbed case.
+const TAB_CHROME_BOTTOM_PADDING = 8
+
+function nativeContentTopInset(win: BrowserWindow): number {
+  if (!tabGroupsNative || win.isDestroyed()) return 0
+  try {
+    return tabGroupsNative.getContentTopInset(win.getNativeWindowHandle()) + TAB_CHROME_BOTTOM_PADDING
+  } catch (err) {
+    console.error('[window tabs] failed to query content top inset', err)
+    return 0
+  }
+}
+
 // Queries the real native tab groups for every open vault window in one
 // synchronous pass (so windows that are actually tabbed together always
 // agree on the same group id — no risk of one seeing a stale answer) and
@@ -511,7 +541,24 @@ async function reconcileAndPersistTabGroups(): Promise<void> {
   const idToTabGroupId = new Map<number, string | null>()
   for (const win of vaultWindows) {
     const members = nativeTabGroupMembers(win).filter((w) => isWorkspaceWindow(w))
-    if (members.length < 2) {
+    const hasTabs = members.length >= 2
+    if (DEBUG_TAB_CHROME && tabGroupsNative && hasTabs) {
+      try {
+        const debugInfo = tabGroupsNative.getChromeDebug(win.getNativeWindowHandle())
+        console.error('[tab-chrome-debug]', windowUuids.get(win.id), JSON.stringify(debugInfo))
+      } catch (err) {
+        console.error('[tab-chrome-debug] failed', err)
+      }
+    }
+    // Pushed live so the renderer can reserve the right amount of blank
+    // space instead of getting overlapped or masked by the native tab bar
+    // (see nativeContentTopInset / WindowChromeState for why this can't
+    // just be a fixed constant).
+    win.webContents.send(IPC.WINDOW_CHROME_ON_CHANGE, {
+      hasTabs,
+      topInset: nativeContentTopInset(win)
+    })
+    if (!hasTabs) {
       idToTabGroupId.set(win.id, null)
       continue
     }
@@ -574,6 +621,20 @@ function isWorkspaceWindow(win: BrowserWindow): boolean {
 // window arrangement and the system's "prefer tabs" preference. Driving
 // `addTabbedWindow` explicitly is the documented, deterministic way to
 // force separate windows into a single tab group regardless of that state.
+// Right after a window joins a tab group, AppKit briefly renders its tab
+// chrome spread across two stacked rows (traffic lights alone, tab strip
+// below) before collapsing it into one combined row a moment later — purely
+// cosmetic, both fit within the same reserved inset, but it's a visible
+// flash the user shouldn't have to see. A trivial resize nudge forces
+// AppKit to run its layout pass immediately instead of on its own schedule,
+// so the window only ever shows the settled, combined-row look.
+function nudgeWindowLayout(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
+  const bounds = win.getBounds()
+  win.setBounds({ ...bounds, width: bounds.width + 1 })
+  win.setBounds(bounds)
+}
+
 function mergeAllVaultWindows(): void {
   const vaultWindows = BrowserWindow.getAllWindows().filter(
     (win) => !win.isDestroyed() && isWorkspaceWindow(win)
@@ -589,6 +650,7 @@ function mergeAllVaultWindows(): void {
       console.error('[window tabs] failed to merge window into tab group', err)
     }
   }
+  nudgeWindowLayout(anchor)
   anchor.focus()
   void reconcileAndPersistTabGroups()
 }
@@ -1432,6 +1494,11 @@ async function setVaultForWindow(
   windowVaults.setLocalVault(win.id, vault)
   currentVault = vault
   currentWorkspaceMode = 'local'
+  // Baseline native title so a tab reads as something useful even before
+  // the renderer has mounted (or if it never pushes one). TitleBar refines
+  // this to the exact vault+path/section text it renders once it's up,
+  // via WINDOW_SET_TITLE.
+  if (!win.isDestroyed()) win.setTitle(vault.name)
   if (!windowVaults.hasRemoteWindows()) {
     remoteWorkspaceClient = null
     remoteWorkspaceConfig = null
@@ -2911,6 +2978,14 @@ function registerIpc(): void {
   on(IPC.WINDOW_CLOSE, (e) => {
     BrowserWindow.fromWebContents(e.sender)?.close()
   })
+  // Keeps the native title (what a tab shows as its label, and what Mission
+  // Control / Cmd+Tab / the Dock menu show) in sync with whatever TitleBar
+  // is actually rendering, so tabs read as something useful instead of the
+  // generic app name.
+  on(IPC.WINDOW_SET_TITLE, (e, title: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (win && !win.isDestroyed() && typeof title === 'string') win.setTitle(title.slice(0, 500))
+  })
 
   handle(IPC.WINDOW_OPEN_NOTE, async (_e, relPath: string) => {
     openFloatingNoteWindow(relPath)
@@ -3094,6 +3169,20 @@ function registerIpc(): void {
       event.returnValue = win ? (windowUuids.get(win.id) ?? null) : null
     } catch {
       event.returnValue = null
+    }
+  })
+  ipcMain.on(IPC.WINDOW_GET_CHROME_SYNC, (event) => {
+    try {
+      assertTrustedIpcEvent(event)
+      const win = BrowserWindow.fromWebContents(event.sender)
+      event.returnValue = win
+        ? {
+            hasTabs: nativeTabGroupMembers(win).filter(isWorkspaceWindow).length >= 2,
+            topInset: nativeContentTopInset(win)
+          }
+        : { hasTabs: false, topInset: 0 }
+    } catch {
+      event.returnValue = { hasTabs: false, topInset: 0 }
     }
   })
   handle(IPC.CONFIG_SET, async (_event, next: AppConfigPortable) => {
@@ -3942,6 +4031,7 @@ app.whenReady().then(async () => {
       // proven unreliable, so make the attachment explicit.
       if (sourceWindow && !sourceWindow.isDestroyed()) {
         sourceWindow.addTabbedWindow(win)
+        nudgeWindowLayout(sourceWindow)
         void reconcileAndPersistTabGroups()
       }
     })

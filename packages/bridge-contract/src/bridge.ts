@@ -32,7 +32,8 @@ import type {
   VaultTextSearchBackendPreference,
   VaultTextSearchCapabilities,
   VaultTextSearchMatch,
-  VaultTextSearchToolPaths
+  VaultTextSearchToolPaths,
+  WindowChromeState
 } from './ipc'
 import type { CustomTemplateFile, WriteTemplateInput } from './templates'
 import type { VaultTask } from '@zennotes/shared-domain/tasks'
@@ -272,6 +273,19 @@ export interface ZenBridge {
    *  per-window workspace snapshots so multiple windows on the same vault each
    *  have independent tab state. Returns null in the web build. */
   getWindowId(): string | null
+  /** Native tab-group membership and chrome inset for this window, read
+   *  once at mount. Use onWindowChromeChange for live updates. Always
+   *  `{ hasTabs: false, topInset: 0 }` on web/Windows/Linux. */
+  getWindowChromeSync(): WindowChromeState
+  /** Subscribe to this window's chrome changing: joining/leaving a native
+   *  tab group (Merge All Windows, the native "+" button, Move Tab to New
+   *  Window, or dragging a tab by hand). Desktop macOS only; a no-op on web. */
+  onWindowChromeChange(cb: (state: WindowChromeState) => void): () => void
+  /** Sets this window's native title — what a native tab shows as its
+   *  label, and what Mission Control / Cmd+Tab / the Dock menu show.
+   *  TitleBar keeps this in sync with whatever it renders (vault + path,
+   *  or the current section label). No-op on web. */
+  setWindowTitle(title: string): void
   /** Persist the portable preferences subset to the config file (debounced by
    *  the caller). No-op on web. */
   setConfig(next: AppConfigPortable): Promise<void>

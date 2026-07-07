@@ -99,6 +99,9 @@ export const IPC = {
   WINDOW_MINIMIZE: 'window:minimize',
   WINDOW_CLOSE: 'window:close',
   WINDOW_GET_ID: 'window:get-id',
+  WINDOW_GET_CHROME_SYNC: 'window:get-chrome-sync',
+  WINDOW_CHROME_ON_CHANGE: 'window:chrome-on-change',
+  WINDOW_SET_TITLE: 'window:set-title',
   WINDOW_OPEN_NOTE: 'window:open-note',
   WINDOW_OPEN_VAULT: 'window:open-vault',
   WINDOW_TOGGLE_QUICK_CAPTURE: 'window:toggle-quick-capture',
@@ -556,6 +559,21 @@ export interface PastedImageInput {
   mimeType: string
   /** Optional clipboard/file name, when the source provides one. */
   suggestedName?: string | null
+}
+
+/** hiddenInset windows never shrink their content view to make room for a
+ *  native tab bar — that's the point of hiddenInset, it lets the app draw
+ *  its own chrome there — so `topInset` is the only way to know how many
+ *  points of the top are actually covered by real (opaque) native chrome
+ *  when `hasTabs` is true, so the renderer can reserve blank space instead
+ *  of getting overlapped or masked by it. */
+export interface WindowChromeState {
+  /** True when this window is currently merged into a native tab group
+   *  with at least one other window. */
+  hasTabs: boolean
+  /** Points of top space covered by native title/tab bar chrome. 0 when
+   *  standalone (the app draws its own custom title bar there instead). */
+  topInset: number
 }
 
 export interface VaultInfo {
