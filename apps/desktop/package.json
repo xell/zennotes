@@ -24,6 +24,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "build:native": "cd native/tab-groups && node-gyp rebuild",
     "build:prod": "npm run typecheck && npm run test:run && npm run build",
     "start": "electron-vite preview",
     "test": "vitest",
@@ -125,6 +126,11 @@
         "from": "../../node_modules/node-pty",
         "to": "node-pty",
         "filter": ["lib/**", "prebuilds/darwin-arm64/**", "package.json"]
+      },
+      {
+        "from": "native/tab-groups/build/Release",
+        "to": "tab-groups",
+        "filter": ["tab_groups.node"]
       },
       {
         "from": "build/icon.png",

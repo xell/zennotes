@@ -1,0 +1,11 @@
+{
+  "name": "tab-groups-native",
+  "version": "0.0.0",
+  "private": true,
+  "description": "macOS-only Node addon that reads NSWindow.tabbedWindows so ZenNotes can persist real native tab-group membership, including groups changed by dragging tabs by hand (which Electron's JS APIs cannot observe).",
+  "main": "build/Release/tab_groups.node",
+  "gypfile": true,
+  "scripts": {
+    "build": "node-gyp rebuild"
+  }
+}

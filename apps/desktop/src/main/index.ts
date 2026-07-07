@@ -446,6 +446,109 @@ function loadNodePty(): typeof import('node-pty') {
   return require(p) as typeof import('node-pty')
 }
 
+// Electron's tab APIs (addTabbedWindow, mergeAllWindows, etc.) are
+// write-only: there is no event or getter for "which windows are tabbed
+// with this one right now". Dragging a tab out of the bar by hand, or
+// dropping one window's tab into another's bar, changes real AppKit state
+// that Electron never surfaces to JS. `native/tab-groups` is a small N-API
+// addon that reads NSWindow.tabbedWindows directly to answer that question.
+// Same dev/prod path split as loadNodePty above, but from our own repo
+// directory rather than node_modules since it isn't an installed package.
+interface TabGroupsNative {
+  getTabGroupHandles(handle: Buffer): Buffer[]
+}
+function loadTabGroupsNative(): TabGroupsNative | null {
+  if (!isMac()) return null
+  try {
+    const p = app.isPackaged
+      ? path.join(process.resourcesPath, 'tab-groups', 'tab_groups.node')
+      : path.join(__dirname, '../../native/tab-groups/build/Release/tab_groups.node')
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require(p) as TabGroupsNative
+  } catch (err) {
+    console.error('[window tabs] native tab-groups addon unavailable, tab layout will not persist across relaunch', err)
+    return null
+  }
+}
+const tabGroupsNative = loadTabGroupsNative()
+
+// The real, current members of `win`'s native tab group (including `win`
+// itself), resolved back to BrowserWindow instances by comparing native
+// view handles. Falls back to `[win]` (i.e. "standalone") if the addon
+// isn't available or the window isn't tabbed with anything.
+function nativeTabGroupMembers(win: BrowserWindow): BrowserWindow[] {
+  if (!tabGroupsNative || win.isDestroyed()) return [win]
+  let handles: Buffer[]
+  try {
+    handles = tabGroupsNative.getTabGroupHandles(win.getNativeWindowHandle())
+  } catch (err) {
+    console.error('[window tabs] failed to query native tab group', err)
+    return [win]
+  }
+  const open = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed())
+  const members: BrowserWindow[] = []
+  for (const handle of handles) {
+    const match = open.find((w) => {
+      try {
+        return w.getNativeWindowHandle().equals(handle)
+      } catch {
+        return false
+      }
+    })
+    if (match) members.push(match)
+  }
+  return members.length > 0 ? members : [win]
+}
+
+// Queries the real native tab groups for every open vault window in one
+// synchronous pass (so windows that are actually tabbed together always
+// agree on the same group id — no risk of one seeing a stale answer) and
+// writes the result straight into openWindows.
+async function reconcileAndPersistTabGroups(): Promise<void> {
+  const vaultWindows = BrowserWindow.getAllWindows().filter(
+    (win) => !win.isDestroyed() && isWorkspaceWindow(win)
+  )
+  const idToTabGroupId = new Map<number, string | null>()
+  for (const win of vaultWindows) {
+    const members = nativeTabGroupMembers(win).filter((w) => isWorkspaceWindow(w))
+    if (members.length < 2) {
+      idToTabGroupId.set(win.id, null)
+      continue
+    }
+    const uuids = members
+      .map((w) => windowUuids.get(w.id))
+      .filter((id): id is string => !!id)
+      .sort()
+    idToTabGroupId.set(win.id, uuids.length >= 2 ? uuids.join(',') : null)
+  }
+  const updates = vaultWindows
+    .map((win) => ({ uuid: windowUuids.get(win.id), tabGroupId: idToTabGroupId.get(win.id) ?? null }))
+    .filter((u): u is { uuid: string; tabGroupId: string | null } => !!u.uuid)
+  if (updates.length === 0) return
+  await updateConfig((cfg) => {
+    const byId = new Map(updates.map((u) => [u.uuid, u.tabGroupId]))
+    const sessions = cfg.openWindows ?? []
+    return {
+      ...cfg,
+      openWindows: sessions.map((s) => (byId.has(s.windowId) ? { ...s, tabGroupId: byId.get(s.windowId) ?? null } : s))
+    }
+  })
+}
+
+// Debounced separately from per-window geometry persistence: this is a
+// shared, app-wide reconciliation (it has to look at every vault window at
+// once to be consistent), not a per-window one. Triggered on the same
+// move/resize signals used for geometry, since that's the only observable
+// side effect of a native tab drag — there is no dedicated event for it.
+let tabGroupReconcileTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleTabGroupReconcile(): void {
+  if (tabGroupReconcileTimer) clearTimeout(tabGroupReconcileTimer)
+  tabGroupReconcileTimer = setTimeout(() => {
+    tabGroupReconcileTimer = null
+    void reconcileAndPersistTabGroups()
+  }, WINDOW_STATE_PERSIST_DELAY_MS)
+}
+
 // PTY sessions keyed by a random UUID. Each entry records the pty handle and
 // the webContents ID so output can be routed back to the right renderer and
 // all sessions for a closed window can be cleaned up.
@@ -487,6 +590,7 @@ function mergeAllVaultWindows(): void {
     }
   }
   anchor.focus()
+  void reconcileAndPersistTabGroups()
 }
 
 function findWindowForVaultRoot(root: string): BrowserWindow | null {
@@ -938,7 +1042,14 @@ async function persistWindowState(win: BrowserWindow): Promise<void> {
       if (vault) {
         const sessions = cfg.openWindows ?? []
         const idx = sessions.findIndex((s) => s.windowId === uuid)
-        const entry: PersistedWindowSession = { windowId: uuid, root: vault.root, windowState: state }
+        // tabGroupId is owned by reconcileAndPersistTabGroups, not here —
+        // preserve whatever it already was rather than guessing at it.
+        const entry: PersistedWindowSession = {
+          windowId: uuid,
+          root: vault.root,
+          windowState: state,
+          tabGroupId: idx >= 0 ? sessions[idx].tabGroupId ?? null : null
+        }
         updated.openWindows = idx >= 0
           ? sessions.map((s, i) => (i === idx ? entry : s))
           : [...sessions, entry]
@@ -1048,6 +1159,8 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
   win.on('resize', scheduleWindowStatePersist)
   win.on('maximize', scheduleWindowStatePersist)
   win.on('unmaximize', scheduleWindowStatePersist)
+  win.on('move', scheduleTabGroupReconcile)
+  win.on('resize', scheduleTabGroupReconcile)
   win.on('close', flushWindowStatePersist)
   const winWebContentsId = win.webContents.id
   win.on('closed', () => {
@@ -1057,6 +1170,7 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
     readyWindowIds.delete(win.id)
     pendingWindowNoteOpens.delete(win.id)
     killPtySessionsForWebContents(winWebContentsId)
+    void reconcileAndPersistTabGroups()
     const closedUuid = windowUuids.get(win.id)
     windowUuids.delete(win.id)
     if (closedUuid) {
@@ -1334,7 +1448,14 @@ async function setVaultForWindow(
     let newSessions = sessions
     if (uuid && windowStateOnOpen) {
       const idx = sessions.findIndex((s) => s.windowId === uuid)
-      const entry: PersistedWindowSession = { windowId: uuid, root: vault.root, windowState: windowStateOnOpen }
+      // tabGroupId is owned by reconcileAndPersistTabGroups, not here —
+      // preserve whatever it already was rather than guessing at it.
+      const entry: PersistedWindowSession = {
+        windowId: uuid,
+        root: vault.root,
+        windowState: windowStateOnOpen,
+        tabGroupId: idx >= 0 ? sessions[idx].tabGroupId ?? null : null
+      }
       newSessions = idx >= 0
         ? sessions.map((s, i) => (i === idx ? entry : s))
         : [...sessions, entry]
@@ -3454,7 +3575,15 @@ function installAppMenu(): void {
         { role: 'toggleTabBar', label: 'Toggle Tab Bar' },
         { role: 'selectNextTab', label: 'Show Next Tab' },
         { role: 'selectPreviousTab', label: 'Show Previous Tab' },
-        { role: 'moveTabToNewWindow', label: 'Move Tab to New Window' },
+        {
+          label: 'Move Tab to New Window',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow()
+            if (!win) return
+            win.moveTabToNewWindow()
+            void reconcileAndPersistTabGroups()
+          }
+        },
         // Not `role: 'mergeAllWindows'` — that native action is unreliable
         // at grouping already-separate windows (see mergeAllVaultWindows).
         {
@@ -3733,16 +3862,44 @@ app.whenReady().then(async () => {
     const startupCfg = await loadConfig()
     const sessions = (startupCfg.openWindows ?? []).filter((s) => s.root && s.windowId)
     if (sessions.length > 0) {
+      const restoredByWindowId = new Map<string, BrowserWindow>()
       for (const session of sessions) {
         try {
-          await createWindow({
+          const win = await createWindow({
             initialVaultRoot: session.root,
             windowId: session.windowId,
             windowState: session.windowState,
             persistInitialVault: true
           })
+          restoredByWindowId.set(session.windowId, win)
         } catch (err) {
           console.error('[session restore] failed to restore window', session.windowId, err)
+        }
+      }
+      // Native tab-group membership doesn't survive quitting the app — macOS
+      // doesn't persist it — so it's rebuilt here from the tabGroupId
+      // sessions were saved with, re-merging windows that shared a group in
+      // the order they were saved. (Once these windows exist, the real
+      // grouping can be read straight back via the tab-groups addon, so no
+      // further bookkeeping is needed after this point.)
+      const restoredGroups = new Map<string, BrowserWindow[]>()
+      for (const session of sessions) {
+        if (!session.tabGroupId) continue
+        const win = restoredByWindowId.get(session.windowId)
+        if (!win || win.isDestroyed()) continue
+        const members = restoredGroups.get(session.tabGroupId) ?? []
+        members.push(win)
+        restoredGroups.set(session.tabGroupId, members)
+      }
+      for (const members of restoredGroups.values()) {
+        if (members.length < 2) continue
+        const [anchor, ...rest] = members
+        for (const win of rest) {
+          try {
+            anchor.addTabbedWindow(win)
+          } catch (err) {
+            console.error('[window tabs] failed to restore tab group', err)
+          }
         }
       }
       if (BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && isWorkspaceWindow(w)).length === 0) {
@@ -3783,7 +3940,10 @@ app.whenReady().then(async () => {
       // The native "+" only appears once a real tab group exists, but
       // relying on tabbingIdentifier alone to slot the new window in has
       // proven unreliable, so make the attachment explicit.
-      if (sourceWindow && !sourceWindow.isDestroyed()) sourceWindow.addTabbedWindow(win)
+      if (sourceWindow && !sourceWindow.isDestroyed()) {
+        sourceWindow.addTabbedWindow(win)
+        void reconcileAndPersistTabGroups()
+      }
     })
   })
 

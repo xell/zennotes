@@ -255,6 +255,10 @@ export interface PersistedWindowSession {
   windowId: string
   root: string
   windowState: PersistedWindowState
+  /** Opaque id shared by every window that was in the same native macOS tab
+   *  group when last persisted, so the layout can be rebuilt on relaunch.
+   *  Null/absent means the window was standalone. */
+  tabGroupId?: string | null
 }
 
 export interface PersistedRemoteWorkspaceConfig {
@@ -431,7 +435,8 @@ function normalizePersistedConfig(value: unknown): PersistedConfig {
     const root = typeof v.root === 'string' && v.root.trim() ? path.resolve(v.root.trim()) : ''
     const windowState = normalizeWindowState(v.windowState)
     if (!windowId || !root || !windowState) return null
-    return { windowId, root, windowState }
+    const tabGroupId = typeof v.tabGroupId === 'string' && v.tabGroupId.trim() ? v.tabGroupId.trim() : null
+    return { windowId, root, windowState, tabGroupId }
   }
   const openWindows = Array.isArray(candidate.openWindows)
     ? candidate.openWindows

@@ -21,6 +21,8 @@ data/
 # Nix build outputs
 result
 result-*
+# Compiled native addon output (machine/arch-specific; rebuilt via node-gyp)
+apps/desktop/native/*/build/
 # Release notes / launch copy are kept local only, never committed.
 docs/releases/
 CLAUDE.md
