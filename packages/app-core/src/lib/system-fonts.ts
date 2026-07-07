@@ -18,7 +18,6 @@ export async function listSystemFonts(): Promise<string[]> {
   if (cache && cache.length > 0) return cache
   try {
     const fonts = await window.zen.listSystemFonts()
-    console.log(`[zen] system fonts: ${fonts.length}`)
     if (fonts.length > 0) cache = fonts
     return fonts
   } catch (err) {
