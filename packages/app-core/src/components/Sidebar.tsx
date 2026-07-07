@@ -6995,7 +6995,7 @@ function FavoriteRow({
       <SidebarGlyph active={strongActive} rowActive={active} colorClass={colorClass}>
         {icon}
       </SidebarGlyph>
-      <span className="flex-1 truncate">{label}</span>
+      <span className={["flex-1 truncate", colorClass].filter(Boolean).join(" ")}>{label}</span>
       {sidebarFocused && vimHighlight && (
         <RowKeyHint active={active} keyLabel="m" compact />
       )}
