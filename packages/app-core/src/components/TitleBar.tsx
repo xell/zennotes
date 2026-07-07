@@ -77,9 +77,12 @@ export function TitleBar(): JSX.Element {
   // rest of the UI down on its own. The native tab's label already shows the
   // title set above, so there's no content to show here — just leave blank
   // space of the same height so the sidebar/pane headers don't render
-  // underneath it.
+  // underneath it. `drag-region` matters even though it's blank: Electron
+  // content isn't draggable by default, and without it this band would be
+  // dead space you can't grab to move the window (unlike Safari, where the
+  // equivalent strip is native chrome and draggable automatically).
   if (windowChrome.hasTabs) {
-    return <div className="shrink-0" style={{ height: windowChrome.topInset }} />
+    return <div className="drag-region shrink-0" style={{ height: windowChrome.topInset }} />
   }
 
   return (
