@@ -1364,7 +1364,19 @@ export function Sidebar(): JSX.Element {
         (event.clientX - hovered.rect.left - SIDEBAR_INDENT_BASE_PX) /
           SIDEBAR_INDENT_PX,
       );
-      const sectionRootDir = vaultRelativeFolderPath(hovered.section, "", vs);
+      // Isolation re-roots the tree so the isolated folder's own children
+      // render at depth 0 — the same depth normally reserved for direct
+      // children of the section root. Without this, a depth-0 drop (e.g.
+      // reordering among the isolated folder's children) resolves parentDir
+      // to the literal section root instead of the isolated folder, which
+      // doesn't match the dragged note's real parent — so performDrop takes
+      // the "move" branch instead of "just reorder" and the note lands at
+      // the vault root (or wherever the section root actually is).
+      const isolatedRoot = useStore.getState().isolatedRoot;
+      const sectionRootDir =
+        isolatedRoot && hovered.section === isolatedRoot.folder
+          ? vaultRelativeFolderPath(isolatedRoot.folder, isolatedRoot.subpath, vs)
+          : vaultRelativeFolderPath(hovered.section, "", vs);
       const resolution = resolveDropTarget({
         rows,
         gapIndex,
