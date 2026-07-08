@@ -113,6 +113,7 @@ import { TrashView } from './TrashView'
 import { AssetsView } from './AssetsView'
 import { QuickNotesView } from './QuickNotesView'
 import { NoteStats } from './StatusBar'
+import { readingStats, type ReadingStats } from '../lib/word-count'
 import { isTasksTabPath } from '@shared/tasks'
 import { isDatabaseTabPath, databaseTitleFromTab, databaseTabPath, isDatabaseCsvPath } from '@shared/databases'
 import { isTagsTabPath } from '@shared/tags'
@@ -576,6 +577,19 @@ function getSelectionCommentAction(view: EditorView): SelectionCommentAction {
   }
 }
 
+// Reading stats for the current selection, summed across all non-empty
+// ranges (multi-cursor), or null when nothing is selected. Uses the same
+// readingStats as the whole-note number, so selecting the entire note
+// reproduces the whole-note counts exactly. Focus isn't required — a
+// selection left highlighted after clicking away still reports its stats.
+function getSelectionStats(view: EditorView): ReadingStats | null {
+  const ranges = view.state.selection.ranges.filter((r) => !r.empty)
+  if (ranges.length === 0) return null
+  let text = ''
+  for (const r of ranges) text += view.state.sliceDoc(r.from, r.to)
+  return readingStats(text)
+}
+
 function getEditorContextMenuPosition(view: EditorView): { x: number; y: number } {
   const sel = view.state.selection.main
   const coords = sel.empty
@@ -732,6 +746,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const [commentDraft, setCommentDraft] = useState<CommentDraft | null>(null)
   const [selectionCommentAction, setSelectionCommentAction] =
     useState<SelectionCommentAction>(null)
+  // Reading stats for this pane's current editor selection, or null when the
+  // selection is empty (the header then falls back to whole-note stats).
+  const [selectionStats, setSelectionStats] = useState<ReadingStats | null>(null)
   const [paneDropEdge, setPaneDropEdge] = useState<PaneEdge | null>(null)
   const [tabDropIndicator, setTabDropIndicator] = useState<TabDropIndicator>(null)
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; path: string } | null>(null)
@@ -806,6 +823,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
 
   const updateSelectionCommentAction = useCallback((view: EditorView | null = viewRef.current): void => {
     setSelectionCommentAction(view ? getSelectionCommentAction(view) : null)
+    // Header stats follow the selection, driven by the same rAF-debounced
+    // selection/doc updates as the comment toolbar.
+    setSelectionStats(view ? getSelectionStats(view) : null)
   }, [])
 
   const scheduleSelectionCommentAction = useCallback((view: EditorView | null = viewRef.current): void => {
@@ -1433,6 +1453,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
         }
         richMarkdownDeferredRef.current = false
         setSelectionCommentAction(null)
+        setSelectionStats(null)
         const existingView = viewRef.current
         // Capture the outgoing tab's selection here, synchronously, before
         // destroying the view. The scroll-memory effect's cleanup (below)
@@ -3343,7 +3364,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
               />
             )}
           </div>
-          <NoteStats note={content} />
+          <NoteStats note={content} selection={selectionStats} />
           {toolbar}
         </header>
       )}
