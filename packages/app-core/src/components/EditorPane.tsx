@@ -113,6 +113,7 @@ import { TrashView } from './TrashView'
 import { AssetsView } from './AssetsView'
 import { QuickNotesView } from './QuickNotesView'
 import { NoteStats } from './StatusBar'
+import { MediaPlayer } from './MediaPlayer'
 import { readingStats, type ReadingStats } from '../lib/word-count'
 import { isTasksTabPath } from '@shared/tasks'
 import { isDatabaseTabPath, databaseTitleFromTab, databaseTabPath, isDatabaseCsvPath } from '@shared/databases'
@@ -3731,14 +3732,17 @@ function AssetTabView({
       />
     </div>
   ) : assetKind === 'video' ? (
-    <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-black">
-      <video src={assetUrl} controls className="max-h-full max-w-full" />
-    </div>
+    <MediaPlayer
+      kind="video"
+      src={assetUrl}
+      className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-black"
+      mediaClassName="max-h-full max-w-full"
+    />
   ) : assetKind === 'audio' ? (
     <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-paper-100/35 p-6">
       <div className="w-full max-w-md rounded-lg border border-paper-300/70 bg-paper-50/80 p-4 shadow-sm">
         <div className="mb-3 truncate text-sm font-medium text-ink-900">{title}</div>
-        <audio src={assetUrl} controls className="w-full" />
+        <MediaPlayer kind="audio" src={assetUrl} mediaClassName="w-full" />
       </div>
     </div>
   ) : assetKind === 'pdf' ? (

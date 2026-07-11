@@ -499,17 +499,20 @@ export function VimNav(): JSX.Element | null {
         }
       }
 
-      // The database/table view runs its own vim-style motion grid, so past
-      // this point (leader + the sidebar/note-list/connections navigation
-      // below) yield to it — otherwise its j/k/h/l/Space etc. would be stolen
-      // as list navigation or the leader key. Placed AFTER the global shortcuts
-      // above (buffer nav, jump history, inline-format) on purpose: those don't
-      // collide with any grid key, so they must keep working while the grid is
-      // focused instead of the grid being a black hole. Ctrl+W (and its pending
-      // direction key) is still let through so the grid hands off to pane/tab
-      // navigation like every other surface.
+      // Surfaces that run their own keyboard loop, so past this point (leader +
+      // the sidebar/note-list/connections navigation below) yield to them —
+      // otherwise their Space / arrows / j/k/h/l etc. would be stolen as list
+      // navigation or the leader key:
+      //   - the database/table view's vim-style motion grid
+      //   - the media player pane (Space play/pause, arrows seek/volume, m mute)
+      // Placed AFTER the global shortcuts above (buffer nav, jump history,
+      // inline-format) on purpose: those don't collide with any of these keys,
+      // so they must keep working while the surface is focused instead of it
+      // being a black hole. Ctrl+W (and its pending direction key) is still let
+      // through so the surface hands off to pane/tab navigation like every
+      // other one.
       if (
-        target?.closest('[data-zen-db-grid]') &&
+        target?.closest('[data-zen-db-grid], [data-zen-media-player]') &&
         !ctrlWPending.current &&
         sequenceTokenFromEvent(e) !== panePrefixToken
       ) {

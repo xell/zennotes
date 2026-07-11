@@ -55,6 +55,7 @@ import { completionNavKeymap } from '../lib/cm-completion-nav'
 import { classifyLocalAssetHref, type LocalAssetKind } from '../lib/local-assets'
 import { focusEditorNormalMode } from '../lib/editor-focus'
 import { LazyPreview as Preview } from './LazyPreview'
+import { MediaPlayer } from './MediaPlayer'
 import { TerminalPanel } from './TerminalPanel'
 import { DocumentTextIcon, ListIcon, PinIcon, TerminalIcon } from './icons'
 import { ModeDropdown } from './ModeDropdown'
@@ -671,20 +672,19 @@ export function PinnedReferencePane(): JSX.Element | null {
         )}
 
         {pinnedRefPath && !showPicker && isAsset && assetUrl && assetKind === 'video' && (
-          <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-black">
-            <video
-              src={assetUrl}
-              controls
-              className="max-h-full max-w-full"
-            />
-          </div>
+          <MediaPlayer
+            kind="video"
+            src={assetUrl}
+            className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-black"
+            mediaClassName="max-h-full max-w-full"
+          />
         )}
 
         {pinnedRefPath && !showPicker && isAsset && assetUrl && assetKind === 'audio' && (
           <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-paper-100/40 p-6">
             <div className="w-full max-w-md rounded-xl border border-paper-300/70 bg-paper-50/80 p-4 shadow-sm">
               <div className="mb-3 truncate text-sm font-medium text-ink-900">{title}</div>
-              <audio src={assetUrl} controls className="w-full" />
+              <MediaPlayer kind="audio" src={assetUrl} mediaClassName="w-full" />
             </div>
           </div>
         )}

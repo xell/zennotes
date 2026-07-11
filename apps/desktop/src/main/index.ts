@@ -18,7 +18,8 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import type { IPty } from 'node-pty'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { promises as fsp } from 'node:fs'
+import { promises as fsp, createReadStream } from 'node:fs'
+import { Readable } from 'node:stream'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
@@ -1000,6 +1001,64 @@ function mimeTypeForPath(absPath: string): string {
     default:
       return 'application/octet-stream'
   }
+}
+
+/**
+ * Serve a local file as an HTTP-style Response that honors the `Range`
+ * request header, so Chromium's <video>/<audio> elements can seek. Without a
+ * 206 + `Content-Range`/`Accept-Ranges` response the media element treats the
+ * resource as non-seekable — playback works but the scrubber and arrow keys
+ * are inert. Streams the requested byte slice via createReadStream rather than
+ * buffering the whole file (a video can be hundreds of MB).
+ */
+async function serveLocalFileResponse(abs: string, request: Request): Promise<Response> {
+  const stat = await fsp.stat(abs)
+  const total = stat.size
+  const contentType = mimeTypeForPath(abs)
+  const baseHeaders: Record<string, string> = {
+    'content-type': contentType,
+    'cache-control': 'no-cache',
+    'accept-ranges': 'bytes'
+  }
+
+  const rangeHeader = request.headers.get('Range')
+  // Only single-range requests (what media elements send). Anything else —
+  // no header, or a multipart `bytes=0-1,3-4` — falls through to the full body.
+  const match = rangeHeader ? /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim()) : null
+  if (match && (match[1] !== '' || match[2] !== '')) {
+    let start: number
+    let end: number
+    if (match[1] === '') {
+      // Suffix range: `bytes=-N` → the final N bytes.
+      const suffix = Number.parseInt(match[2], 10)
+      start = Math.max(0, total - suffix)
+      end = total - 1
+    } else {
+      start = Number.parseInt(match[1], 10)
+      end = match[2] === '' ? total - 1 : Number.parseInt(match[2], 10)
+    }
+    end = Math.min(end, total - 1)
+    if (start > end || start >= total) {
+      return new Response(null, {
+        status: 416,
+        headers: { 'content-range': `bytes */${total}`, 'accept-ranges': 'bytes' }
+      })
+    }
+    const stream = createReadStream(abs, { start, end })
+    return new Response(Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>, {
+      status: 206,
+      headers: {
+        ...baseHeaders,
+        'content-range': `bytes ${start}-${end}/${total}`,
+        'content-length': String(end - start + 1)
+      }
+    })
+  }
+
+  const stream = createReadStream(abs)
+  return new Response(Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>, {
+    headers: { ...baseHeaders, 'content-length': String(total) }
+  })
 }
 
 function isTrustedRendererUrl(url: string): boolean {
@@ -3894,13 +3953,7 @@ app.whenReady().then(async () => {
     if (!abs || !windowVaults.isPathInsideOpenLocalVault(abs)) {
       throw new Error(`Invalid local asset URL: ${request.url}`)
     }
-    const data = await fsp.readFile(abs)
-    return new Response(data, {
-      headers: {
-        'content-type': mimeTypeForPath(abs),
-        'cache-control': 'no-cache'
-      }
-    })
+    return await serveLocalFileResponse(abs, request)
   })
 
   // Theme-relative assets: url(zen-theme://<slug>/<file>) in a custom theme's
