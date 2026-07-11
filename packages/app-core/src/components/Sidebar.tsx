@@ -2110,6 +2110,8 @@ export function Sidebar(): JSX.Element {
     };
     keys.push("inbox:");
     walk("inbox", trees.inbox);
+    keys.push("quick:");
+    walk("quick", trees.quick);
     return keys;
   }, [trees]);
 

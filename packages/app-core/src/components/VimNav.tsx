@@ -1350,6 +1350,16 @@ export function VimNav(): JSX.Element | null {
     state: ReturnType<typeof useStore.getState>
   ): string | null {
     if (!el) return null
+    // zM now collapses the Favorites section too (see collapseAllFolders in
+    // store.ts) — if the cursor was on the heading itself, it's still there
+    // afterward (collapsing only hides its children, not the heading), just
+    // renumbered. A favorited note/folder row's own cursor position is
+    // already handled generically below (same data-sidebar-* shape as its
+    // Notes-tree counterpart), since collapsing Favorites unmounts those
+    // rows entirely rather than just hiding them.
+    if (el.dataset.sidebarFavoritesHeading === 'true') {
+      return '[data-sidebar-favorites-heading="true"]'
+    }
     const type = el.dataset.sidebarType
     if (type === 'folder') {
       const folder = el.dataset.sidebarFolder

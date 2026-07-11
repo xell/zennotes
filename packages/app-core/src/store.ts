@@ -6012,15 +6012,25 @@ export const useStore = create<Store>((set, get) => {
   },
   collapseAllFolders: () => {
     const s = get()
+    // Both trees the sidebar renders via a folder tree (inbox = the main
+    // Notes tree, quick = Quick Access's "Quick Notes" folder) — not just
+    // inbox. This is a full replace of collapsedFolders, so omitting quick:
+    // here doesn't just leave it uncollapsed, it actively *drops* any
+    // quick: entry already in the array, re-expanding it if it had been
+    // manually collapsed. Favorites isn't part of collapsedFolders at all
+    // (favoritesCollapsed is its own field, see toggleFavoritesCollapsed) —
+    // set it here too so "collapse all" really means all.
     const keys = [
       'inbox:',
-      ...s.folders.filter((f) => f.folder === 'inbox').map((f) => `inbox:${f.subpath}`)
+      ...s.folders.filter((f) => f.folder === 'inbox').map((f) => `inbox:${f.subpath}`),
+      'quick:',
+      ...s.folders.filter((f) => f.folder === 'quick').map((f) => `quick:${f.subpath}`)
     ]
-    set({ collapsedFolders: keys })
+    set({ collapsedFolders: keys, favoritesCollapsed: true })
     savePrefs(collectPrefs(get()))
   },
   expandAllFolders: () => {
-    set({ collapsedFolders: [] })
+    set({ collapsedFolders: [], favoritesCollapsed: false })
     savePrefs(collectPrefs(get()))
   },
 

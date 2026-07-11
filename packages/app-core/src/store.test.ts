@@ -547,9 +547,12 @@ describe('getOrderedSiblingPaths', () => {
 
 // collapseAllFolders/expandAllFolders back the sidebar's "Collapse all"
 // button and VimNav's zM/zR — both call the same store action, so this is
-// the one place their shared scope (Notes/inbox only) needs pinning down.
+// the one place their shared scope needs pinning down. Covers every folder
+// tree the sidebar renders (Notes/inbox + Quick Access/quick) plus the
+// Favorites section (favoritesCollapsed, a separate field) — archive/trash
+// have no collapsible tree of their own, so they're correctly untouched.
 describe('collapseAllFolders / expandAllFolders', () => {
-  it('collapses every inbox folder (and the inbox root), leaving quick/archive folders alone', async () => {
+  it('collapses every inbox AND quick folder (plus their roots) and Favorites, leaving archive alone', async () => {
     installZen()
     const { useStore } = await loadStore()
     useStore.setState({
@@ -559,26 +562,44 @@ describe('collapseAllFolders / expandAllFolders', () => {
         { folder: 'quick', subpath: 'Ideas', siblingOrder: 0 },
         { folder: 'archive', subpath: 'Old', siblingOrder: 0 }
       ],
-      collapsedFolders: []
+      collapsedFolders: [],
+      favoritesCollapsed: false
     })
 
     useStore.getState().collapseAllFolders()
 
     expect(new Set(useStore.getState().collapsedFolders)).toEqual(
-      new Set(['inbox:', 'inbox:Projects', 'inbox:Projects/Nested'])
+      new Set(['inbox:', 'inbox:Projects', 'inbox:Projects/Nested', 'quick:', 'quick:Ideas'])
     )
+    expect(useStore.getState().favoritesCollapsed).toBe(true)
   })
 
-  it('expands everything back out', async () => {
+  it('does not drop a pre-existing quick: collapse entry (regression: used to silently re-expand it)', async () => {
     installZen()
     const { useStore } = await loadStore()
     useStore.setState({
-      collapsedFolders: ['inbox:', 'inbox:Projects']
+      folders: [{ folder: 'quick', subpath: 'Ideas', siblingOrder: 0 }],
+      // Quick Notes was already manually collapsed before zM ran.
+      collapsedFolders: ['quick:']
+    })
+
+    useStore.getState().collapseAllFolders()
+
+    expect(useStore.getState().collapsedFolders).toContain('quick:')
+  })
+
+  it('expands everything back out, including Favorites', async () => {
+    installZen()
+    const { useStore } = await loadStore()
+    useStore.setState({
+      collapsedFolders: ['inbox:', 'inbox:Projects', 'quick:'],
+      favoritesCollapsed: true
     })
 
     useStore.getState().expandAllFolders()
 
     expect(useStore.getState().collapsedFolders).toEqual([])
+    expect(useStore.getState().favoritesCollapsed).toBe(false)
   })
 })
 
