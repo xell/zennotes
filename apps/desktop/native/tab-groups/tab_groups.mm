@@ -67,6 +67,42 @@ static napi_value GetTabGroupHandles(napi_env env, napi_callback_info info) {
   return result;
 }
 
+// enableTabbing(handle: Buffer, identifier: string): void
+//
+// Electron's own BrowserWindow constructor sets `tabbingMode` to
+// NSWindowTabbingModeDisallowed whenever titleBarStyle isn't the default
+// (see native_window_mac.mm: `if (transparent() || !has_frame())` — a
+// hiddenInset window counts as "no native title bar" there even though it
+// still has real traffic lights and NSWindowStyleMaskTitled), regardless of
+// whether a tabbingIdentifier was supplied. That's why addTabbedWindow()
+// already works (it force-merges windows directly, bypassing tabbingMode)
+// while toggleTabBar() — which respects tabbingMode — was a silent no-op:
+// confirmed empirically, tabbingMode read back as 2 (disallowed) even with
+// tabbingIdentifier set on the BrowserWindow options. This puts tabbingMode
+// back to automatic (what Electron would have chosen had has_frame() been
+// true) and sets the identifier itself, since Electron skipped that too.
+static napi_value EnableTabbing(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value argv[2];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  if (argc < 2) return nullptr;
+
+  void *ptr = nullptr;
+  if (!GetPointerFromBuffer(env, argv[0], &ptr) || ptr == nullptr) return nullptr;
+  NSView *view = (__bridge NSView *)ptr;
+  NSWindow *window = [view window];
+  if (window == nil) return nullptr;
+
+  char idBuf[256];
+  size_t idLen = 0;
+  napi_get_value_string_utf8(env, argv[1], idBuf, sizeof(idBuf), &idLen);
+  NSString *identifier = [NSString stringWithUTF8String:idBuf];
+
+  window.tabbingMode = NSWindowTabbingModeAutomatic;
+  window.tabbingIdentifier = identifier;
+  return nullptr;
+}
+
 // getContentTopInset(handle: Buffer): number
 //
 // hiddenInset windows intentionally let the web content extend under the
@@ -137,6 +173,20 @@ static napi_value GetChromeDebug(napi_env env, napi_callback_info info) {
   NSRect contentViewFrame = window.contentView.frame;
 
   napi_value v;
+  napi_create_double(env, (double)window.tabbingMode, &v);
+  napi_set_named_property(env, result, "tabbingMode", v);
+  napi_create_double(env, (double)window.styleMask, &v);
+  napi_set_named_property(env, result, "styleMask", v);
+  napi_get_boolean(env, window.tabbingIdentifier != nil, &v);
+  napi_set_named_property(env, result, "hasTabbingIdentifier", v);
+  napi_get_boolean(env, window.tabGroup != nil, &v);
+  napi_set_named_property(env, result, "hasTabGroup", v);
+  if (window.tabGroup != nil) {
+    napi_create_double(env, (double)window.tabGroup.windows.count, &v);
+    napi_set_named_property(env, result, "tabGroupWindowCount", v);
+    napi_get_boolean(env, window.tabGroup.isTabBarVisible, &v);
+    napi_set_named_property(env, result, "isTabBarVisible", v);
+  }
   napi_create_double(env, frame.size.height, &v);
   napi_set_named_property(env, result, "windowFrameHeight", v);
   napi_create_double(env, layout.origin.y, &v);
@@ -189,14 +239,52 @@ static napi_value GetChromeDebug(napi_env env, napi_callback_info info) {
   return result;
 }
 
+// isTabBarVisible(handle: Buffer): boolean
+//
+// Ground truth for whether AppKit is currently drawing a tab strip for this
+// window, independent of how many windows are actually in its tab group —
+// a lone window can have its tab bar manually shown (Window > Toggle Tab
+// Bar) with nothing else tabbed into it yet, same as Safari's Shift-Cmd-T.
+// NSWindowTabGroup is created lazily the first time a window becomes tab
+// capable, so `tabGroup` can be nil for a window that has never touched
+// tabbing at all; treat that as "not visible" rather than erroring.
+static napi_value IsTabBarVisible(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+
+  bool visible = false;
+  if (argc >= 1) {
+    void *ptr = nullptr;
+    if (GetPointerFromBuffer(env, argv[0], &ptr) && ptr != nullptr) {
+      NSView *view = (__bridge NSView *)ptr;
+      NSWindow *window = [view window];
+      if (window != nil && window.tabGroup != nil) {
+        visible = window.tabGroup.isTabBarVisible;
+      }
+    }
+  }
+  napi_value result;
+  napi_get_boolean(env, visible, &result);
+  return result;
+}
+
 static napi_value Init(napi_env env, napi_value exports) {
   napi_value fn;
   napi_create_function(env, "getTabGroupHandles", NAPI_AUTO_LENGTH, GetTabGroupHandles, nullptr, &fn);
   napi_set_named_property(env, exports, "getTabGroupHandles", fn);
 
+  napi_value enableFn;
+  napi_create_function(env, "enableTabbing", NAPI_AUTO_LENGTH, EnableTabbing, nullptr, &enableFn);
+  napi_set_named_property(env, exports, "enableTabbing", enableFn);
+
   napi_value insetFn;
   napi_create_function(env, "getContentTopInset", NAPI_AUTO_LENGTH, GetContentTopInset, nullptr, &insetFn);
   napi_set_named_property(env, exports, "getContentTopInset", insetFn);
+
+  napi_value visibleFn;
+  napi_create_function(env, "isTabBarVisible", NAPI_AUTO_LENGTH, IsTabBarVisible, nullptr, &visibleFn);
+  napi_set_named_property(env, exports, "isTabBarVisible", visibleFn);
 
   napi_value debugFn;
   napi_create_function(env, "getChromeDebug", NAPI_AUTO_LENGTH, GetChromeDebug, nullptr, &debugFn);

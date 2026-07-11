@@ -273,9 +273,9 @@ export interface ZenBridge {
    *  per-window workspace snapshots so multiple windows on the same vault each
    *  have independent tab state. Returns null in the web build. */
   getWindowId(): string | null
-  /** Native tab-group membership and chrome inset for this window, read
+  /** Native tab bar visibility and chrome inset for this window, read
    *  once at mount. Use onWindowChromeChange for live updates. Always
-   *  `{ hasTabs: false, topInset: 0 }` on web/Windows/Linux. */
+   *  `{ tabBarVisible: false, topInset: 0 }` on web/Windows/Linux. */
   getWindowChromeSync(): WindowChromeState
   /** Subscribe to this window's chrome changing: joining/leaving a native
    *  tab group (Merge All Windows, the native "+" button, Move Tab to New

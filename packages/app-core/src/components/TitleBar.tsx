@@ -78,23 +78,25 @@ export function TitleBar(): JSX.Element {
   // tab label is the only visible "title" in that state (see the early
   // return below); a standalone window shows it in titleContent instead.
   const isolatePrefix = isolatedRoot ? '◎ ' : ''
-  const maximizePrefix = isMaximized && windowChrome.hasTabs ? '▣ ' : ''
+  const maximizePrefix = isMaximized && windowChrome.tabBarVisible ? '▣ ' : ''
   useEffect(() => {
     window.zen.setWindowTitle(maximizePrefix + isolatePrefix + titleText)
   }, [titleText, isolatePrefix, maximizePrefix])
 
-  // Once this window is merged into a native tab group, AppKit draws its own
-  // opaque title/tab bar (with real traffic lights) over the top of the
-  // content view — hiddenInset never shrinks the content view to make room
-  // for it, that's the whole point of hiddenInset, so nothing pushes the
-  // rest of the UI down on its own. The native tab's label already shows the
-  // title set above, so there's no content to show here — just leave blank
-  // space of the same height so the sidebar/pane headers don't render
-  // underneath it. `drag-region` matters even though it's blank: Electron
-  // content isn't draggable by default, and without it this band would be
-  // dead space you can't grab to move the window (unlike Safari, where the
-  // equivalent strip is native chrome and draggable automatically).
-  if (windowChrome.hasTabs) {
+  // Whenever AppKit is actually drawing a native tab bar — merged with
+  // another window, or a lone window with it manually shown via Window >
+  // Toggle Tab Bar — it draws its own opaque title/tab bar (with real
+  // traffic lights) over the top of the content view. hiddenInset never
+  // shrinks the content view to make room for it, that's the whole point of
+  // hiddenInset, so nothing pushes the rest of the UI down on its own. The
+  // native tab's label already shows the title set above, so there's no
+  // content to show here — just leave blank space of the same height so the
+  // sidebar/pane headers don't render underneath it. `drag-region` matters
+  // even though it's blank: Electron content isn't draggable by default, and
+  // without it this band would be dead space you can't grab to move the
+  // window (unlike Safari, where the equivalent strip is native chrome and
+  // draggable automatically).
+  if (windowChrome.tabBarVisible) {
     return <div className="drag-region shrink-0" style={{ height: windowChrome.topInset }} />
   }
 

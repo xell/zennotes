@@ -1583,7 +1583,7 @@ export const httpBridge: ZenBridge = {
   getConfigSync: () => null,
   getWindowId: () => null,
   // Native window tabs are a macOS desktop feature; web has no concept of it.
-  getWindowChromeSync: () => ({ hasTabs: false, topInset: 0 }),
+  getWindowChromeSync: () => ({ tabBarVisible: false, topInset: 0 }),
   onWindowChromeChange: () => () => {},
   setWindowTitle: () => {},
   setWindowZenMode: () => {},

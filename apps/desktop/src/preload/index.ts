@@ -525,7 +525,7 @@ const api: ZenBridge = {
     try {
       return ipcRenderer.sendSync(IPC.WINDOW_GET_CHROME_SYNC) as WindowChromeState
     } catch {
-      return { hasTabs: false, topInset: 0 }
+      return { tabBarVisible: false, topInset: 0 }
     }
   },
   onWindowChromeChange: (cb: (state: WindowChromeState) => void): (() => void) => {

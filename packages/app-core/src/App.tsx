@@ -976,7 +976,7 @@ function App(): JSX.Element {
         // bar can't be hidden — AppKit has no way to do that once a window
         // has 2+ real tabs — so this still needs the same clearance or it
         // sits right underneath the tab strip.
-        style={zenMode && windowChrome.hasTabs ? { marginTop: windowChrome.topInset } : undefined}
+        style={zenMode && windowChrome.tabBarVisible ? { marginTop: windowChrome.topInset } : undefined}
       >
         {!zenMode && sidebarOpen && <Sidebar />}
         {!zenMode && noteListOpen && !unifiedSidebar && <NoteList />}

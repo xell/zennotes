@@ -566,14 +566,18 @@ export interface PastedImageInput {
  *  native tab bar — that's the point of hiddenInset, it lets the app draw
  *  its own chrome there — so `topInset` is the only way to know how many
  *  points of the top are actually covered by real (opaque) native chrome
- *  when `hasTabs` is true, so the renderer can reserve blank space instead
- *  of getting overlapped or masked by it. */
+ *  when `tabBarVisible` is true, so the renderer can reserve blank space
+ *  instead of getting overlapped or masked by it. */
 export interface WindowChromeState {
-  /** True when this window is currently merged into a native tab group
-   *  with at least one other window. */
-  hasTabs: boolean
-  /** Points of top space covered by native title/tab bar chrome. 0 when
-   *  standalone (the app draws its own custom title bar there instead). */
+  /** True whenever AppKit is currently drawing a native tab bar for this
+   *  window — not the same as being merged with another window. A lone
+   *  window can have its bar manually shown via Window > Toggle Tab Bar
+   *  (so a second window can be dragged into it), same as Safari's
+   *  Shift-Cmd-T, before anything is actually tabbed together. */
+  tabBarVisible: boolean
+  /** Points of top space covered by native title/tab bar chrome. Equal to
+   *  the app's own baseline title bar height when no tab bar is visible
+   *  (the app draws its own custom title bar there instead). */
   topInset: number
 }
 

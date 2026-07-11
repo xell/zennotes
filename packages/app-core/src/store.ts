@@ -3916,7 +3916,7 @@ export const useStore = create<Store>((set, get) => {
   isolatedRoot: null,
   quicklookActive: false,
   quicklookInfo: null,
-  windowChrome: { hasTabs: false, topInset: 0 },
+  windowChrome: { tabBarVisible: false, topInset: 0 },
   dateNavExpanded: [],
   favoritesCollapsed: false,
   noteListCursorIndex: 0,

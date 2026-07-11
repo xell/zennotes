@@ -457,12 +457,30 @@ function loadNodePty(): typeof import('node-pty') {
 // directory rather than node_modules since it isn't an installed package.
 interface TabGroupsNative {
   getTabGroupHandles(handle: Buffer): Buffer[]
+  /** Electron's own BrowserWindow constructor sets tabbingMode to
+   *  NSWindowTabbingModeDisallowed for any non-default titleBarStyle
+   *  (hiddenInset counts as "no native title bar" internally, even
+   *  though it still has real traffic lights) — confirmed empirically:
+   *  tabbingMode read back as disallowed despite tabbingIdentifier being
+   *  passed to the constructor. addTabbedWindow() bypasses that check
+   *  (which is why merging already worked), but toggleTabBar() respects
+   *  it and silently no-ops. Call once per vault window right after
+   *  creation to put tabbingMode back to automatic and set the
+   *  identifier Electron skipped. */
+  enableTabbing(handle: Buffer, identifier: string): void
   /** Points of the content view's top edge currently covered by native
    *  title bar / tab bar chrome (NSWindow.contentLayoutRect under the
    *  hood). hiddenInset windows never shrink the content view for this —
    *  by design, so the app can draw its own chrome there — so this is the
    *  only way to know how much top space is actually safe to use. */
   getContentTopInset(handle: Buffer): number
+  /** Ground truth for whether AppKit is currently drawing a tab strip for
+   *  this window — independent of tab group membership, since a lone
+   *  window can have its bar manually shown (Window > Toggle Tab Bar)
+   *  with nothing else tabbed into it yet. Electron has no getter for
+   *  this (toggleTabBar() only flips it), so this is the only way to
+   *  know which way it's currently flipped. */
+  isTabBarVisible(handle: Buffer): boolean
   /** Diagnostic-only dump of every geometry number that could plausibly be
    *  the real top inset, plus the frame of every view layered above the
    *  content view. Logged by DEBUG_TAB_CHROME while pinning down the exact
@@ -531,6 +549,16 @@ function nativeContentTopInset(win: BrowserWindow): number {
   }
 }
 
+function nativeTabBarVisible(win: BrowserWindow): boolean {
+  if (!tabGroupsNative || win.isDestroyed()) return false
+  try {
+    return tabGroupsNative.isTabBarVisible(win.getNativeWindowHandle())
+  } catch (err) {
+    console.error('[window tabs] failed to query tab bar visibility', err)
+    return false
+  }
+}
+
 // Queries the real native tab groups for every open vault window in one
 // synchronous pass (so windows that are actually tabbed together always
 // agree on the same group id — no risk of one seeing a stale answer) and
@@ -542,9 +570,17 @@ async function reconcileAndPersistTabGroups(): Promise<void> {
   const idToTabGroupId = new Map<number, string | null>()
   for (const win of vaultWindows) {
     const members = nativeTabGroupMembers(win).filter((w) => isWorkspaceWindow(w))
-    const hasTabs = members.length >= 2
-    syncTabBarForZenMode(win, hasTabs)
-    if (DEBUG_TAB_CHROME && tabGroupsNative && hasTabs) {
+    // Grouping (for relaunch persistence) and tab bar visibility (for the
+    // renderer's chrome inset + Zen mode) are different questions: a 2+
+    // member group can have its bar hidden (Zen mode, or now the manual
+    // Window menu toggle) while still needing its grouping restored on
+    // relaunch, and a lone window can have its bar manually shown with no
+    // group at all. Conflating them regressed either the relaunch-restore
+    // or the chrome-inset reservation depending on which way it was wrong.
+    const isGrouped = members.length >= 2
+    const tabBarVisible = nativeTabBarVisible(win)
+    syncTabBarForZenMode(win, tabBarVisible)
+    if (DEBUG_TAB_CHROME && tabGroupsNative && tabBarVisible) {
       try {
         const debugInfo = tabGroupsNative.getChromeDebug(win.getNativeWindowHandle())
         console.error('[tab-chrome-debug]', windowUuids.get(win.id), JSON.stringify(debugInfo))
@@ -557,10 +593,10 @@ async function reconcileAndPersistTabGroups(): Promise<void> {
     // (see nativeContentTopInset / WindowChromeState for why this can't
     // just be a fixed constant).
     win.webContents.send(IPC.WINDOW_CHROME_ON_CHANGE, {
-      hasTabs,
+      tabBarVisible,
       topInset: nativeContentTopInset(win)
     })
-    if (!hasTabs) {
+    if (!isGrouped) {
       idToTabGroupId.set(win.id, null)
       continue
     }
@@ -646,20 +682,45 @@ const zenModeWindows = new Set<number>()
 // which way it's currently flipped and avoid toggling twice (or not at all).
 const tabBarHiddenForZen = new Set<number>()
 
-// Zen mode hides all of ZenNotes's own chrome, but a tabbed window's tab
-// strip is real AppKit UI outside the renderer's control — this is the only
-// way to make Zen mode declutter that too.
-function syncTabBarForZenMode(win: BrowserWindow, hasTabs: boolean): void {
+// Zen mode hides all of ZenNotes's own chrome, but a tab bar is real AppKit
+// UI outside the renderer's control — this is the only way to make Zen mode
+// declutter that too. Takes the live visibility reading (not tab group
+// membership) since a lone window can now have its bar manually shown via
+// Window > Toggle Tab Bar, same as a merged one.
+//
+// toggleTabBar() only flips whatever is currently showing, so both the hide
+// and restore paths check live state before calling it — otherwise a manual
+// toggle in between (the user reopening the bar themselves while still in
+// Zen mode, or right as Zen mode ends) could get silently undone or, worse,
+// flipped the wrong way when this later "restores" a bar that was never
+// actually hidden by us in the first place.
+//
+// It also only flips at all "if there is only one tab" (Electron's own doc
+// caveat, confirmed empirically — see e58b7e6): for a window with 2+ real
+// tabs the call is a silent no-op, AppKit gives no way to hide that bar. The
+// re-check after calling it is what keeps that case honest — it only marks
+// the bar as "hidden by us" if the toggle actually took effect, so a later
+// Zen-mode exit doesn't try to "restore" a bar that was never really hidden.
+function syncTabBarForZenMode(win: BrowserWindow, tabBarVisible: boolean): void {
   if (win.isDestroyed()) return
-  const shouldHide = zenModeWindows.has(win.id) && hasTabs
-  const isHidden = tabBarHiddenForZen.has(win.id)
-  if (shouldHide === isHidden) return
+  if (zenModeWindows.has(win.id)) {
+    if (!tabBarVisible) return
+    try {
+      win.toggleTabBar()
+    } catch (err) {
+      console.error('[window tabs] failed to hide tab bar for zen mode', err)
+      return
+    }
+    if (!nativeTabBarVisible(win)) tabBarHiddenForZen.add(win.id)
+    return
+  }
+  if (!tabBarHiddenForZen.has(win.id)) return
+  tabBarHiddenForZen.delete(win.id)
+  if (tabBarVisible) return
   try {
     win.toggleTabBar()
-    if (shouldHide) tabBarHiddenForZen.add(win.id)
-    else tabBarHiddenForZen.delete(win.id)
   } catch (err) {
-    console.error('[window tabs] failed to toggle tab bar for zen mode', err)
+    console.error('[window tabs] failed to restore tab bar after zen mode', err)
   }
 }
 
@@ -1261,6 +1322,19 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
       nodeIntegration: false
     }
   })
+
+  // The `tabbingIdentifier` constructor option above is silently ineffective
+  // on hiddenInset windows — Electron sets tabbingMode to Disallowed for any
+  // non-default titleBarStyle regardless of it (see TabGroupsNative.enableTabbing
+  // for why). addTabbedWindow() bypasses that, so merging already worked, but
+  // toggleTabBar() doesn't, so a lone window could never show its own bar.
+  if (mac && tabGroupsNative) {
+    try {
+      tabGroupsNative.enableTabbing(win.getNativeWindowHandle(), MAIN_WINDOW_TABBING_IDENTIFIER)
+    } catch (err) {
+      console.error('[window tabs] failed to enable native tabbing', err)
+    }
+  }
 
   workspaceWindowIds.add(win.id)
   windowUuids.set(win.id, winUuid)
@@ -3275,12 +3349,12 @@ function registerIpc(): void {
       const win = BrowserWindow.fromWebContents(event.sender)
       event.returnValue = win
         ? {
-            hasTabs: nativeTabGroupMembers(win).filter(isWorkspaceWindow).length >= 2,
+            tabBarVisible: nativeTabBarVisible(win),
             topInset: nativeContentTopInset(win)
           }
-        : { hasTabs: false, topInset: 0 }
+        : { tabBarVisible: false, topInset: 0 }
     } catch {
-      event.returnValue = { hasTabs: false, topInset: 0 }
+      event.returnValue = { tabBarVisible: false, topInset: 0 }
     }
   })
   handle(IPC.CONFIG_SET, async (_event, next: AppConfigPortable) => {
@@ -3759,7 +3833,51 @@ function installAppMenu(): void {
         { type: 'separator' },
         // Electron 41 leaves these macOS tab roles unlabeled unless the
         // template supplies text, which renders as blank Window menu rows.
-        { role: 'toggleTabBar', label: 'Toggle Tab Bar' },
+        // Not `role: 'toggleTabBar'` — like mergeAllWindows below, that role
+        // dispatches @selector(toggleTabBar:) up the responder chain with a
+        // nil target, and it silently no-ops for these windows (same class
+        // of unreliability). Calling win.toggleTabBar() directly, the same
+        // JS method Zen mode already uses to hide/show the bar, works.
+        {
+          label: 'Toggle Tab Bar',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow()
+            if (DEBUG_TAB_CHROME) console.error('[toggle-tab-bar-debug] focused window', win?.id ?? null)
+            if (!win) return
+            if (DEBUG_TAB_CHROME && tabGroupsNative) {
+              try {
+                console.error(
+                  '[toggle-tab-bar-debug] before',
+                  JSON.stringify(tabGroupsNative.getChromeDebug(win.getNativeWindowHandle()))
+                )
+              } catch (err) {
+                console.error('[toggle-tab-bar-debug] before failed', err)
+              }
+            }
+            try {
+              win.toggleTabBar()
+              // Same flash nudgeWindowLayout already fixes for addTabbedWindow:
+              // AppKit briefly renders the just-toggled chrome in a taller,
+              // spread-out layout before settling into its compact one on its
+              // own schedule. Forcing a layout pass immediately avoids the
+              // visible flash.
+              nudgeWindowLayout(win)
+            } catch (err) {
+              console.error('[window tabs] failed to toggle tab bar', err)
+            }
+            if (DEBUG_TAB_CHROME && tabGroupsNative) {
+              try {
+                console.error(
+                  '[toggle-tab-bar-debug] after',
+                  JSON.stringify(tabGroupsNative.getChromeDebug(win.getNativeWindowHandle()))
+                )
+              } catch (err) {
+                console.error('[toggle-tab-bar-debug] after failed', err)
+              }
+            }
+            void reconcileAndPersistTabGroups()
+          }
+        },
         { role: 'selectNextTab', label: 'Show Next Tab' },
         { role: 'selectPreviousTab', label: 'Show Previous Tab' },
         {
