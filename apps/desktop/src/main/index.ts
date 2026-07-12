@@ -607,16 +607,41 @@ async function reconcileAndPersistTabGroups(): Promise<void> {
     idToTabGroupId.set(win.id, uuids.length >= 2 ? uuids.join(',') : null)
   }
   const updates = vaultWindows
-    .map((win) => ({ uuid: windowUuids.get(win.id), tabGroupId: idToTabGroupId.get(win.id) ?? null }))
-    .filter((u): u is { uuid: string; tabGroupId: string | null } => !!u.uuid)
+    .map((win) => ({ win, uuid: windowUuids.get(win.id), tabGroupId: idToTabGroupId.get(win.id) ?? null }))
+    .filter((u): u is { win: BrowserWindow; uuid: string; tabGroupId: string | null } => !!u.uuid)
   if (updates.length === 0) return
   await updateConfig((cfg) => {
-    const byId = new Map(updates.map((u) => [u.uuid, u.tabGroupId]))
+    const byId = new Map(updates.map((u) => [u.uuid, u]))
     const sessions = cfg.openWindows ?? []
-    return {
-      ...cfg,
-      openWindows: sessions.map((s) => (byId.has(s.windowId) ? { ...s, tabGroupId: byId.get(s.windowId) ?? null } : s))
+    const seenUuids = new Set<string>()
+    const merged = sessions.map((s) => {
+      const u = byId.get(s.windowId)
+      if (!u) return s
+      seenUuids.add(s.windowId)
+      return { ...s, tabGroupId: u.tabGroupId }
+    })
+    // A window that joined a tab group before it ever had its own session
+    // entry — the native "+" button's window inherits its vault in memory
+    // only (inheritWindowWorkspaceSession), so until now it wasn't persisted
+    // until its next resize/move or app quit, whichever came first, if ever
+    // — has no existing entry for the map above to update. Build one now so
+    // its tabGroupId (and the fact that it's open at all) isn't silently
+    // dropped: this is what let a just-created tab vanish, or worse, take
+    // over another window's slot, on the next relaunch.
+    const appended: PersistedWindowSession[] = []
+    for (const u of updates) {
+      if (seenUuids.has(u.uuid)) continue
+      if (u.win.isDestroyed()) continue
+      const vault = windowVaults.vaultForWindow(u.win.id)
+      if (!vault) continue
+      appended.push({
+        windowId: u.uuid,
+        root: vault.root,
+        windowState: captureWindowState(u.win),
+        tabGroupId: u.tabGroupId
+      })
     }
+    return { ...cfg, openWindows: [...merged, ...appended] }
   })
 }
 
@@ -4286,9 +4311,31 @@ app.on('window-all-closed', () => {
   if (!isMac()) app.quit()
 })
 
-app.on('before-quit', () => {
+// Nothing here previously waited for pending async writes, so a tab-group
+// merge or window-state change made right before quitting could lose the
+// write entirely — Electron doesn't drain in-flight promises on its own once
+// quit is confirmed, it just tears the process down once every window is
+// closed. Flush every open window's state once, then let the real quit
+// through; the guard flag stops this from looping (app.quit() below
+// re-fires 'before-quit' for the actual, final quit). Capped with a timeout
+// so a stuck write can't leave the app refusing to quit.
+let quitFlushDone = false
+app.on('before-quit', (event) => {
   windowVaults.stopAll()
   stopRemoteWatch()
   quickCaptureQuitting = true
   unregisterQuickCaptureHotkey()
+  if (quitFlushDone) return
+  event.preventDefault()
+  const vaultWindows = BrowserWindow.getAllWindows().filter(
+    (win) => !win.isDestroyed() && isWorkspaceWindow(win)
+  )
+  const flush = Promise.all(vaultWindows.map((win) => persistWindowState(win)))
+    .then(() => reconcileAndPersistTabGroups())
+    .catch((err) => console.error('[quit] failed to flush window state before quitting', err))
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 2000))
+  void Promise.race([flush, timeout]).then(() => {
+    quitFlushDone = true
+    app.quit()
+  })
 })
