@@ -35,6 +35,15 @@ export const FilterIcon = (p: IconProps): JSX.Element => (
   </I>
 )
 
+export const GitBranchIcon = (p: IconProps): JSX.Element => (
+  <I {...p}>
+    <line x1="6" y1="3" x2="6" y2="15" />
+    <circle cx="18" cy="6" r="3" />
+    <circle cx="6" cy="18" r="3" />
+    <path d="M18 9a9 9 0 0 1-9 9" />
+  </I>
+)
+
 export const IsolateIcon = (p: IconProps): JSX.Element => (
   <I {...p}>
     <path d="M4 8V6a2 2 0 0 1 2-2h2" />

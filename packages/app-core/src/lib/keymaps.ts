@@ -31,6 +31,7 @@ export type KeymapId =
   | "global.modeSplit"
   | "global.modePreview"
   | "global.modeDiff"
+  | "global.gitStatus"
   | "global.toggleZenMode"
   | "global.togglePaneMaximize"
   | "global.closeActiveTab"
@@ -368,6 +369,16 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Switch to diff mode",
     description: "Show the git diff view against the index for the active note (git vaults only).",
     defaultBinding: "Mod+7",
+  },
+  {
+    id: "global.gitStatus",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Open git status",
+    description:
+      "Show the git status modal for the current vault: stage/unstage all, commit, and jump to a file's diff view. Unbound by default.",
+    defaultBinding: "",
   },
   {
     id: "global.toggleZenMode",

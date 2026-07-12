@@ -22,6 +22,8 @@ import type {
   DirectoryBrowseResult,
   ExternalFileContent,
   FolderEntry,
+  GitCommitResult,
+  GitStatusResult,
   ImportedAsset,
   LocalVaultEntry,
   MoveExternalFileResult,
@@ -559,6 +561,12 @@ const api: ZenBridge = {
   gitIsRepo: (): Promise<boolean> => ipcRenderer.invoke(IPC.GIT_IS_REPO),
   gitShowIndex: (vaultRelativePath: string): Promise<string | null> =>
     ipcRenderer.invoke(IPC.GIT_SHOW_INDEX, vaultRelativePath),
+  gitStatus: (): Promise<GitStatusResult> => ipcRenderer.invoke(IPC.GIT_STATUS),
+  gitStageAll: (): Promise<GitStatusResult> => ipcRenderer.invoke(IPC.GIT_STAGE_ALL),
+  gitUnstageAll: (): Promise<GitStatusResult> => ipcRenderer.invoke(IPC.GIT_UNSTAGE_ALL),
+  gitCommit: (message: string): Promise<GitCommitResult> =>
+    ipcRenderer.invoke(IPC.GIT_COMMIT, message),
+  gitLog: (): Promise<string> => ipcRenderer.invoke(IPC.GIT_LOG),
 
   terminal: {
     create: (opts: { cwd: string; cols: number; rows: number }): Promise<string> =>

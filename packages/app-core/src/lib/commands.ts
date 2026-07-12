@@ -1560,6 +1560,15 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       }
     },
     {
+      id: 'app.git.status',
+      title: 'Git Status…',
+      category: 'Vault',
+      keywords: 'git status stage unstage commit diff branch',
+      shortcut: shortcut('global.gitStatus'),
+      when: () => window.zen.getAppInfo().runtime === 'desktop' && !!getState().vault,
+      run: () => getState().setGitModalOpen(true)
+    },
+    {
       id: 'app.vault.close',
       title: 'Close Current Vault',
       category: 'Vault',

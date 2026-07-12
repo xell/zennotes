@@ -5,6 +5,8 @@ import type {
   DeletedAsset,
   ExternalFileContent,
   FolderEntry,
+  GitCommitResult,
+  GitStatusResult,
   ImportedAsset,
   LocalVaultEntry,
   MoveExternalFileResult,
@@ -323,6 +325,21 @@ export interface ZenBridge {
   /** Returns the index (staged) content for a vault-relative path, or null when
    *  the file is untracked or the vault is not a git repository. */
   gitShowIndex(vaultRelativePath: string): Promise<string | null>
+  /** Parsed `git status` for the current vault root. `isRepo: false` (with
+   *  everything else empty) when there's no vault, or it isn't a git repo. */
+  gitStatus(): Promise<GitStatusResult>
+  /** `git add -A`, then returns the fresh status in one round trip. */
+  gitStageAll(): Promise<GitStatusResult>
+  /** `git restore --staged .`, then returns the fresh status. */
+  gitUnstageAll(): Promise<GitStatusResult>
+  /** Commits currently staged changes with the given message. `ok: false`
+   *  when there's nothing staged or git itself rejects it (no identity
+   *  configured, a failing hook, etc) — `error` carries git's stderr. */
+  gitCommit(message: string): Promise<GitCommitResult>
+  /** A short, pre-formatted `git log --graph` (ANSI-colored) for the recent
+   *  commit history, meant to be written straight into an xterm.js instance
+   *  rather than parsed. Empty string when there's no vault or no commits. */
+  gitLog(): Promise<string>
   /** User themes loaded from `~/.config/zennotes/themes/<slug>/`. Empty on web. */
   listCustomThemes(): Promise<CustomTheme[]>
   /** Absolute path of the custom-themes directory, or null when unsupported. */

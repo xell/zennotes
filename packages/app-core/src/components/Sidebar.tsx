@@ -42,6 +42,7 @@ import {
   ExcalidrawIcon,
   ExpandAllIcon,
   FilterIcon,
+  GitBranchIcon,
   IsolateIcon,
   QuicklookIcon,
   PaperclipIcon,
@@ -505,6 +506,7 @@ export function Sidebar(): JSX.Element {
   const selectedTags = useStore((s) => s.selectedTags);
   const tagsViewActive = useStore(isTagsViewActive);
   const setSearchOpen = useStore((s) => s.setSearchOpen);
+  const setGitModalOpen = useStore((s) => s.setGitModalOpen);
   const createAndOpen = useStore((s) => s.createAndOpen);
   const createDrawingAndOpen = useStore((s) => s.createDrawingAndOpen);
   const toggleFavorite = useStore((s) => s.toggleFavorite);
@@ -3910,6 +3912,9 @@ export function Sidebar(): JSX.Element {
             }}
           >
             <PlusIcon />
+          </IconBtn>
+          <IconBtn title="Git status" onClick={() => setGitModalOpen(true)}>
+            <GitBranchIcon />
           </IconBtn>
           <IconBtn title="Hide sidebar (⌘1)" onClick={toggleSidebar}>
             <PanelLeftIcon />

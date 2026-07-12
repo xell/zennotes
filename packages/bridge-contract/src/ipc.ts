@@ -140,6 +140,11 @@ export const IPC = {
   CONFIG_ON_CHANGE: 'config:on-change',
   GIT_IS_REPO: 'git:is-repo',
   GIT_SHOW_INDEX: 'git:show-index',
+  GIT_STATUS: 'git:status',
+  GIT_STAGE_ALL: 'git:stage-all',
+  GIT_UNSTAGE_ALL: 'git:unstage-all',
+  GIT_COMMIT: 'git:commit',
+  GIT_LOG: 'git:log',
   CUSTOM_THEMES_LIST: 'custom-themes:list',
   CUSTOM_THEMES_GET_DIR: 'custom-themes:get-dir',
   CUSTOM_THEMES_REVEAL: 'custom-themes:reveal',
@@ -584,6 +589,39 @@ export interface WindowChromeState {
 export interface VaultInfo {
   root: string
   name: string
+}
+
+/** One path in a git status listing. `origPath` is set only for renames
+ *  (`git status --porcelain`'s `R` entries carry both the old and new path). */
+export interface GitFileEntry {
+  path: string
+  origPath?: string
+}
+
+/** Parsed `git status --porcelain=v1 -z -b` for the current vault root. */
+export interface GitStatusResult {
+  isRepo: boolean
+  branch: string | null
+  staged: {
+    added: GitFileEntry[]
+    modified: GitFileEntry[]
+    deleted: GitFileEntry[]
+    renamed: GitFileEntry[]
+  }
+  unstaged: {
+    modified: GitFileEntry[]
+    deleted: GitFileEntry[]
+  }
+  untracked: GitFileEntry[]
+}
+
+/** Result of a `git commit` attempt — `error` is git's own stderr text so a
+ *  failure (no identity configured, a failing hook, nothing staged) is
+ *  actionable instead of a generic "commit failed". */
+export interface GitCommitResult {
+  ok: boolean
+  error?: string
+  status: GitStatusResult
 }
 
 /** A markdown file opened from outside any vault (standalone editor window). */

@@ -2199,6 +2199,7 @@ interface Store {
   tabsEnabled: boolean
   wrapTabs: boolean
   settingsOpen: boolean
+  gitModalOpen: boolean
   themeId: string
   themeFamily: ThemeFamily
   themeMode: ThemeMode
@@ -2652,6 +2653,7 @@ interface Store {
   setTabsEnabled: (on: boolean) => void
   setWrapTabs: (on: boolean) => void
   setSettingsOpen: (open: boolean) => void
+  setGitModalOpen: (open: boolean) => void
   setTheme: (next: { id: string; family: ThemeFamily; mode: ThemeMode }) => void
   setEditorFontSize: (px: number) => void
   setEditorZoomDelta: (delta: number) => void
@@ -3842,6 +3844,7 @@ export const useStore = create<Store>((set, get) => {
   tabsEnabled: loadPrefs().tabsEnabled,
   wrapTabs: loadPrefs().wrapTabs,
   settingsOpen: false,
+  gitModalOpen: false,
   themeId: loadPrefs().themeId,
   themeFamily: loadPrefs().themeFamily,
   themeMode: loadPrefs().themeMode,
@@ -5823,6 +5826,7 @@ export const useStore = create<Store>((set, get) => {
     savePrefs(collectPrefs(get()))
   },
   setSettingsOpen: (open) => set({ settingsOpen: open }),
+  setGitModalOpen: (open) => set({ gitModalOpen: open }),
   setTheme: ({ id, family, mode }) => {
     set({ themeId: id, themeFamily: family, themeMode: mode })
     savePrefs(collectPrefs(get()))

@@ -176,6 +176,11 @@ const SettingsModal = lazy(async () => {
   return { default: module.SettingsModal }
 })
 
+const GitStatusModal = lazy(async () => {
+  const module = await import('./components/GitStatusModal')
+  return { default: module.GitStatusModal }
+})
+
 const EmptyVault = lazy(async () => {
   const module = await import('./components/EmptyVault')
   return { default: module.EmptyVault }
@@ -272,6 +277,7 @@ function App(): JSX.Element {
   const pinnedRefVisible = useStore((s) => s.pinnedRefVisible)
   const unifiedSidebar = useStore((s) => s.unifiedSidebar)
   const settingsOpen = useStore((s) => s.settingsOpen)
+  const gitModalOpen = useStore((s) => s.gitModalOpen)
   const setSettingsOpen = useStore((s) => s.setSettingsOpen)
   const themeId = useStore((s) => s.themeId)
   const themeFamily = useStore((s) => s.themeFamily)
@@ -1020,6 +1026,11 @@ function App(): JSX.Element {
       {settingsOpen && (
         <Suspense fallback={null}>
           <SettingsModal />
+        </Suspense>
+      )}
+      {gitModalOpen && (
+        <Suspense fallback={null}>
+          <GitStatusModal />
         </Suspense>
       )}
       <PromptHost />

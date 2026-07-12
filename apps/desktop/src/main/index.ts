@@ -31,6 +31,9 @@ import type {
   NoteFolder,
   DeletedAsset,
   ExternalFileContent,
+  GitCommitResult,
+  GitFileEntry,
+  GitStatusResult,
   MoveExternalFileResult,
   PastedImageInput,
   LocalVaultEntry,
@@ -2379,6 +2382,122 @@ function pruneListNotesStreamStates(): void {
   }
 }
 
+// `git status --porcelain=v1 -z -b` parsing. -z sidesteps two problems the
+// default (human) format has: it NUL-terminates entries instead of quoting
+// unusual filenames, and it reports renames/copies as two NUL-terminated
+// fields (new path, then old path) instead of an "old -> new" arrow that
+// would need its own parsing.
+function emptyGitStatus(isRepo: boolean): GitStatusResult {
+  return {
+    isRepo,
+    branch: null,
+    staged: { added: [], modified: [], deleted: [], renamed: [] },
+    unstaged: { modified: [], deleted: [] },
+    untracked: []
+  }
+}
+
+// "## main...origin/main [ahead 1]" | "## main" | "## No commits yet on main"
+// | "## HEAD (no branch)" (detached HEAD, reported as no branch)
+function parseGitBranchLine(line: string): string | null {
+  const rest = line.replace(/^##\s*/, '')
+  if (rest.startsWith('HEAD (no branch)')) return null
+  const noCommitsYet = rest.match(/^No commits yet on (.+)$/)
+  const name = (noCommitsYet ? noCommitsYet[1] : rest).split('...')[0].split(' [')[0].trim()
+  return name || null
+}
+
+function parseGitStatusPorcelain(raw: string): GitStatusResult {
+  const result = emptyGitStatus(true)
+  const entries = raw.split('\0').filter((entry) => entry.length > 0)
+  let i = 0
+  while (i < entries.length) {
+    const entry = entries[i]
+    i++
+    if (entry.startsWith('## ')) {
+      result.branch = parseGitBranchLine(entry)
+      continue
+    }
+    const x = entry[0]
+    const y = entry[1]
+    const entryPath = entry.slice(3)
+    if (x === '?' && y === '?') {
+      result.untracked.push({ path: entryPath })
+      continue
+    }
+    // Rename/copy entries consume a second NUL-terminated field (the old path).
+    const isRenameOrCopy = x === 'R' || x === 'C'
+    const origPath = isRenameOrCopy ? entries[i++] : undefined
+    const fileEntry: GitFileEntry = origPath ? { path: entryPath, origPath } : { path: entryPath }
+    let bucketed = false
+    switch (x) {
+      case 'A':
+        result.staged.added.push(fileEntry)
+        bucketed = true
+        break
+      case 'M':
+        result.staged.modified.push(fileEntry)
+        bucketed = true
+        break
+      case 'D':
+        result.staged.deleted.push(fileEntry)
+        bucketed = true
+        break
+      case 'R':
+      case 'C':
+        result.staged.renamed.push(fileEntry)
+        bucketed = true
+        break
+    }
+    switch (y) {
+      case 'M':
+        result.unstaged.modified.push(fileEntry)
+        bucketed = true
+        break
+      case 'D':
+        result.unstaged.deleted.push(fileEntry)
+        bucketed = true
+        break
+    }
+    // Anything this UI doesn't model precisely — merge conflicts show up as
+    // combinations like UU/AA/DD — still needs to surface somewhere rather
+    // than silently vanish from the list.
+    if (!bucketed) result.unstaged.modified.push(fileEntry)
+  }
+  return result
+}
+
+function currentGitRoot(): string | null {
+  const win = currentIpcWindow()
+  const vault = win ? windowVaults.vaultForWindow(win.id) : currentVault
+  return vault ? path.resolve(vault.root) : null
+}
+
+async function runGitStatus(root: string): Promise<GitStatusResult> {
+  try {
+    const { stdout } = await execFileAsync('git', ['status', '--porcelain=v1', '-z', '-b'], {
+      cwd: root,
+      timeout: 5000,
+      maxBuffer: 16 * 1024 * 1024
+    })
+    return parseGitStatusPorcelain(stdout)
+  } catch (err) {
+    console.error('[git] status failed', err)
+    return emptyGitStatus(false)
+  }
+}
+
+// Node's exec-family functions reject with an Error that also carries the
+// process's stdout/stderr — "nothing to commit" and similar advice messages
+// land on stdout, not stderr, so both are checked to actually surface git's
+// own explanation instead of a generic "Command failed" message.
+function execErrorMessage(err: unknown): string {
+  const asExecError = err as { stdout?: unknown; stderr?: unknown } | null
+  const stderrText = typeof asExecError?.stderr === 'string' ? asExecError.stderr.trim() : ''
+  const stdoutText = typeof asExecError?.stdout === 'string' ? asExecError.stdout.trim() : ''
+  return stderrText || stdoutText || (err instanceof Error ? err.message : 'git command failed')
+}
+
 function registerIpc(): void {
   const handle = <Args extends unknown[], Result>(
     channel: string,
@@ -3319,10 +3438,8 @@ function registerIpc(): void {
   handle(IPC.RAYCAST_INSTALL, async () => await installRaycastExtension())
 
   handle(IPC.GIT_IS_REPO, async () => {
-    const win = currentIpcWindow()
-    const vault = win ? windowVaults.vaultForWindow(win.id) : currentVault
-    if (!vault) return false
-    const root = path.resolve(vault.root)
+    const root = currentGitRoot()
+    if (!root) return false
     try {
       await execFileAsync('git', ['rev-parse', '--git-dir'], { cwd: root, timeout: 3000 })
       return true
@@ -3332,10 +3449,8 @@ function registerIpc(): void {
   })
 
   handle(IPC.GIT_SHOW_INDEX, async (_e, vaultRelativePath: string) => {
-    const win = currentIpcWindow()
-    const vault = win ? windowVaults.vaultForWindow(win.id) : currentVault
-    if (!vault) return null
-    const root = path.resolve(vault.root)
+    const root = currentGitRoot()
+    if (!root) return null
     try {
       const { stdout } = await execFileAsync('git', ['show', `:0:${vaultRelativePath}`], {
         cwd: root,
@@ -3344,6 +3459,70 @@ function registerIpc(): void {
       return stdout
     } catch {
       return null
+    }
+  })
+
+  handle(IPC.GIT_STATUS, async (): Promise<GitStatusResult> => {
+    const root = currentGitRoot()
+    if (!root) return emptyGitStatus(false)
+    return await runGitStatus(root)
+  })
+
+  handle(IPC.GIT_STAGE_ALL, async (): Promise<GitStatusResult> => {
+    const root = currentGitRoot()
+    if (!root) return emptyGitStatus(false)
+    try {
+      await execFileAsync('git', ['add', '-A'], { cwd: root, timeout: 10000 })
+    } catch (err) {
+      console.error('[git] stage all failed', err)
+    }
+    return await runGitStatus(root)
+  })
+
+  handle(IPC.GIT_UNSTAGE_ALL, async (): Promise<GitStatusResult> => {
+    const root = currentGitRoot()
+    if (!root) return emptyGitStatus(false)
+    try {
+      await execFileAsync('git', ['restore', '--staged', '.'], { cwd: root, timeout: 10000 })
+    } catch (err) {
+      console.error('[git] unstage all failed', err)
+    }
+    return await runGitStatus(root)
+  })
+
+  handle(IPC.GIT_COMMIT, async (_e, message: string): Promise<GitCommitResult> => {
+    const root = currentGitRoot()
+    if (!root) return { ok: false, error: 'No vault is open', status: emptyGitStatus(false) }
+    const trimmed = message.trim() || 'update'
+    try {
+      await execFileAsync('git', ['commit', '-m', trimmed], { cwd: root, timeout: 15000 })
+      return { ok: true, status: await runGitStatus(root) }
+    } catch (err) {
+      return { ok: false, error: execErrorMessage(err), status: await runGitStatus(root) }
+    }
+  })
+
+  handle(IPC.GIT_LOG, async (): Promise<string> => {
+    const root = currentGitRoot()
+    if (!root) return ''
+    try {
+      const { stdout } = await execFileAsync(
+        'git',
+        [
+          'log',
+          '--graph',
+          '--color=always',
+          '--pretty=format:%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset',
+          '--abbrev-commit',
+          '--date=relative',
+          '-20'
+        ],
+        { cwd: root, timeout: 5000, maxBuffer: 4 * 1024 * 1024 }
+      )
+      return stdout
+    } catch (err) {
+      console.error('[git] log failed', err)
+      return ''
     }
   })
 

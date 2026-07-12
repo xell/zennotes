@@ -33,6 +33,8 @@ import type {
   DirectoryBrowseResult,
   ExternalFileContent,
   FolderEntry,
+  GitCommitResult,
+  GitStatusResult,
   ImportedAsset,
   LocalVaultEntry,
   MoveExternalFileResult,
@@ -1596,9 +1598,24 @@ export const httpBridge: ZenBridge = {
     onExit: () => () => {}
   },
 
-  // Diff view needs a local git checkout — no-op on web.
+  // Diff view / git status need a local git checkout — no-op on web.
   gitIsRepo: async () => false,
   gitShowIndex: async () => null,
+  gitStatus: async (): Promise<GitStatusResult> => ({
+    isRepo: false,
+    branch: null,
+    staged: { added: [], modified: [], deleted: [], renamed: [] },
+    unstaged: { modified: [], deleted: [] },
+    untracked: []
+  }),
+  gitStageAll: async (): Promise<GitStatusResult> => httpBridge.gitStatus(),
+  gitUnstageAll: async (): Promise<GitStatusResult> => httpBridge.gitStatus(),
+  gitCommit: async (): Promise<GitCommitResult> => ({
+    ok: false,
+    error: 'Git is not available on web',
+    status: await httpBridge.gitStatus()
+  }),
+  gitLog: async () => '',
   setConfig: async () => {},
   getConfigPath: async () => null,
   revealConfigFile: async () => {},
