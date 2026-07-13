@@ -3,10 +3,15 @@ import type { ComponentProps } from 'react'
 import { Excalidraw, serializeAsJSON } from '@excalidraw/excalidraw'
 import '@excalidraw/excalidraw/index.css'
 import { parseExcalidrawDocument } from '@shared/excalidraw'
-import { useStore } from '../store'
-import { THEMES } from '../lib/themes'
 
 type InitialData = ComponentProps<typeof Excalidraw>['initialData']
+
+function readThemeMode(): 'light' | 'dark' {
+  return typeof document !== 'undefined' &&
+    document.documentElement.dataset.themeMode === 'dark'
+    ? 'dark'
+    : 'light'
+}
 
 /**
  * The embedded Excalidraw drawing editor for a `.excalidraw` file. Loaded lazily
@@ -20,9 +25,22 @@ export function ExcalidrawView({ path }: { path: string }): JSX.Element {
   const pathRef = useRef(path)
   pathRef.current = path
 
-  // Match the app's light/dark theme.
-  const themeId = useStore((s) => s.themeId)
-  const excalidrawTheme = THEMES.find((t) => t.id === themeId)?.mode === 'dark' ? 'dark' : 'light'
+  // Follow the app's resolved light/dark mode. That mode lives on
+  // `<html data-theme-mode>`, maintained in App.tsx (it already accounts for
+  // built-in themes, custom themes, and auto/system) — custom theme ids aren't
+  // in the built-in THEMES registry, so we can't derive the mode from themeId.
+  // Observe the attribute so an open drawing tracks live theme and OS dark-mode
+  // switches, rather than reading it once during render. (#363)
+  const [excalidrawTheme, setExcalidrawTheme] = useState<'light' | 'dark'>(readThemeMode)
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined
+    const html = document.documentElement
+    const sync = (): void => setExcalidrawTheme(readThemeMode())
+    sync()
+    const observer = new MutationObserver(sync)
+    observer.observe(html, { attributes: true, attributeFilter: ['data-theme-mode'] })
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     let cancelled = false

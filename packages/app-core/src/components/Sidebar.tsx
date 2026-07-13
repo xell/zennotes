@@ -62,7 +62,11 @@ import { promptApp } from '../lib/prompt-requests'
 import { naturalCompare } from '../lib/natural-sort'
 import { resolveQuickNoteTitle } from "../lib/quick-note-title";
 import { recordRendererPerf } from "../lib/perf";
-import { DEFAULT_DAILY_NOTES_DIRECTORY, DEFAULT_WEEKLY_NOTES_DIRECTORY } from "@shared/ipc";
+import {
+  DEFAULT_DAILY_NOTES_DIRECTORY,
+  DEFAULT_WEEKLY_NOTES_DIRECTORY,
+  DEFAULT_MONTHLY_NOTES_DIRECTORY,
+} from "@shared/ipc";
 import {
   assetFolderSubpath,
   classifyDateNote,
@@ -504,11 +508,15 @@ export function Sidebar(): JSX.Element {
   const assetCount = useStore((s) => s.assetFiles.length);
   const openTagView = useStore((s) => s.openTagView);
   const selectedTags = useStore((s) => s.selectedTags);
+  const setSelectedTags = useStore((s) => s.setSelectedTags);
+  const toggleTagSelection = useStore((s) => s.toggleTagSelection);
   const tagsViewActive = useStore(isTagsViewActive);
   const setSearchOpen = useStore((s) => s.setSearchOpen);
   const setGitModalOpen = useStore((s) => s.setGitModalOpen);
   const createAndOpen = useStore((s) => s.createAndOpen);
   const createDrawingAndOpen = useStore((s) => s.createDrawingAndOpen);
+  const newDrawing = useStore((s) => s.newDrawing);
+  const newDatabase = useStore((s) => s.newDatabase);
   const toggleFavorite = useStore((s) => s.toggleFavorite);
   const createDatabase = useStore((s) => s.createDatabase);
   const openTemplatePaletteForFolder = useStore((s) => s.openTemplatePaletteForFolder);
@@ -1490,7 +1498,7 @@ export function Sidebar(): JSX.Element {
     const ds = normalizeVaultSettings(vaultSettings);
     const dateNotePaths = new Set<string>();
     const dateFolderSubpaths = new Set<string>();
-    if (ds.dailyNotes.enabled || ds.weeklyNotes.enabled) {
+    if (ds.dailyNotes.enabled || ds.weeklyNotes.enabled || ds.monthlyNotes.enabled) {
       for (const note of notes) {
         if (note.folder !== "inbox") continue;
         const info = classifyDateNote(note, ds);
@@ -1993,11 +2001,14 @@ export function Sidebar(): JSX.Element {
     const s = normalizeVaultSettings(vaultSettings);
     const dailyDir = s.dailyNotes.directory;
     const weeklyDir = s.weeklyNotes.directory;
+    const monthlyDir = s.monthlyNotes.directory;
     const daily: { year: number; total: number; months: { month: number; notes: NoteMeta[] }[] }[] =
       [];
     const weekly: { year: number; notes: NoteMeta[] }[] = [];
+    const monthly: { year: number; notes: NoteMeta[] }[] = [];
     const dailyTimes = new Map<string, number>();
     const weeklyTimes = new Map<string, number>();
+    const monthlyTimes = new Map<string, number>();
 
     if (s.dailyNotes.enabled) {
       const byYear = new Map<number, Map<number, NoteMeta[]>>();
@@ -2047,17 +2058,41 @@ export function Sidebar(): JSX.Element {
       }
     }
 
+    if (s.monthlyNotes.enabled) {
+      const byYear = new Map<number, NoteMeta[]>();
+      for (const n of notes) {
+        const info = classifyDateNote(n, s);
+        if (info?.kind !== "monthly") continue;
+        monthlyTimes.set(n.path, info.date.getTime());
+        const year = info.date.getFullYear();
+        (byYear.get(year) ?? byYear.set(year, []).get(year)!).push(n);
+      }
+      for (const [year, ns] of [...byYear.entries()].sort((a, b) => b[0] - a[0])) {
+        ns.sort(
+          (a, b) =>
+            (monthlyTimes.get(b.path) ?? 0) - (monthlyTimes.get(a.path) ?? 0) ||
+            b.title.localeCompare(a.title),
+        );
+        monthly.push({ year, notes: ns });
+      }
+    }
+
     return {
       dailyEnabled: s.dailyNotes.enabled,
       weeklyEnabled: s.weeklyNotes.enabled,
+      monthlyEnabled: s.monthlyNotes.enabled,
       dailyDir,
       weeklyDir,
+      monthlyDir,
       dailyLabel: dateNoteDirectoryDisplayLabel(dailyDir, DEFAULT_DAILY_NOTES_DIRECTORY),
       weeklyLabel: dateNoteDirectoryDisplayLabel(weeklyDir, DEFAULT_WEEKLY_NOTES_DIRECTORY),
+      monthlyLabel: dateNoteDirectoryDisplayLabel(monthlyDir, DEFAULT_MONTHLY_NOTES_DIRECTORY),
       daily,
       weekly,
+      monthly,
       dailyTotal: daily.reduce((sum, y) => sum + y.total, 0),
       weeklyTotal: weekly.reduce((sum, y) => sum + y.notes.length, 0),
+      monthlyTotal: monthly.reduce((sum, y) => sum + y.notes.length, 0),
     };
   }, [notes, vaultSettings]);
 
@@ -2990,7 +3025,7 @@ export function Sidebar(): JSX.Element {
       {
         label: "New drawing",
         onSelect: async () => {
-          await createDrawingAndOpen("inbox", "");
+          await newDrawing();
         },
       },
       {
@@ -3002,7 +3037,7 @@ export function Sidebar(): JSX.Element {
       {
         label: "New database",
         onSelect: async () => {
-          await createDatabase("inbox", "");
+          await newDatabase();
         },
       },
       {
@@ -3468,7 +3503,23 @@ export function Sidebar(): JSX.Element {
   const tagMenuItems = useMemo<ContextMenuItem[]>(() => {
     if (!tagMenu) return [];
     const tag = tagMenu.tag;
+    // When the Tags view is filtering, offer selection actions up top so the
+    // sidebar can clear the filter without hunting for each chip's ×. (#356)
+    const selectionItems: ContextMenuItem[] =
+      tagsViewActive && selectedTags.length > 0
+        ? [
+            ...(selectedTags.includes(tag)
+              ? [{ label: `Deselect #${tag}`, onSelect: () => toggleTagSelection(tag) }]
+              : []),
+            ...(selectedTags.length > 1
+              ? [{ label: "Unselect others", onSelect: () => setSelectedTags([tag]) }]
+              : []),
+            { label: "Clear all tags", onSelect: () => setSelectedTags([]) },
+            { kind: "separator" },
+          ]
+        : [];
     return [
+      ...selectionItems,
       {
         label: `Copy #${tag}`,
         onSelect: async () => {
@@ -3512,7 +3563,15 @@ export function Sidebar(): JSX.Element {
         },
       },
     ];
-  }, [tagMenu, renameTag, deleteTag]);
+  }, [
+    tagMenu,
+    renameTag,
+    deleteTag,
+    tagsViewActive,
+    selectedTags,
+    setSelectedTags,
+    toggleTagSelection,
+  ]);
 
   const vaultMenuItems = useMemo<ContextMenuItem[]>(() => {
     const items: ContextMenuItem[] = [];
@@ -4378,6 +4437,7 @@ export function Sidebar(): JSX.Element {
               onToggle={toggleDateNav}
               dailyIcon={<CalendarIcon />}
               weeklyIcon={<CalendarIcon />}
+              monthlyIcon={<CalendarIcon />}
               isFolderActive={isFolderActive}
               selectedPath={selectedPath}
               selectedKeys={selectedSidebarKeys}
@@ -7311,14 +7371,19 @@ function IconBtn({
 interface DateNavData {
   dailyEnabled: boolean;
   weeklyEnabled: boolean;
+  monthlyEnabled: boolean;
   dailyDir: string;
   weeklyDir: string;
+  monthlyDir: string;
   dailyLabel: string;
   weeklyLabel: string;
+  monthlyLabel: string;
   daily: { year: number; total: number; months: { month: number; notes: NoteMeta[] }[] }[];
   weekly: { year: number; notes: NoteMeta[] }[];
+  monthly: { year: number; notes: NoteMeta[] }[];
   dailyTotal: number;
   weeklyTotal: number;
+  monthlyTotal: number;
 }
 
 /**
@@ -7333,6 +7398,7 @@ function DateNotesNav({
   onToggle,
   dailyIcon,
   weeklyIcon,
+  monthlyIcon,
   isFolderActive,
   selectedPath,
   selectedKeys,
@@ -7351,6 +7417,7 @@ function DateNotesNav({
   onToggle: (key: string) => void;
   dailyIcon: JSX.Element;
   weeklyIcon: JSX.Element;
+  monthlyIcon: JSX.Element;
   isFolderActive: (folder: NoteFolder, subpath: string) => boolean;
   selectedPath: string | null;
   selectedKeys: Set<string>;
@@ -7517,6 +7584,42 @@ function DateNotesNav({
             false,
             showSidebarChevrons,
             dateNav.weeklyDir,
+          ),
+        );
+        if (expanded.has(yKey)) for (const n of yg.notes) rows.push(leaf(n, 2));
+      }
+    }
+  }
+
+  if (dateNav.monthlyEnabled && dateNav.monthlyTotal > 0) {
+    rows.push(
+      groupRow(
+        "mo",
+        dateNav.monthlyLabel,
+        dateNav.monthlyTotal,
+        0,
+        () => onToggle("mo"),
+        monthlyIcon,
+        isFolderActive("inbox", dateNav.monthlyDir),
+        false,
+        dateNav.monthlyDir,
+        onRootContextMenu ? (e) => onRootContextMenu(e, dateNav.monthlyDir) : undefined,
+      ),
+    );
+    if (expanded.has("mo")) {
+      for (const yg of dateNav.monthly) {
+        const yKey = `mo:${yg.year}`;
+        rows.push(
+          groupRow(
+            yKey,
+            String(yg.year),
+            yg.notes.length,
+            1,
+            () => onToggle(yKey),
+            <FolderGlyphIcon open={expanded.has(yKey)} />,
+            false,
+            showSidebarChevrons,
+            dateNav.monthlyDir,
           ),
         );
         if (expanded.has(yKey)) for (const n of yg.notes) rows.push(leaf(n, 2));

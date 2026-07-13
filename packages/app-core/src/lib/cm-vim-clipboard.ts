@@ -2,14 +2,19 @@
  * Central hook for Vim yank side effects. codemirror-vim funnels every
  * yank/delete/change through the register controller's `pushText`, so we wrap it
  * once (the controller is created a single time at module load, via
- * `resetVimGlobalState`) and from there drive two features:
+ * `resetVimGlobalState`) and from there drive three features:
  *
- *  - `clipboard=unnamed` emulation: copy the unnamed register to the system
- *    clipboard. codemirror-vim only syncs the explicit `"+` register natively.
+ *  - `clipboard=unnamed` emulation (write side): copy the unnamed register to the
+ *    system clipboard. codemirror-vim only syncs the explicit `"+` register
+ *    natively.
+ *  - `clipboard=unnamed` emulation (read side): `vimClipboardPasteExtension`
+ *    makes `p` / `P` load the system clipboard into the unnamed register before
+ *    Vim runs its paste. codemirror-vim never reads the OS clipboard on `p`.
  *  - a yank handler other modules register (used for highlight-on-yank), invoked
  *    on yank so the active view can flash the yanked range.
  */
-import { Vim } from '@replit/codemirror-vim'
+import { ViewPlugin, type EditorView } from '@codemirror/view'
+import { Vim, getCM } from '@replit/codemirror-vim'
 
 interface PatchableRegisterController {
   pushText: (
@@ -19,10 +24,14 @@ interface PatchableRegisterController {
     linewise?: boolean,
     blockwise?: boolean
   ) => void
-  unnamedRegister?: { toString(): string }
+  unnamedRegister?: {
+    toString(): string
+    setText?: (text: string, linewise?: boolean, blockwise?: boolean) => void
+  }
 }
 
 let clipboardEnabled = false
+let pasteEnabled = false
 let yankHandler: (() => void) | null = null
 let patched = false
 
@@ -72,3 +81,87 @@ export function setVimYankHandler(handler: (() => void) | null): void {
   yankHandler = handler
   ensurePatched()
 }
+
+/**
+ * Toggle whether Vim `p` / `P` in normal/visual mode paste from the system
+ * clipboard. Bound to the same setting as yank-to-clipboard so the clipboard
+ * and the unnamed register stay in sync in both directions.
+ */
+export function setPasteFromClipboardEnabled(on: boolean): void {
+  pasteEnabled = on
+}
+
+/**
+ * Editor extension that makes Vim `p` / `P` paste the *system* clipboard.
+ *
+ * codemirror-vim keeps its own in-memory registers and never reads the OS
+ * clipboard on `p` (it only reads it for the explicit `"+`/`"*` registers). To
+ * make `p` feel native when yank-to-clipboard is on, we intercept `p`/`P` in
+ * normal/visual mode, load the clipboard text into the unnamed register, then
+ * hand the key back to Vim so all of its paste behaviour (linewise handling,
+ * counts, visual-mode replace) runs unchanged.
+ */
+export const vimClipboardPasteExtension = ViewPlugin.fromClass(
+  class {
+    private readonly view: EditorView
+    private readonly onKeyDown: (e: KeyboardEvent) => void
+
+    constructor(view: EditorView) {
+      this.view = view
+      this.onKeyDown = (e: KeyboardEvent): void => {
+        if (!pasteEnabled) return
+        if (e.key !== 'p' && e.key !== 'P') return
+        // Leave OS/editor chords (Ctrl/Cmd/Alt) alone; only bare p / P.
+        if (e.ctrlKey || e.metaKey || e.altKey) return
+
+        const cm = getCM(view)
+        const vimState = (cm as unknown as { state?: { vim?: { insertMode?: boolean } } } | null)
+          ?.state?.vim
+        // Only act while Vim is active and out of insert mode; in insert mode a
+        // literal "p" must be typed.
+        if (!cm || !vimState || vimState.insertMode) return
+
+        // Take over from Vim's own keymap for this event, then replay the key
+        // after the async clipboard read resolves.
+        e.preventDefault()
+        e.stopImmediatePropagation()
+
+        const key = e.key
+        const replay = (): void => {
+          try {
+            Vim.handleKey(cm, key, 'user')
+          } catch {
+            /* ignore: nothing sensible to do if the paste fails */
+          }
+        }
+
+        const clipboard = navigator.clipboard
+        if (!clipboard?.readText) {
+          replay()
+          return
+        }
+        void clipboard
+          .readText()
+          .then((text) => {
+            if (text) {
+              const controller = Vim.getRegisterController() as unknown as PatchableRegisterController | null
+              // Linewise when the clipboard ends in a newline, matching how a
+              // linewise yank is stored, so `p` opens a new line as expected.
+              controller?.unnamedRegister?.setText?.(text, /\n$/.test(text))
+            }
+            replay()
+          })
+          .catch(() => {
+            replay()
+          })
+      }
+      // Capture phase so we run before CodeMirror's own key handling and can
+      // stop the event from reaching the Vim keymap.
+      view.contentDOM.addEventListener('keydown', this.onKeyDown, true)
+    }
+
+    destroy(): void {
+      this.view.contentDOM.removeEventListener('keydown', this.onKeyDown, true)
+    }
+  }
+)

@@ -23,7 +23,6 @@ import { findLeaf, type PaneLayout, type PaneSplit } from '../lib/pane-layout'
 import {
   parseCreateNotePath,
   resolveWikilinkTarget,
-  suggestCreateNotePath,
   wikilinkHeadingAnchor
 } from '../lib/wikilinks'
 import { openDatabaseFromWikilink, openWikilinkHeading } from '../lib/wikilink-navigation'
@@ -35,6 +34,7 @@ import {
   validateMoveNoteTarget
 } from '../lib/move-note'
 import { promptApp } from '../lib/prompt-requests'
+import { offerCreateNoteFromLink } from '../lib/create-note-from-link'
 import { EditorPane } from './EditorPane'
 import { focusPaneInDirection, focusPaneOrEdgePanel } from '../lib/pane-nav'
 import { requestPaneMode } from '../lib/pane-mode'
@@ -47,6 +47,7 @@ import {
 import { navigateActiveBuffer } from '../lib/buffer-navigation'
 import { applyVimInsertEscape } from '../lib/vim-insert-escape'
 import { applyVimKeymap } from '../lib/vim-keymap'
+import { listContinuationPrefix } from '../lib/list-continuation'
 import { focusEditorNormalMode } from '../lib/editor-focus'
 
 let vimCommandsRegistered = false
@@ -356,12 +357,74 @@ function registerVimCommands(): void {
   Vim.mapCommand('J', 'action', 'zenMoveSelectionDown', {}, { context: 'visual' })
   Vim.mapCommand('K', 'action', 'zenMoveSelectionUp', {}, { context: 'visual' })
 
+  // #320: opening a line with o/O on a list item carries the marker forward —
+  // like pressing Enter — so bullets repeat, ordered numbers advance (the
+  // renumber pass fixes the exact value for both o and O), indentation is
+  // preserved, and a checkbox continues as a fresh unchecked box. Non-list lines
+  // fall back to Vim's built-in open-line. The handler runs as `actions[name]`,
+  // so `this` is Vim's action table — reuse its open-line + insert-mode entry.
+  type VimActionTable = {
+    newLineAndEnterInsertMode: (cm: unknown, args: unknown, vim: unknown) => void
+    enterInsertMode: (cm: unknown, args: unknown, vim: unknown) => void
+  }
+  Vim.defineAction(
+    'zenOpenLineContinuingList',
+    function (
+      this: VimActionTable,
+      cm: ReturnType<typeof getCM>,
+      actionArgs: { after?: boolean; repeat?: number },
+      vim: { insertMode?: boolean }
+    ) {
+      const view = (cm as unknown as { cm6?: EditorView }).cm6
+      const prefix = view
+        ? listContinuationPrefix(view.state.doc.lineAt(view.state.selection.main.head).text)
+        : null
+      if (!view || prefix == null) {
+        this.newLineAndEnterInsertMode(cm, actionArgs, vim)
+        return
+      }
+      const line = view.state.doc.lineAt(view.state.selection.main.head)
+      vim.insertMode = true
+      if (actionArgs.after) {
+        view.dispatch({
+          changes: { from: line.to, insert: `\n${prefix}` },
+          selection: { anchor: line.to + 1 + prefix.length }
+        })
+      } else {
+        view.dispatch({
+          changes: { from: line.from, insert: `${prefix}\n` },
+          selection: { anchor: line.from + prefix.length }
+        })
+      }
+      this.enterInsertMode(cm, { repeat: actionArgs.repeat }, vim)
+    } as unknown as Parameters<typeof Vim.defineAction>[1]
+  )
+  Vim.mapCommand(
+    'o',
+    'action',
+    'zenOpenLineContinuingList',
+    { after: true },
+    { context: 'normal', isEdit: true, interlaceInsertRepeat: true }
+  )
+  Vim.mapCommand(
+    'O',
+    'action',
+    'zenOpenLineContinuingList',
+    { after: false },
+    { context: 'normal', isEdit: true, interlaceInsertRepeat: true }
+  )
+
   // #290/#312: make j/k move by display line through soft-wrapped content.
   // Shared with the Quick Note window (QuickCaptureApp) via the same helper.
   registerDisplayLineMotion()
 
   Vim.defineEx('write', 'w', () => {
     void useStore.getState().persistActive()
+  })
+  Vim.defineEx('saveas', 'sav', (_cm: unknown, params: { argString?: string } | undefined) => {
+    const newName = (params?.argString ?? '').trim()
+    if (!newName) return
+    void useStore.getState().saveActiveNoteAs(newName)
   })
   Vim.defineEx('format', 'format', () => {
     void useStore.getState().formatActiveNote()
@@ -433,6 +496,10 @@ function registerVimCommands(): void {
 
   Vim.defineEx('weekly', 'weekly', () => {
     void useStore.getState().openThisWeekWeeklyNote()
+  })
+
+  Vim.defineEx('monthly', 'monthly', () => {
+    void useStore.getState().openThisMonthMonthlyNote()
   })
 
   // `:tag foo` starts (or updates) the Tags view with `foo` selected.
@@ -567,41 +634,8 @@ function registerVimCommands(): void {
       return
     }
 
-    void promptApp({
-      title: `Create note for "${target}"?`,
-      description:
-        'No matching note exists. Use /my/path/note.md for Inbox-relative paths, or inbox/my/path/note.md for an explicit top folder.',
-      initialValue: suggestCreateNotePath(target),
-      placeholder: '/my/path/note.md',
-      okLabel: 'Create',
-      validate: (value) => {
-        try {
-          parseCreateNotePath(value)
-          return null
-        } catch (err) {
-          return (err as Error).message
-        }
-      }
-    }).then(async (value) => {
-      if (!value) return
-      try {
-        const parsed = parseCreateNotePath(value)
-        const existing = state.notes.find(
-          (note) => note.folder !== 'trash' && note.path.toLowerCase() === parsed.relPath.toLowerCase()
-        )
-        if (existing) {
-          await state.selectNote(existing.path)
-          state.setFocusedPanel('editor')
-          requestAnimationFrame(() => useStore.getState().editorViewRef?.focus())
-          return
-        }
-        await state.createAndOpen(parsed.folder, parsed.subpath, { title: parsed.title })
-        state.setFocusedPanel('editor')
-        requestAnimationFrame(() => useStore.getState().editorViewRef?.focus())
-      } catch (err) {
-        alertEditorError((err as Error).message)
-      }
-    })
+    // Dead link — confirm, then create the note (shared with the cmd-click path).
+    void offerCreateNoteFromLink(target)
   })
 
   // Vim-style pane navigation actions are registered here, but their
@@ -936,6 +970,8 @@ const MANUAL_EX_NAMES = new Set([
   'zenmode',
   'editmode',
   'splitmode',
+  'saveas',
+  'sav',
   'previewmode',
   'trash',
   'fold',

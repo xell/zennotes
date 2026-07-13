@@ -6,7 +6,9 @@ import {
   takeTaskLineAtIndex,
   setTaskCheckedAtIndex,
   setTaskDueAtIndex,
+  setTaskFieldAtIndex,
   setTaskPriorityAtIndex,
+  setTaskStatusAtIndex,
   setTaskTextAtIndex,
   setTaskWaitingAtIndex,
   toggleTaskAtIndex
@@ -249,5 +251,60 @@ describe('moveTaskLine', () => {
     const md = ['- [ ] a', '- [ ] b'].join('\n')
     expect(moveTaskLine(md, 0, 0, 'after')).toBe(md)
     expect(moveTaskLine(md, 9, 0, 'after')).toBe(md)
+  })
+})
+
+describe('setTaskStatusAtIndex', () => {
+  it('appends @status:<id> when none is present', () => {
+    expect(setTaskStatusAtIndex('- [ ] ship it', 0, 'review')).toBe('- [ ] ship it @status:review')
+  })
+
+  it('replaces an existing status token in place', () => {
+    expect(setTaskStatusAtIndex('- [ ] ship it @status:backlog', 0, 'review')).toBe(
+      '- [ ] ship it @status:review'
+    )
+  })
+
+  it('removes the token (and tidies whitespace) when cleared', () => {
+    expect(setTaskStatusAtIndex('- [ ] ship it @status:review', 0, null)).toBe('- [ ] ship it')
+    expect(setTaskStatusAtIndex('- [ ] a @status:review due:2026-04-30', 0, null)).toBe(
+      '- [ ] a due:2026-04-30'
+    )
+  })
+
+  it('leaves other metadata tokens untouched', () => {
+    expect(setTaskStatusAtIndex('- [ ] a !high due:2026-04-30', 0, 'in_progress')).toBe(
+      '- [ ] a !high due:2026-04-30 @status:in_progress'
+    )
+  })
+
+  it('targets the task at the given index', () => {
+    const md = ['- [ ] a', '- [ ] b', '- [ ] c'].join('\n')
+    expect(setTaskStatusAtIndex(md, 1, 'done')).toBe(
+      ['- [ ] a', '- [ ] b @status:done', '- [ ] c'].join('\n')
+    )
+  })
+})
+
+describe('setTaskFieldAtIndex', () => {
+  it('sets an arbitrary @key:value field', () => {
+    expect(setTaskFieldAtIndex('- [ ] a', 0, 'sprint', '24')).toBe('- [ ] a @sprint:24')
+  })
+
+  it('replaces only the matching field, leaving other fields intact', () => {
+    expect(setTaskFieldAtIndex('- [ ] a @status:review @sprint:24', 0, 'sprint', '25')).toBe(
+      '- [ ] a @status:review @sprint:25'
+    )
+  })
+
+  it('clears a field when value is null', () => {
+    expect(setTaskFieldAtIndex('- [ ] a @sprint:24 @status:done', 0, 'sprint', null)).toBe(
+      '- [ ] a @status:done'
+    )
+  })
+
+  it('is a no-op for an invalid field key', () => {
+    const md = '- [ ] a'
+    expect(setTaskFieldAtIndex(md, 0, 'Bad Key', 'x')).toBe(md)
   })
 })

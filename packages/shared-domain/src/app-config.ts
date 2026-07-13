@@ -14,6 +14,27 @@
  *  migration. Written as `config_version` at the top of the file. */
 export const CONFIG_VERSION = 1
 
+/** Clock format for the `@time` macro (and any future time insertions). */
+export type TimeFormat = '12h' | '24h'
+
+/**
+ * The host locale's 12/24-hour convention, used as the `timeFormat` default so a
+ * fresh install matches the operating system out of the box. Reads only the
+ * resolved format options (no `Date`), so it is safe to evaluate at module load.
+ */
+export function defaultTimeFormat(): TimeFormat {
+  try {
+    const resolved = new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions()
+    if (typeof resolved.hour12 === 'boolean') return resolved.hour12 ? '12h' : '24h'
+    if (resolved.hourCycle) {
+      return resolved.hourCycle === 'h11' || resolved.hourCycle === 'h12' ? '12h' : '24h'
+    }
+  } catch {
+    /* fall through to the 24-hour default */
+  }
+  return '24h'
+}
+
 /**
  * Preference keys (matching the renderer's `Prefs` shape) persisted to the
  * portable config file. Keep this list in sync with `Prefs` in
@@ -45,6 +66,8 @@ export const PORTABLE_PREF_KEYS = [
   'wrapTabs',
   'editorFontSize',
   'editorLineHeight',
+  'editorScrollOff',
+  'timeFormat',
   'previewMaxWidth',
   'editorMaxWidth',
   'lineNumberMode',
@@ -83,6 +106,7 @@ export const PORTABLE_PREF_KEYS = [
   'tasksViewMode',
   'kanbanGroupBy',
   'kanbanColumnTitles',
+  'kanbanStatuses',
   // terminal
   'terminalLightTheme',
   'terminalDarkTheme',
@@ -151,6 +175,8 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   wrapTabs: false,
   editorFontSize: 16,
   editorLineHeight: 1.7,
+  editorScrollOff: 0,
+  timeFormat: defaultTimeFormat(),
   previewMaxWidth: 920,
   editorMaxWidth: 920,
   lineNumberMode: 'off',
@@ -186,6 +212,7 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   tasksViewMode: 'list',
   kanbanGroupBy: 'status',
   kanbanColumnTitles: {},
+  kanbanStatuses: [],
   terminalLightTheme: 'github-light',
   terminalDarkTheme: 'github-dark',
   terminalScrollbarOnHover: true,

@@ -494,7 +494,7 @@ export function DatabaseTableView({ csvPath, doc, view, isActive }: Props): JSX.
                   setDragOverFieldId(null)
                 }}
                 className={[
-                  'group/h min-w-32 border-r border-paper-300/40 px-2.5 py-2 text-left text-2xs font-medium uppercase tracking-wide text-ink-500',
+                  'group/h min-w-32 max-w-[420px] border-r border-paper-300/40 px-2.5 py-2 text-left text-2xs font-medium uppercase tracking-wide text-ink-500',
                   active.row < 0 && active.col === colIndex ? 'ring-2 ring-inset ring-accent' : '',
                   // Drop indicator: the dragged column lands *before* this one.
                   dragOverFieldId === field.id ? 'border-l-2 border-l-accent bg-accent/5' : ''
@@ -577,7 +577,9 @@ export function DatabaseTableView({ csvPath, doc, view, isActive }: Props): JSX.
                 {columns.map((field, colIndex) => {
                   const isActive = active.row === rowIndex && active.col === colIndex
                   const tdClassName = [
-                    'relative border-r border-paper-300/40 p-0 align-top',
+                    // #335: cap the column so a long Text value truncates instead
+                    // of stretching the column to fill the table.
+                    'relative max-w-[420px] border-r border-paper-300/40 p-0 align-top',
                     isActive ? 'ring-2 ring-inset ring-accent' : ''
                   ].join(' ')
                   // Keep keyboard focus on the grid container (not the inner
@@ -798,7 +800,12 @@ function Cell({ field, value, editing, onStartEdit, onEndEdit, onCommit }: CellP
   }
 
   return (
-    <button type="button" onClick={onStartEdit} className="block h-full w-full px-2 py-1.5 text-left">
+    <button
+      type="button"
+      onClick={onStartEdit}
+      title={value || undefined}
+      className="block h-full w-full px-2 py-1.5 text-left"
+    >
       {/* min-h reserves one line so an empty cell keeps the same row height as a
           filled one (otherwise a new/blank row collapses shorter). (#185) */}
       <span className="block min-h-5 truncate text-ink-900">

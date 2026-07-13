@@ -115,6 +115,7 @@ export function TasksRow({
         type="button"
         role="checkbox"
         aria-checked={task.checked}
+        title="Toggle task (x)"
         onClick={(e) => {
           e.stopPropagation()
           onToggle()

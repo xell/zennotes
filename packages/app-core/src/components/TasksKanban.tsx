@@ -41,6 +41,22 @@ interface Props {
   onToggleTask: (task: VaultTask) => void
 }
 
+// Sentinel column id for the "No status" bucket on the custom-status board.
+// Starts with `_`, which the status-id grammar (`[\p{L}\d]…`) forbids, so it can
+// never collide with a real `@status:<id>`. (#354)
+const NO_VALUE_COLUMN_ID = '__none__'
+
+// Stable auto-assigned accent per field-value column, so a discovery-first board
+// still reads as distinct columns with zero color config. The No-value column is
+// intentionally neutral (null).
+const COLUMN_ACCENTS = ['#e0a34a', '#57a55a', '#4a9ec0', '#b57edc', '#d9788f', '#7f8c9a', '#c4a63a']
+function columnAccent(id: string): string | null {
+  if (id === NO_VALUE_COLUMN_ID) return null
+  let hash = 0
+  for (let i = 0; i < id.length; i += 1) hash = (hash * 31 + id.charCodeAt(i)) >>> 0
+  return COLUMN_ACCENTS[hash % COLUMN_ACCENTS.length]
+}
+
 /** Map a (groupBy, columnId) drop target to the task-line mutations
  *  that should land. Returns `null` when the drop has no defined
  *  semantics (e.g. when group-by is 'folder'). Returns `[]` when the
@@ -91,6 +107,11 @@ function dropMutationsFor(
     if (columnId === 'low') return [{ kind: 'set-priority', priority: 'low' }]
     if (columnId === 'none') return [{ kind: 'set-priority', priority: null }]
     return null
+  }
+  if (groupBy.startsWith('field:')) {
+    // Drop sets the `@<key>:<value>` token; the No-<key> column clears it.
+    const key = groupBy.slice('field:'.length)
+    return [{ kind: 'set-field', key, value: columnId === NO_VALUE_COLUMN_ID ? null : columnId }]
   }
   // Folder grouping is read-only — moving the task across folders
   // means moving the source note, which the user does explicitly via
@@ -179,13 +200,89 @@ function folderColumns(tasks: VaultTask[]): Column[] {
   }))
 }
 
+/** Title-case a field value for its default column label; users can still
+ *  override status column titles via `[kanban_column_titles]`. */
+function prettifyFieldValue(id: string): string {
+  const words = id.replace(/[_/-]+/g, ' ').trim()
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : id
+}
+
+/** The `field:<key>` part of a group-by, or null for the static boards. */
+function fieldKeyOf(groupBy: KanbanGroupBy): string | null {
+  return groupBy.startsWith('field:') ? groupBy.slice('field:'.length) : null
+}
+
+/** Columns for a free-form `@<key>:<value>` field board. Configured values come
+ *  first in order, then any value found on tasks but not configured (sorted, so
+ *  nothing is hidden), then a trailing "No <key>" column. Completed and
+ *  forwarded tasks are left off, matching the priority/folder boards. (#354) */
+function fieldColumns(tasks: VaultTask[], fieldKey: string, order: string[]): Column[] {
+  const byValue = new Map<string, VaultTask[]>()
+  const noValue: VaultTask[] = []
+  for (const task of tasks) {
+    if (task.checked || task.forwarded) continue
+    const value = task.fields?.[fieldKey]
+    if (value) {
+      const list = byValue.get(value)
+      if (list) list.push(task)
+      else byValue.set(value, [task])
+    } else {
+      noValue.push(task)
+    }
+  }
+
+  const ordered: string[] = []
+  const seen = new Set<string>()
+  for (const id of order) {
+    if (!seen.has(id)) {
+      seen.add(id)
+      ordered.push(id)
+    }
+  }
+  // Discovery-first: values used on tasks but not in the config still appear,
+  // sorted for a stable order, so a freshly-tagged value shows up immediately.
+  for (const id of [...byValue.keys()].sort()) {
+    if (!seen.has(id)) {
+      seen.add(id)
+      ordered.push(id)
+    }
+  }
+
+  const sortByDue = (a: VaultTask, b: VaultTask): number => {
+    const ad = a.due ?? '9999-12-31'
+    const bd = b.due ?? '9999-12-31'
+    if (ad !== bd) return ad < bd ? -1 : 1
+    if (a.sourcePath !== b.sourcePath) return a.sourcePath < b.sourcePath ? -1 : 1
+    return a.taskIndex - b.taskIndex
+  }
+
+  const columns: Column[] = ordered.map((id) => ({
+    id,
+    label: prettifyFieldValue(id),
+    tasks: (byValue.get(id) ?? []).sort(sortByDue)
+  }))
+  columns.push({
+    id: NO_VALUE_COLUMN_ID,
+    label: `No ${fieldKey}`,
+    tasks: noValue.sort(sortByDue)
+  })
+  return columns
+}
+
 function buildColumns(
   groupBy: KanbanGroupBy,
   tasks: VaultTask[],
-  today: Date
+  today: Date,
+  statuses: string[]
 ): Column[] {
   if (groupBy === 'priority') return priorityColumns(tasks)
   if (groupBy === 'folder') return folderColumns(tasks)
+  const fieldKey = fieldKeyOf(groupBy)
+  if (fieldKey) {
+    // The status field keeps its friendly `kanban_statuses` order; other fields
+    // use discovery order.
+    return fieldColumns(tasks, fieldKey, fieldKey === 'status' ? statuses : [])
+  }
   return statusColumns(tasks, today)
 }
 
@@ -197,12 +294,19 @@ function taskIdentityKey(task: VaultTask): string {
   return `${task.sourcePath}\0${task.taskIndex}`
 }
 
+function sameFields(a: Record<string, string> = {}, b: Record<string, string> = {}): boolean {
+  const ak = Object.keys(a)
+  if (ak.length !== Object.keys(b).length) return false
+  return ak.every((k) => a[k] === b[k])
+}
+
 function sameBoardPlacement(a: VaultTask, b: VaultTask): boolean {
   return (
     a.checked === b.checked &&
     a.waiting === b.waiting &&
     a.priority === b.priority &&
-    a.due === b.due
+    a.due === b.due &&
+    sameFields(a.fields, b.fields)
   )
 }
 
@@ -224,6 +328,15 @@ function applyTaskMutationsForBoard(task: VaultTask, mutations: TaskMutation[]):
       case 'set-due': {
         const due = m.due ?? undefined
         if (next.due !== due) next = { ...next, due }
+        break
+      }
+      case 'set-field': {
+        const value = m.value ?? undefined
+        const fields = { ...next.fields }
+        if (value == null) delete fields[m.key]
+        else fields[m.key] = value
+        next = { ...next, fields }
+        if (m.key === 'status') next = { ...next, status: value }
         break
       }
     }
@@ -294,6 +407,7 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
   const setGroupBy = useStore((s) => s.setKanbanGroupBy)
   const kanbanColumnTitles = useStore((s) => s.kanbanColumnTitles)
   const setKanbanColumnTitle = useStore((s) => s.setKanbanColumnTitle)
+  const kanbanStatuses = useStore((s) => s.kanbanStatuses)
   const applyTaskMutation = useStore((s) => s.applyTaskMutation)
   const [colIdx, setColIdx] = useState(0)
   const [cardIdx, setCardIdx] = useState(0)
@@ -348,7 +462,7 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
     () => {
       const orderedColumns = applyColumnOrder(
         groupBy,
-        buildColumns(groupBy, displayTasks, today),
+        buildColumns(groupBy, displayTasks, today, kanbanStatuses),
         columnOrderRef.current
       )
       return orderedColumns.map((column) => ({
@@ -356,9 +470,36 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
         label: kanbanColumnTitles[columnOrderKey(groupBy, column.id)] ?? column.label
       }))
     },
-    [columnOrderVersion, groupBy, displayTasks, kanbanColumnTitles, today]
+    [columnOrderVersion, groupBy, displayTasks, kanbanColumnTitles, kanbanStatuses, today]
   )
   columnsRef.current = columns
+
+  // Group-by options: the three static boards, the default custom-status field,
+  // then one option per `@key:` field discovered across the current tasks. This
+  // is what makes any inline field a board with zero configuration. (#354)
+  const groupByOptions = useMemo(() => {
+    const opts: { value: KanbanGroupBy; label: string }[] = [
+      { value: 'status', label: 'Status' },
+      { value: 'priority', label: 'Priority' },
+      { value: 'folder', label: 'Folder' },
+      { value: 'field:status', label: 'Custom status' }
+    ]
+    const keys = new Set<string>()
+    for (const t of tasks) if (t.fields) for (const k of Object.keys(t.fields)) keys.add(k)
+    keys.delete('status')
+    for (const k of [...keys].sort()) {
+      opts.push({ value: `field:${k}` as KanbanGroupBy, label: `By @${k}` })
+    }
+    // Keep the current selection visible even if nothing currently uses it.
+    const currentKey = fieldKeyOf(groupBy)
+    if (currentKey && !opts.some((o) => o.value === groupBy)) {
+      opts.push({
+        value: groupBy,
+        label: currentKey === 'status' ? 'Custom status' : `By @${currentKey}`
+      })
+    }
+    return opts
+  }, [tasks, groupBy])
 
   const dndEnabled = groupBy !== 'folder'
 
@@ -533,6 +674,49 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
     },
     [applyTaskToBoard, persistTaskMutationAfterPaint, placeTaskInColumnOrder]
   )
+
+  // Keyboard equivalent of dragging: move the focused card to a target column,
+  // applying that column's drop mutation. Works on every drag-enabled board
+  // (status, priority, any field). Drives Shift+H/L (relative) and 1-9
+  // (absolute). (#354)
+  const moveFocusedCardTo = useCallback(
+    (toIdx: number): void => {
+      if (!dndEnabled) return
+      const cols = columnsRef.current
+      if (cols.length === 0) return
+      const fromIdx = Math.min(colIdx, cols.length - 1)
+      const clamped = Math.max(0, Math.min(cols.length - 1, toIdx))
+      if (clamped === fromIdx) return
+      const fromColumn = cols[fromIdx]
+      const task = fromColumn?.tasks[Math.min(cardIdx, fromColumn.tasks.length - 1)]
+      if (!task) return
+      const targetColumn = cols[clamped]
+      const mutations = dropMutationsFor(groupBy, targetColumn.id, task, today)
+      if (!mutations || mutations.length === 0) return
+      moveTaskOnBoard(task, mutations, targetColumn.id, null)
+      setColIdx(clamped)
+      setCardIdx(0)
+    },
+    [cardIdx, colIdx, dndEnabled, groupBy, moveTaskOnBoard, today]
+  )
+  const moveFocusedCard = useCallback(
+    (dir: -1 | 1): void => {
+      const cols = columnsRef.current
+      const fromIdx = Math.min(colIdx, Math.max(0, cols.length - 1))
+      moveFocusedCardTo(fromIdx + dir)
+    },
+    [colIdx, moveFocusedCardTo]
+  )
+  // Cycle the group-by dimension from the keyboard (g), so switching boards
+  // never needs the mouse. (#354)
+  const cycleGroupBy = useCallback(() => {
+    if (groupByOptions.length === 0) return
+    const i = groupByOptions.findIndex((o) => o.value === groupBy)
+    const next = groupByOptions[(i + 1) % groupByOptions.length]
+    setGroupBy(next.value)
+    setColIdx(0)
+    setCardIdx(0)
+  }, [groupBy, groupByOptions, setGroupBy])
 
   const scheduleDropIndicatorPosition = useCallback((x: number, y: number, width: number) => {
     dropIndicatorRectRef.current = { x, y, width }
@@ -797,6 +981,10 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
       }
 
       switch (e.key) {
+        case 'g':
+          consume()
+          cycleGroupBy()
+          return
         case 'h':
         case 'ArrowLeft':
           consume()
@@ -808,6 +996,18 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
           consume()
           setColIdx((i) => Math.min(columns.length - 1, i + 1))
           setCardIdx(0)
+          return
+        case 'H':
+          if (dndEnabled && focusedTask) {
+            consume()
+            moveFocusedCard(-1)
+          }
+          return
+        case 'L':
+          if (dndEnabled && focusedTask) {
+            consume()
+            moveFocusedCard(1)
+          }
           return
         case 'j':
         case 'ArrowDown':
@@ -840,7 +1040,16 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
     }
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [columns.length, focusedColumn, focusedTask, onOpenTask, onToggleTask])
+  }, [
+    columns.length,
+    cycleGroupBy,
+    dndEnabled,
+    focusedColumn,
+    focusedTask,
+    moveFocusedCard,
+    onOpenTask,
+    onToggleTask
+  ])
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -852,21 +1061,38 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
             onChange={(e) => setGroupBy(e.target.value as KanbanGroupBy)}
             className="rounded-md border border-paper-300/60 bg-paper-200/60 px-2 py-0.5 text-xs text-current/85 outline-none focus:border-paper-400/70"
           >
-            <option value="status">Status</option>
-            <option value="priority">Priority</option>
-            <option value="folder">Folder</option>
+            {groupByOptions.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
           </select>
         </div>
         <div className="text-xs text-current/40">
           {dndEnabled
-            ? 'Drag cards to move · h/l column · j/k card · Space toggle · Enter open'
-            : 'h/l column · j/k card · Space toggle · Enter open'}
+            ? 'Drag or Shift+H·L move card · h/l column · j/k card · g group-by · Space toggle · Enter open'
+            : 'h/l column · j/k card · g group-by · Space toggle · Enter open'}
         </div>
       </div>
+
+      {groupBy === 'field:status' && kanbanStatuses.length === 0 && (
+        <div className="shrink-0 border-b border-paper-300/45 bg-paper-100/40 px-3 py-2 text-xs text-current/55">
+          No custom statuses configured yet. Add an ordered list to your{' '}
+          <code className="rounded bg-paper-300/50 px-1">config.toml</code> under{' '}
+          <code className="rounded bg-paper-300/50 px-1">[view]</code>, e.g.{' '}
+          <code className="rounded bg-paper-300/50 px-1">
+            kanban_statuses = ["backlog", "in_progress", "review", "done"]
+          </code>
+          , then tag tasks like{' '}
+          <code className="rounded bg-paper-300/50 px-1">- [ ] Ship it @status:review</code>. Drag a
+          card or press Shift+H/L to change a task's status.
+        </div>
+      )}
 
       <div ref={boardRef} className="flex min-h-0 flex-1 gap-2 overflow-x-auto px-3 py-3">
         {columns.map((column, ci) => {
           const isColumnFocused = ci === safeColIdx
+          const accent = fieldKeyOf(groupBy) ? columnAccent(column.id) : null
           return (
             <div
               key={column.id}
@@ -912,6 +1138,13 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
                       onPointerDown={(e) => e.stopPropagation()}
                       className="group/title flex max-w-full items-center gap-1 rounded-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
                     >
+                      {accent && (
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-full"
+                          style={{ backgroundColor: accent }}
+                          aria-hidden="true"
+                        />
+                      )}
                       <span className="truncate text-xs font-semibold uppercase tracking-wide text-current/70">
                         {column.label}
                       </span>
@@ -1066,9 +1299,11 @@ function TaskCard({
         onPointerDown(e)
       }}
       className={[
-        'group rounded-md border-l-2 bg-paper-100/85 px-2.5 py-1.5 transition-colors select-none',
-        isOverdue ? 'border-rose-500/70' : 'border-paper-300/60',
-        isFocused ? 'ring-1 ring-accent/60' : 'hover:bg-paper-200/60',
+        // Soft full border so each card reads as its own surface; the left edge
+        // stays a touch heavier and turns rose for overdue tasks.
+        'group rounded-md border border-l-2 border-paper-300/50 bg-paper-100/85 px-2.5 py-1.5 transition-colors select-none',
+        isOverdue ? 'border-l-rose-500/70' : '',
+        isFocused ? 'ring-1 ring-accent/60' : 'hover:border-paper-300/75 hover:bg-paper-200/60',
         draggable ? 'cursor-grab active:cursor-grabbing' : ''
       ].join(' ')}
     >
@@ -1150,8 +1385,8 @@ function TaskCard({
           <ArrowUpRightIcon width={12} height={12} />
         </button>
       </div>
-      <div className="mt-1 flex items-center gap-2 pl-6 text-xs text-current/50">
-        <span className="truncate">{task.noteTitle}</span>
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 pl-6 text-xs text-current/50">
+        <span className="max-w-full truncate">{task.noteTitle}</span>
         {task.priority && (
           <span
             className={[
@@ -1183,6 +1418,19 @@ function TaskCard({
             @waiting
           </span>
         )}
+        {task.fields &&
+          Object.entries(task.fields).map(([k, v]) => {
+            const accent = columnAccent(v) ?? '#7f8c9a'
+            return (
+              <span
+                key={k}
+                className="shrink-0 rounded px-1.5 py-0.5 font-medium"
+                style={{ backgroundColor: `${accent}22`, color: accent }}
+              >
+                @{k}:{v}
+              </span>
+            )
+          })}
       </div>
     </div>
   )

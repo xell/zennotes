@@ -194,6 +194,8 @@ export interface ZenBridge {
   revealNote(relPath: string): Promise<void>
   /** Reveal the original target of a symlinked note in the OS file manager. */
   revealNoteTarget(relPath: string): Promise<void>
+  /** Reveal an arbitrary file path in the OS file manager (desktop only). */
+  revealFilePath(absPath: string): Promise<void>
   moveNote(relPath: string, targetFolder: NoteFolder, targetSubpath: string): Promise<NoteMeta>
   importFilesToNote(notePath: string, sourcePaths: string[]): Promise<ImportedAsset[]>
   importPastedImage(input: PastedImageInput): Promise<ImportedAsset>
@@ -202,6 +204,9 @@ export interface ZenBridge {
   duplicateAsset(relPath: string): Promise<AssetMeta>
   deleteAsset(relPath: string): Promise<DeletedAsset>
   restoreDeletedAsset(asset: DeletedAsset): Promise<AssetMeta>
+  listDeletedAssets(): Promise<DeletedAsset[]>
+  purgeDeletedAsset(undoToken: string): Promise<void>
+  emptyDeletedAssets(): Promise<void>
   createFolder(folder: NoteFolder, subpath: string): Promise<void>
   renameFolder(folder: NoteFolder, oldSubpath: string, newSubpath: string): Promise<string>
   deleteFolder(folder: NoteFolder, subpath: string): Promise<void>

@@ -124,15 +124,40 @@ describe('/table insertion separates the table into its own block (#294)', () =>
 
   const TABLE = '| Column 1 | Column 2 |\n| --- | --- |\n| | |'
 
+  // A trailing newline is added at the end of the document so the caret can land
+  // on the line AFTER the table's block widget rather than inside its replaced
+  // range (a caret inside renders as a tall bar at the pane edge). (#340)
   it('inserts the bare table at document start', () => {
-    expect(applyTable('/')).toBe(TABLE)
+    expect(applyTable('/')).toBe(`${TABLE}\n`)
   })
 
   it('inserts a blank line before a table typed directly under a paragraph', () => {
-    expect(applyTable('Some text\n/')).toBe(`Some text\n\n${TABLE}`)
+    expect(applyTable('Some text\n/')).toBe(`Some text\n\n${TABLE}\n`)
   })
 
   it('does not double a blank line that already separates it', () => {
-    expect(applyTable('Some text\n\n/')).toBe(`Some text\n\n${TABLE}`)
+    expect(applyTable('Some text\n\n/')).toBe(`Some text\n\n${TABLE}\n`)
+  })
+
+  function applyTableCaretLine(doc: string): string {
+    const parent = document.createElement('div')
+    document.body.append(parent)
+    const view = new EditorView({ parent, state: EditorState.create({ doc }) })
+    const result = templateSlashCommandSource(new CompletionContext(view.state, doc.length, true))
+    const table = result?.options.find((o) => (o.displayLabel ?? o.label) === 'Table')
+    const apply = table?.apply
+    if (typeof apply !== 'function') throw new Error('expected a Table apply handler')
+    apply(view, table!, result!.from, view.state.doc.length)
+    const line = view.state.doc.lineAt(view.state.selection.main.head)
+    view.destroy()
+    parent.remove()
+    return line.text
+  }
+
+  it('lands the caret on the empty line after the table, not inside it (#340)', () => {
+    // Every table source line contains a pipe; the landing line must not.
+    const caretLine = applyTableCaretLine('/')
+    expect(caretLine).toBe('')
+    expect(caretLine.includes('|')).toBe(false)
   })
 })

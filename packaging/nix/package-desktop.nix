@@ -117,7 +117,7 @@ stdenv.mkDerivation (finalAttrs: {
     runHook preInstall
 
     # The SUID chrome-sandbox can't be made setuid in the Nix store; drop it so
-    # Electron falls back to the user-namespace sandbox (same as the Flatpak).
+    # Electron falls back to the user-namespace sandbox.
     rm -f chrome-sandbox
 
     mkdir -p $out/share/zennotes

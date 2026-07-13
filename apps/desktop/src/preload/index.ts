@@ -367,6 +367,8 @@ const api: ZenBridge = {
   revealNote: (relPath: string): Promise<void> => ipcRenderer.invoke(IPC.VAULT_REVEAL_NOTE, relPath),
   revealNoteTarget: (relPath: string): Promise<void> =>
     ipcRenderer.invoke(IPC.VAULT_REVEAL_NOTE_TARGET, relPath),
+  revealFilePath: (absPath: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.VAULT_REVEAL_FILE_PATH, absPath),
   moveNote: (
     relPath: string,
     targetFolder: NoteFolder,
@@ -387,6 +389,11 @@ const api: ZenBridge = {
     ipcRenderer.invoke(IPC.VAULT_DELETE_ASSET, relPath),
   restoreDeletedAsset: (asset: DeletedAsset): Promise<AssetMeta> =>
     ipcRenderer.invoke(IPC.VAULT_RESTORE_DELETED_ASSET, asset),
+  listDeletedAssets: (): Promise<DeletedAsset[]> =>
+    ipcRenderer.invoke(IPC.VAULT_LIST_DELETED_ASSETS),
+  purgeDeletedAsset: (undoToken: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.VAULT_PURGE_DELETED_ASSET, undoToken),
+  emptyDeletedAssets: (): Promise<void> => ipcRenderer.invoke(IPC.VAULT_EMPTY_DELETED_ASSETS),
   createFolder: (folder: NoteFolder, subpath: string): Promise<void> =>
     ipcRenderer.invoke(IPC.VAULT_CREATE_FOLDER, folder, subpath),
   renameFolder: (folder: NoteFolder, oldSubpath: string, newSubpath: string): Promise<string> =>

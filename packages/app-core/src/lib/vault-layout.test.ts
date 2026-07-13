@@ -12,12 +12,14 @@ import {
   isFavoriteFolderKey,
   noteFolderSubpath,
   normalizeVaultSettings,
+  resolveCreateLocation,
   parseFavoriteFolderKey,
   removeFavoritesForFolder,
   rewriteFavoriteNotePath,
   rewriteFavoritesForFolderRename,
   toggleFavorite,
-  weeklyNoteLocationForDate
+  weeklyNoteLocationForDate,
+  monthlyNoteLocationForDate
 } from './vault-layout'
 
 function note(path: string, title: string): NoteMeta {
@@ -42,6 +44,7 @@ function settings(dailyDirectory: string, weeklyDirectory: string): VaultSetting
     primaryNotesLocation: 'inbox',
     dailyNotes: { enabled: true, directory: dailyDirectory },
     weeklyNotes: { enabled: true, directory: weeklyDirectory },
+    monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
     folderIcons: {},
     folderColors: {},
     favorites: []
@@ -81,6 +84,7 @@ describe('classifyDateNote', () => {
           titlePattern: "yyyy-'W'ww-EEE",
           locale: 'en-US'
         },
+        monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
         folderIcons: {},
         folderColors: {},
         favorites: []
@@ -103,6 +107,7 @@ describe('classifyDateNote', () => {
           locale: 'en-US'
         },
         weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+        monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
         folderIcons: {},
         folderColors: {},
         favorites: []
@@ -138,6 +143,7 @@ describe('classifyDateNote', () => {
         locale: 'en-US'
       },
       weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {},
       folderColors: {},
       favorites: []
@@ -159,6 +165,7 @@ describe('classifyDateNote', () => {
         locale: 'en-US'
       },
       weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {},
       folderColors: {},
       favorites: []
@@ -188,6 +195,7 @@ describe('classifyDateNote', () => {
         locale: 'en-US'
       },
       weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {},
       folderColors: {},
       favorites: []
@@ -209,6 +217,7 @@ describe('classifyDateNote', () => {
         titlePattern: "yyyy-'W'ww-EEE",
         locale: 'en-US'
       },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {},
       folderColors: {},
       favorites: []
@@ -218,6 +227,67 @@ describe('classifyDateNote', () => {
       subpath: 'Weekly Notes/2026/06-Jun',
       title: '2026-W24-Mon'
     })
+  })
+
+  it('renders monthly note locations anchored to the first of the month', () => {
+    const location = monthlyNoteLocationForDate(new Date(2026, 6, 21), {
+      primaryNotesLocation: 'inbox',
+      dailyNotes: { enabled: false, directory: 'Daily Notes' },
+      weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+      monthlyNotes: {
+        enabled: true,
+        directory: 'Monthly Notes',
+        titlePattern: 'yyyy-MM',
+        locale: 'en-US'
+      },
+      folderIcons: {},
+      folderColors: {},
+      favorites: []
+    } as VaultSettings)
+
+    expect(location).toEqual({ subpath: 'Monthly Notes', title: '2026-07' })
+  })
+
+  it('renders monthly note locations from date-based directory and title patterns', () => {
+    const location = monthlyNoteLocationForDate(new Date(2026, 6, 21), {
+      primaryNotesLocation: 'inbox',
+      dailyNotes: { enabled: false, directory: 'Daily Notes' },
+      weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+      monthlyNotes: {
+        enabled: true,
+        directory: 'yyyy/MM-MMM',
+        titlePattern: "yyyy-'M'MM",
+        locale: 'en-US'
+      },
+      folderIcons: {},
+      folderColors: {},
+      favorites: []
+    } as VaultSettings)
+
+    expect(location).toEqual({ subpath: '2026/07-Jul', title: '2026-M07' })
+  })
+
+  it('classifies a monthly note by its month pattern and only inside its folder', () => {
+    const settings = {
+      primaryNotesLocation: 'inbox',
+      dailyNotes: { enabled: false, directory: 'Daily Notes' },
+      weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+      monthlyNotes: {
+        enabled: true,
+        directory: 'Monthly Notes',
+        titlePattern: 'yyyy-MM',
+        locale: 'system'
+      },
+      folderIcons: {},
+      folderColors: {},
+      favorites: []
+    } as VaultSettings
+
+    const info = classifyDateNote(note('inbox/Monthly Notes/2026-07.md', '2026-07'), settings)
+    expect(info).toMatchObject({ kind: 'monthly' })
+    expect(info?.date).toEqual(new Date(2026, 6, 1))
+
+    expect(classifyDateNote(note('inbox/Random/2026-07.md', '2026-07'), settings)).toBeNull()
   })
 
   it('uses the ISO week-year for weekly pattern years', () => {
@@ -230,6 +300,7 @@ describe('classifyDateNote', () => {
         titlePattern: "yyyy-'W'ww",
         locale: 'en-US'
       },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {},
       folderColors: {},
       favorites: []
@@ -251,6 +322,7 @@ describe('classifyDateNote', () => {
         titlePattern: "yyyy-'W'ww",
         locale: 'en-US'
       },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {},
       folderColors: {},
       favorites: []
@@ -272,6 +344,7 @@ describe('classifyDateNote', () => {
         titlePattern: "yyyy-'W'ww",
         locale: 'en-US'
       },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {},
       folderColors: {},
       favorites: []
@@ -300,6 +373,7 @@ describe('classifyDateNote', () => {
         locale: 'en-US'
       },
       weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {},
       folderColors: {},
       favorites: []
@@ -324,6 +398,7 @@ describe('classifyDateNote', () => {
         locale: 'en-US'
       },
       weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {},
       folderColors: {},
       favorites: []
@@ -345,6 +420,7 @@ describe('classifyDateNote', () => {
         locale: 'en-US'
       },
       weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {},
       folderColors: {},
       favorites: []
@@ -372,6 +448,7 @@ describe('classifyDateNote', () => {
         ]
       },
       weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {},
       folderColors: {},
       favorites: []
@@ -399,6 +476,7 @@ describe('classifyDateNote', () => {
           { directory: 'Weekly Notes', titlePattern: "yyyy-'W'ww", locale: 'en-US' }
         ]
       },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {},
       folderColors: {},
       favorites: []
@@ -442,6 +520,7 @@ describe('dateNoteFolderMayBelongToDatePattern', () => {
         ]
       },
       weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {},
       folderColors: {},
       favorites: []
@@ -554,5 +633,71 @@ describe('favorites', () => {
   it('defaults favorites to an empty array', () => {
     const settings = normalizeVaultSettings({} as unknown as VaultSettings)
     expect(settings.favorites).toEqual([])
+  })
+})
+
+describe('resolveCreateLocation (#362)', () => {
+  const settings = normalizeVaultSettings(null)
+
+  it('defaults to the primary location root', () => {
+    expect(resolveCreateLocation({ mode: 'primary' }, null, settings)).toEqual({
+      folder: 'inbox',
+      subpath: ''
+    })
+    expect(resolveCreateLocation(undefined, null, settings)).toEqual({
+      folder: 'inbox',
+      subpath: ''
+    })
+  })
+
+  it('uses a specific subfolder in folder mode', () => {
+    expect(
+      resolveCreateLocation({ mode: 'folder', folder: 'assets/drawings' }, null, settings)
+    ).toEqual({ folder: 'inbox', subpath: 'assets/drawings' })
+  })
+
+  it('falls back to primary when folder mode has no folder', () => {
+    expect(resolveCreateLocation({ mode: 'folder', folder: '' }, null, settings)).toEqual({
+      folder: 'inbox',
+      subpath: ''
+    })
+  })
+
+  it('uses the active note folder in active-note mode', () => {
+    const active = {
+      folder: 'inbox',
+      path: 'inbox/Projects/Plan.md'
+    } as Pick<NoteMeta, 'folder' | 'path'>
+    expect(resolveCreateLocation({ mode: 'active-note' }, active, settings)).toEqual({
+      folder: 'inbox',
+      subpath: 'Projects'
+    })
+  })
+
+  it('falls back to primary for active-note with nothing open or a trashed note', () => {
+    expect(resolveCreateLocation({ mode: 'active-note' }, null, settings)).toEqual({
+      folder: 'inbox',
+      subpath: ''
+    })
+    const trashed = { folder: 'trash', path: 'trash/Old.md' } as Pick<
+      NoteMeta,
+      'folder' | 'path'
+    >
+    expect(resolveCreateLocation({ mode: 'active-note' }, trashed, settings)).toEqual({
+      folder: 'inbox',
+      subpath: ''
+    })
+  })
+})
+
+describe('normalizeVaultSettings drawings/databases location (#362)', () => {
+  it('fills defaults and normalizes a folder value', () => {
+    const n = normalizeVaultSettings(null)
+    expect(n.drawingsLocation).toEqual({ mode: 'primary' })
+    expect(n.databasesLocation).toEqual({ mode: 'primary' })
+    const custom = normalizeVaultSettings({
+      drawingsLocation: { mode: 'folder', folder: '/assets/drawings/' }
+    } as unknown as VaultSettings)
+    expect(custom.drawingsLocation).toEqual({ mode: 'folder', folder: 'assets/drawings' })
   })
 })

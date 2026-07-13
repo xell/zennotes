@@ -29,12 +29,11 @@ There are two pieces:
    only job is to host `Casks/zennotes.rb`. `brew install --cask zennotes/tap/zennotes`
    resolves `zennotes/tap` → `github.com/ZenNotes/homebrew-tap`.
 
-We keep the canonical Cask in this monorepo (next to the AUR/Flatpak/Nix
-packaging) and mirror it into the tap on each release, so all packaging lives in
-one place.
+We keep the canonical Cask in this monorepo (next to the AUR/Nix packaging) and
+mirror it into the tap on each release, so all packaging lives in one place.
 
-Like every other channel (AUR, Nix, Flatpak), the Cask **pins a SHA-256 of a
-GitHub Release asset**, so the release must exist first.
+Like every other channel (AUR, Nix), the Cask **pins a SHA-256 of a GitHub
+Release asset**, so the release must exist first.
 
 ## One-time setup (creating the tap)
 

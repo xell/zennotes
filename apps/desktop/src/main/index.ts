@@ -23,6 +23,7 @@ import { Readable } from 'node:stream'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
 import { IPC } from '@shared/ipc'
 import type {
   ManualOrderMap,
@@ -89,6 +90,9 @@ import {
   renameAsset,
   removeDemoTour,
   restoreDeletedAsset,
+  listDeletedAssets,
+  purgeDeletedAsset,
+  emptyDeletedAssets,
   restoreFromTrash,
   searchVaultTextCapabilities,
   searchVaultText,
@@ -204,8 +208,10 @@ import {
 } from './file-open'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const nodeRequire = createRequire(import.meta.url)
 const LOCAL_ASSET_SCHEME = 'zen-asset'
 const THEME_ASSET_SCHEME = 'zen-theme'
+const EXCALIDRAW_ASSET_SCHEME = 'zen-excalidraw'
 
 const PRIVILEGED_ASSET_PRIVILEGES = {
   standard: true,
@@ -217,7 +223,8 @@ const PRIVILEGED_ASSET_PRIVILEGES = {
 
 protocol.registerSchemesAsPrivileged([
   { scheme: LOCAL_ASSET_SCHEME, privileges: PRIVILEGED_ASSET_PRIVILEGES },
-  { scheme: THEME_ASSET_SCHEME, privileges: PRIVILEGED_ASSET_PRIVILEGES }
+  { scheme: THEME_ASSET_SCHEME, privileges: PRIVILEGED_ASSET_PRIVILEGES },
+  { scheme: EXCALIDRAW_ASSET_SCHEME, privileges: PRIVILEGED_ASSET_PRIVILEGES }
 ])
 
 let mainWindow: BrowserWindow | null = null
@@ -912,7 +919,10 @@ function openExternalFileWindow(absPath: string): void {
       preload: path.join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // Same reason as the main window: keep this editor renderer live when the
+      // OS backgrounds/occludes it, so Vim keys and shortcuts don't freeze. (#350)
+      backgroundThrottling: false
     }
   })
 
@@ -1347,7 +1357,15 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
       // fully sandboxed preload context.
       sandbox: false,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // Don't let Chromium throttle/freeze this renderer when it decides the
+      // window is "background" — that can happen while the window is still
+      // visually open (occlusion misdetection, display idle, some Wayland
+      // compositors). When throttled, the renderer's JS input pipeline stalls,
+      // so window-level shortcuts and CodeMirror's Vim keymap stop receiving
+      // keys and keystrokes fall through as literal text, until a focus event
+      // wakes it. The editor is the primary surface here, so keep it live. (#350)
+      backgroundThrottling: false
     }
   })
 
@@ -3115,6 +3133,10 @@ function registerIpc(): void {
     shell.showItemInFolder(target)
   })
 
+  handle(IPC.VAULT_REVEAL_FILE_PATH, async (_e, absPath: string) => {
+    shell.showItemInFolder(absPath)
+  })
+
   handle(
     IPC.VAULT_MOVE_NOTE,
     async (_e, relPath: string, targetFolder: NoteFolder, targetSubpath: string) => {
@@ -3183,6 +3205,28 @@ function registerIpc(): void {
     }
     const v = requireVault()
     return await restoreDeletedAsset(v.root, deleted)
+  })
+
+  handle(IPC.VAULT_LIST_DELETED_ASSETS, async () => {
+    if (isRemoteWorkspaceActive()) return []
+    const v = requireVault()
+    return await listDeletedAssets(v.root)
+  })
+
+  handle(IPC.VAULT_PURGE_DELETED_ASSET, async (_e, undoToken: string) => {
+    if (isRemoteWorkspaceActive()) {
+      throw new Error('Asset deletion is only available for local vaults right now.')
+    }
+    const v = requireVault()
+    await purgeDeletedAsset(v.root, undoToken)
+  })
+
+  handle(IPC.VAULT_EMPTY_DELETED_ASSETS, async () => {
+    if (isRemoteWorkspaceActive()) {
+      throw new Error('Asset deletion is only available for local vaults right now.')
+    }
+    const v = requireVault()
+    await emptyDeletedAssets(v.root)
   })
 
   handle(
@@ -3699,7 +3743,10 @@ function openFloatingNoteWindow(relPath: string): void {
       // fully sandboxed preload context.
       sandbox: false,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // Same reason as the main window: keep this editor renderer live when the
+      // OS backgrounds/occludes it, so Vim keys and shortcuts don't freeze. (#350)
+      backgroundThrottling: false
     }
   })
 
@@ -3786,7 +3833,10 @@ async function ensureQuickCaptureWindow(): Promise<BrowserWindow> {
       preload: path.join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // Same reason as the main window: keep this editor renderer live when the
+      // OS backgrounds/occludes it, so Vim keys and shortcuts don't freeze. (#350)
+      backgroundThrottling: false
     }
   })
 
@@ -4304,16 +4354,64 @@ app.whenReady().then(async () => {
     })
   })
 
+  // Excalidraw's bundled fonts (dist/prod/fonts), served locally so the font
+  // picker works offline. With EXCALIDRAW_ASSET_PATH unset Excalidraw fetches its
+  // fonts from esm.sh, which the renderer CSP blocks, so nothing applied (#324). A
+  // packaged build ships only out/**, so the fonts are copied to
+  // resources/excalidraw-fonts (extraResources); dev reads them from node_modules.
+  const excalidrawFontsDir = (): string => {
+    if (app.isPackaged) return path.join(process.resourcesPath, 'excalidraw-fonts')
+    // The package `exports` map blocks resolving package.json, so derive the
+    // fonts dir from the main entry (.../dist/prod/index.js -> .../dist/prod/fonts).
+    const entry = nodeRequire.resolve('@excalidraw/excalidraw')
+    return path.join(path.dirname(entry), 'fonts')
+  }
+  const excalidrawFontMime = (p: string): string =>
+    /\.woff2$/i.test(p)
+      ? 'font/woff2'
+      : /\.woff$/i.test(p)
+        ? 'font/woff'
+        : /\.otf$/i.test(p)
+          ? 'font/otf'
+          : /\.ttf$/i.test(p)
+            ? 'font/ttf'
+            : 'application/octet-stream'
+  protocol.handle(EXCALIDRAW_ASSET_SCHEME, async (request) => {
+    // zen-excalidraw://assets/fonts/<Family>/<file> -> <fontsDir>/<Family>/<file>
+    const rel = decodeURIComponent(new URL(request.url).pathname)
+      .replace(/^\/+/, '')
+      .replace(/^fonts\//, '')
+    const root = path.resolve(excalidrawFontsDir())
+    const abs = path.resolve(root, rel)
+    if ((abs !== root && !abs.startsWith(root + path.sep)) || !/\.(woff2?|otf|ttf)$/i.test(abs)) {
+      throw new Error(`Invalid Excalidraw font URL: ${request.url}`)
+    }
+    const data = await fsp.readFile(abs)
+    return new Response(data, {
+      headers: {
+        'content-type': excalidrawFontMime(abs),
+        'cache-control': 'public, max-age=31536000, immutable'
+      }
+    })
+  })
+
   // Permissions this app grants to its own renderer (deny everything else —
   // it's our app talking to our own vault, no third-party surface):
   //   - 'local-fonts'   → queryLocalFonts() for the font picker
   //   - clipboard read/write → copy buttons and vim's "+y / "+p registers
   //     (without this, navigator.clipboard throws NotAllowedError, which on
   //     macOS and Wayland broke yank/paste to the system clipboard — #79)
+  //   - 'fileSystem'    → the File System Access API (showSaveFilePicker +
+  //     createWritable) behind Excalidraw's "Export image → Save to disk". The
+  //     native picker shows regardless, but the *write* is gated on this
+  //     permission check; denying it made every PNG/SVG drawing export fail
+  //     right after the save dialog with a filesystem write error (#355). The
+  //     path is user-initiated and user-picked, so granting it is safe.
   const GRANTED_PERMISSIONS = new Set<string>([
     'local-fonts',
     'clipboard-read',
-    'clipboard-sanitized-write'
+    'clipboard-sanitized-write',
+    'fileSystem'
   ])
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(GRANTED_PERMISSIONS.has(permission as string))

@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { EditorState } from '@codemirror/state'
 import { EditorView, keymap, type KeyBinding } from '@codemirror/view'
 import { vim } from '@replit/codemirror-vim'
-import { vimAwareDefaultKeymap } from './cm-vim-default-keymap'
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
+import { vimAwareDefaultKeymap, vimAwareMarkdownKeymap } from './cm-vim-default-keymap'
 
 // Regression guard for the macOS Vim `Ctrl-d` bug: defaultKeymap's emacs-style
 // mac chords used to shadow Vim's <C-d> (half-page down) and delete a char.
@@ -109,5 +110,73 @@ describe('vim arrow bindings defer to the Vim plugin (issue #287)', () => {
     press(view, 'i', 73) // enter insert mode
     // Native cursorCharRight/etc. handle it (return true) so the caret still moves.
     expect(arrowRun('ArrowRight')(view)).toBe(true)
+  })
+
+  // Enter/Backspace are Vim motions in normal mode (<CR> → j^, <BS> → h) but
+  // editing commands in defaultKeymap — they must defer exactly like the arrows.
+  it('defers Enter and Backspace in normal mode (Vim motions, not edits)', () => {
+    const view = mountVim('hello\nworld')
+    expect(arrowRun('Enter')(view)).toBe(false)
+    expect(arrowRun('Backspace')(view)).toBe(false)
+    expect(view.state.doc.toString()).toBe('hello\nworld') // nothing edited
+  })
+
+  it('edits natively with Enter/Backspace in insert mode', () => {
+    const view = mountVim('hello')
+    press(view, 'i', 73) // enter insert mode
+    expect(arrowRun('Enter')(view)).toBe(true)
+    expect(view.state.doc.toString()).toBe('\nhello')
+  })
+})
+
+// The markdown language keymap (Enter → insertNewlineContinueMarkup at
+// Prec.high) used to swallow Enter before the Vim plugin, inserting a newline
+// in normal mode. vimAwareMarkdownKeymap replaces it (addKeymap: false) with
+// deferred bindings; this exercises the full dispatch chain the real editors
+// use: markdown keymap → default keymap → Vim plugin.
+describe('vimAwareMarkdownKeymap (Enter in Vim normal mode acts as <CR>)', () => {
+  const views: EditorView[] = []
+  afterEach(() => {
+    views.splice(0).forEach((v) => v.destroy())
+  })
+
+  const mount = (doc: string): EditorView => {
+    const view = new EditorView({
+      state: EditorState.create({
+        doc,
+        extensions: [
+          vim(),
+          markdown({ base: markdownLanguage, addKeymap: false }),
+          vimAwareMarkdownKeymap,
+          keymap.of([...vimAwareDefaultKeymap(true)])
+        ]
+      }),
+      parent: document.body
+    })
+    views.push(view)
+    view.focus()
+    return view
+  }
+
+  const press = (view: EditorView, key: string, keyCode: number): void => {
+    view.contentDOM.dispatchEvent(
+      new KeyboardEvent('keydown', { key, keyCode, bubbles: true, cancelable: true })
+    )
+  }
+
+  it('does not insert a newline on Enter in normal mode', () => {
+    const view = mount('hello\n  world')
+    // Before the fix, the markdown keymap's Enter → insertNewlineContinueMarkup
+    // fired here and edited the doc. The j^ motion itself can't be asserted:
+    // jsdom has no layout, so Vim's vertical motion cannot measure lines.
+    press(view, 'Enter', 13)
+    expect(view.state.doc.toString()).toBe('hello\n  world')
+  })
+
+  it('still continues list markup on Enter in insert mode', () => {
+    const view = mount('- item')
+    press(view, 'A', 65) // append at end of line → insert mode
+    press(view, 'Enter', 13)
+    expect(view.state.doc.toString()).toBe('- item\n- ')
   })
 })

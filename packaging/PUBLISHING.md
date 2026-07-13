@@ -4,14 +4,13 @@ How every Linux distribution channel for ZenNotes gets published, in the order
 you have to do it. Written for the maintainer (Adib) who has **no Linux/Arch
 machine** — every step below is doable from macOS + GitHub CI.
 
-There are **four** Linux channels (plus Docker, which is separate):
+There are **three** Linux channels (plus Docker, which is separate):
 
 | Channel                                           | Where it lives                            | Published by              | Per-release work                    |
 | ------------------------------------------------- | ----------------------------------------- | ------------------------- | ----------------------------------- |
-| **Installers** (AppImage / deb / pacman / tar.gz) | GitHub Release assets                     | `release.yml` on tag push | **Automatic** — just push the tag   |
+| **Installers** (AppImage / deb / rpm / pacman / tar.gz) | GitHub Release assets               | `release.yml` on tag push | **Automatic** — just push the tag   |
 | **AUR** (`zennotes-bin`)                          | `aur.archlinux.org` git repo              | You, manually             | Bump + sha256 + push                |
 | **Nix flake**                                     | `flake.nix` in this repo                  | Merge to `main`           | Bump `release-data.json` (3 hashes) |
-| **Flatpak**                                       | `packaging/flatpak/` (not on Flathub yet) | Local build only          | Bump url+sha256 (Flathub = future)  |
 | **Homebrew** (`brew install --cask`, macOS)       | `packaging/homebrew/` → `ZenNotes/homebrew-tap` | You, manually       | Bump + sha256 + push to the tap     |
 
 > Docker (`adibhanna/zennotes`) is handled separately by `docker-publish.yml` —
@@ -29,12 +28,12 @@ must exist _first_. The release is the root of the tree:
                                                               │
                                           release.yml builds & uploads installers
                                                               │
-                       ┌──────────────────────┬──────────────┴───────────────┐
-                   4a. AUR                 4b. Flatpak                     4c. Nix
-              (sha256 of tar.gz)      (sha256 of AppImage)      (source/npm/vendor hashes)
+                       ┌──────────────────────┴──────────────────────────────┐
+                   4a. AUR                                              4b. Nix
+              (sha256 of tar.gz)                          (source/npm/vendor hashes)
 ```
 
-Do **not** start 4a/4b/4c until the v`X.Y.Z` assets have finished uploading.
+Do **not** start 4a/4b until the v`X.Y.Z` assets have finished uploading.
 
 ---
 
@@ -154,25 +153,7 @@ github:ZenNotes/zennotes` reads the repo's default branch (`main`), so the
 
 ---
 
-## 4. Flatpak — local only for now
-
-The manifest under `packaging/flatpak/` builds and runs locally, but **is not on
-Flathub**, so end users can't `flatpak install` it yet.
-
-- **Keep the local manifest current each release** — in
-  `packaging/flatpak/org.zennotes.ZenNotes.yml`:
-  - bump the source `url` to the new `vX.Y.Z` AppImage,
-  - update `sha256` — `shasum -a 256` of that uploaded AppImage (same hash you'd
-    compute for AUR's old AppImage method),
-  - bump the `<release>` entry in `org.zennotes.ZenNotes.metainfo.xml`.
-- **To actually publish to users:** submit to **Flathub** — a PR to the Flathub
-  repo for app-id `org.zennotes.ZenNotes`, with screenshots in the AppStream
-  metainfo and your sign-off as the app-id owner. Biggest lift of the four;
-  currently a planned follow-up.
-
----
-
-## 5. Homebrew (macOS) — manual push
+## 4. Homebrew (macOS) — manual push
 
 The macOS counterpart to AUR: a **Homebrew Cask** that pins the signed +
 notarized `.dmg` from the release. Lives in `packaging/homebrew/` (canonical
@@ -198,19 +179,17 @@ source) and is mirrored into the **`ZenNotes/homebrew-tap`** repo, which is what
 
 1. **(once)** Add `*.tar.gz` to the `release.yml` upload glob (§0).
 2. Bump version across the 8 `package.json` + lockfile, commit.
-3. Merge `release/v2.4.0` → `main` (carries Nix + Flatpak + new AUR PKGBUILD into main).
+3. Merge `release/v2.4.0` → `main` (carries Nix + new AUR PKGBUILD into main).
 4. Tag `v2.4.0`, push the tag → CI builds & uploads installers.
 5. **Verify** the four Linux assets are attached (§1).
 6. **AUR:** copy the new PKGBUILD to the AUR clone, pin sha256 (`shasum`), sync
    `.SRCINFO`, `git push origin main:master` (§2).
 7. **Nix:** bump `release-data.json`'s 3 hashes — on your Mac with Nix, or a
    contributor PR (§3).
-8. **Flatpak:** bump url + sha256 + metainfo locally; Flathub submission is a
-   separate future task (§4).
-9. **Docker:** confirm `docker-publish.yml` ran and pushed `adibhanna/zennotes`.
-10. **Homebrew (macOS):** `packaging/homebrew/update-cask.sh X.Y.Z`, commit, then
-    mirror `Casks/zennotes.rb` into `ZenNotes/homebrew-tap` and push (§5).
+8. **Docker:** confirm `docker-publish.yml` ran and pushed `adibhanna/zennotes`.
+9. **Homebrew (macOS):** `packaging/homebrew/update-cask.sh X.Y.Z`, commit, then
+   mirror `Casks/zennotes.rb` into `ZenNotes/homebrew-tap` and push (§4).
 
 **Fully automatic:** GitHub installers (incl. tar.gz once §0 lands), Docker.
-**Needs you every release:** AUR push, Nix hash bump, Flatpak local bump, Homebrew push.
-**One-time future setups:** Flathub submission, nixpkgs submission, create the Homebrew tap.
+**Needs you every release:** AUR push, Nix hash bump, Homebrew push.
+**One-time future setups:** nixpkgs submission, create the Homebrew tap.

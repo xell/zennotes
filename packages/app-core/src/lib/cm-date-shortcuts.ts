@@ -1,19 +1,39 @@
 import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete'
 import type { EditorView } from '@codemirror/view'
+import type { TimeFormat } from '@shared/app-config'
+import { useStore } from '../store'
 
 interface DateShortcut {
   label: string
   detail: string
   insert: string
+  /** When set, computed fresh at apply time (used for the current time). */
+  dynamicInsert?: () => string
   searchText: string
   icon: string
 }
 
+function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
 function formatISODate(date: Date): string {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+}
+
+/** Wall-clock time in the given format: `14:30` (24h) or `2:30 PM` (12h). */
+export function formatClockTime(date: Date, format: TimeFormat): string {
+  const minutes = pad2(date.getMinutes())
+  if (format === '12h') {
+    const suffix = date.getHours() < 12 ? 'AM' : 'PM'
+    const hour = date.getHours() % 12 || 12
+    return `${hour}:${minutes} ${suffix}`
+  }
+  return `${pad2(date.getHours())}:${minutes}`
+}
+
+function currentTimeFormat(): TimeFormat {
+  return useStore.getState().timeFormat
 }
 
 function formatSearchText(label: string, date: Date): string {
@@ -36,7 +56,7 @@ function buildShortcuts(now = new Date()): DateShortcut[] {
     { label: 'Tomorrow', days: 1 }
   ]
 
-  return offsets.map(({ label, days }) => {
+  const dates = offsets.map(({ label, days }): DateShortcut => {
     const date = new Date(base)
     date.setDate(base.getDate() + days)
     return {
@@ -47,6 +67,20 @@ function buildShortcuts(now = new Date()): DateShortcut[] {
       icon: String(date.getDate())
     }
   })
+
+  // #344: `@time` (or `@now`) inserts the current wall-clock time in the
+  // configured 12h/24h format, computed fresh when the item is applied.
+  const nowText = formatClockTime(now, currentTimeFormat())
+  const time: DateShortcut = {
+    label: 'Now',
+    detail: nowText,
+    insert: nowText,
+    dynamicInsert: () => formatClockTime(new Date(), currentTimeFormat()),
+    searchText: `now time clock ${nowText.toLowerCase()}`,
+    icon: '🕘'
+  }
+
+  return [...dates, time]
 }
 
 function dateShortcutMatch(context: CompletionContext): {
@@ -83,10 +117,10 @@ export function dateShortcutSource(context: CompletionContext): CompletionResult
         _kind: 'date',
         _icon: item.icon,
         apply: (view: EditorView, _completion: Completion, _from: number, to: number) => {
-          const anchor = match.replaceFrom + item.insert.length
+          const insert = item.dynamicInsert ? item.dynamicInsert() : item.insert
           view.dispatch({
-            changes: { from: match.replaceFrom, to, insert: item.insert },
-            selection: { anchor }
+            changes: { from: match.replaceFrom, to, insert },
+            selection: { anchor: match.replaceFrom + insert.length }
           })
         }
       } as Completion & { _kind: 'date'; _icon: string })

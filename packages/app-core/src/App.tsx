@@ -15,6 +15,8 @@ import { TitleBar } from './components/TitleBar'
 import { PromptHost } from './components/PromptHost'
 import { ConfirmHost } from './components/ConfirmHost'
 import { ServerDirectoryPickerHost } from './components/ServerDirectoryPickerHost'
+import { ToastHost } from './components/ui'
+import { ExcalidrawEmbedMenuHost } from './components/ExcalidrawEmbedMenuHost'
 import { resolveQuickNoteTitle } from './lib/quick-note-title'
 import { isMacPlatform, matchesShortcut, matchesSequenceToken } from './lib/keymaps'
 import { confirmApp } from './lib/confirm-requests'
@@ -23,6 +25,7 @@ import { focusPaneOrEdgePanel } from './lib/pane-nav'
 import { requestPaneMode } from './lib/pane-mode'
 import { recordRendererPerf } from './lib/perf'
 import { focusEditorNormalMode } from './lib/editor-focus'
+import { isAppOverlayOpen } from './lib/overlay-open'
 import { installMarkdownFileDropHandler } from './lib/markdown-file-drop'
 import {
   appUpdateNoticeLabel,
@@ -171,6 +174,11 @@ const TemplatePalette = lazy(async () => {
   return { default: module.TemplatePalette }
 })
 
+const EmbedDrawingPalette = lazy(async () => {
+  const module = await import('./components/EmbedDrawingPalette')
+  return { default: module.EmbedDrawingPalette }
+})
+
 const SettingsModal = lazy(async () => {
   const module = await import('./components/SettingsModal')
   return { default: module.SettingsModal }
@@ -263,6 +271,8 @@ function App(): JSX.Element {
   const setOutlinePaletteOpen = useStore((s) => s.setOutlinePaletteOpen)
   const templatePaletteOpen = useStore((s) => s.templatePaletteOpen)
   const setTemplatePaletteOpen = useStore((s) => s.setTemplatePaletteOpen)
+  const embedDrawingPaletteOpen = useStore((s) => s.embedDrawingPaletteOpen)
+  const setEmbedDrawingPaletteOpen = useStore((s) => s.setEmbedDrawingPaletteOpen)
   const sidebarOpen = useStore((s) => s.sidebarOpen)
   const noteListOpen = useStore((s) => s.noteListOpen)
   const zenMode = useStore((s) => s.zenMode)
@@ -313,6 +323,29 @@ function App(): JSX.Element {
     if (!vault) return undefined
     return scheduleEditorModuleWarmup()
   }, [vault])
+
+  // When a full-surface panel (Tasks/Tags) closes, the store asks the editor to
+  // reclaim keyboard focus so the reopened note takes typing without a manual
+  // pane jump or mouse click. Routed through a DOM event to keep the store free
+  // of an editor-focus import cycle. (#353)
+  useEffect(() => {
+    const handler = (): void => focusEditorNormalMode({ attempts: 10, delayMs: 24 })
+    window.addEventListener('zen:focus-editor', handler)
+    return () => window.removeEventListener('zen:focus-editor', handler)
+  }, [])
+
+  // Closing the sidebar while it holds keyboard focus (⌘1, Leader E, etc.) used
+  // to strand focus on the now-hidden pane; hand it back to the editor. Only
+  // fires on the open→closed transition when the sidebar was the focused panel,
+  // so hiding it mid-edit never steals focus from the editor. (#353)
+  const prevSidebarOpenRef = useRef(sidebarOpen)
+  useEffect(() => {
+    const wasOpen = prevSidebarOpenRef.current
+    prevSidebarOpenRef.current = sidebarOpen
+    if (wasOpen && !sidebarOpen && useStore.getState().focusedPanel === 'sidebar') {
+      focusEditorNormalMode({ attempts: 10, delayMs: 24 })
+    }
+  }, [sidebarOpen])
 
   useEffect(() => {
     const raf = window.requestAnimationFrame(() => {
@@ -448,6 +481,7 @@ function App(): JSX.Element {
     const html = document.documentElement
     const mql = window.matchMedia('(prefers-color-scheme: dark)')
     const apply = (): void => {
+      const prevMode = html.dataset.themeMode
       const prefersDark = mql.matches
       if (isCustomThemeId(themeId)) {
         const slug = customThemeSlugFromId(themeId)
@@ -459,6 +493,14 @@ function App(): JSX.Element {
         const id = themeMode === 'auto' ? resolveAuto(themeFamily, prefersDark, themeId) : themeId
         html.dataset.theme = id
         html.dataset.themeMode = findTheme(id).mode
+      }
+      // Excalidraw embed previews are exported light/dark to match the theme;
+      // re-render them when the resolved mode flips so a dark note never shows a
+      // white drawing. (#363)
+      if (prevMode && prevMode !== html.dataset.themeMode) {
+        useStore.setState((s) => ({
+          excalidrawPreviewVersion: s.excalidrawPreviewVersion + 1
+        }))
       }
     }
     apply()
@@ -724,6 +766,11 @@ function App(): JSX.Element {
         focusEditorNormalMode()
         return
       }
+      if (e.key === 'Escape' && state.embedDrawingPaletteOpen) {
+        setEmbedDrawingPaletteOpen(false)
+        focusEditorNormalMode()
+        return
+      }
       if (e.key === 'Escape' && state.outlinePaletteOpen) {
         setOutlinePaletteOpen(false)
         focusEditorNormalMode()
@@ -905,6 +952,7 @@ function App(): JSX.Element {
         state.commandPaletteOpen ||
         state.bufferPaletteOpen ||
         state.templatePaletteOpen ||
+        state.embedDrawingPaletteOpen ||
         state.outlinePaletteOpen ||
         document.querySelector('[data-ctx-menu]') ||
         document.querySelector('[data-prompt-modal]') ||
@@ -938,9 +986,53 @@ function App(): JSX.Element {
     setCommandPaletteOpen,
     setOutlinePaletteOpen,
     setTemplatePaletteOpen,
+    setEmbedDrawingPaletteOpen,
     setSearchOpen,
     setVaultTextSearchOpen
   ])
+
+  // Self-heal keyboard focus when the window wakes from an idle/background
+  // state. If Chromium/the OS lets the editor silently lose DOM focus while
+  // idle, window shortcuts and the Vim keymap stop receiving keys until focus
+  // is re-established. When the window regains focus (or becomes visible again)
+  // and the editor was the active surface with no overlay open, re-grab it so
+  // the user doesn't have to open Settings + Escape to recover. Pairs with the
+  // main-process `backgroundThrottling: false`. (#350)
+  useEffect(() => {
+    const heal = (): void => {
+      const state = useStore.getState()
+      if (state.focusedPanel !== 'editor') return
+      if (
+        state.settingsOpen ||
+        state.searchOpen ||
+        state.vaultTextSearchOpen ||
+        state.commandPaletteOpen ||
+        state.bufferPaletteOpen ||
+        state.templatePaletteOpen ||
+        state.outlinePaletteOpen ||
+        isAppOverlayOpen()
+      ) {
+        return
+      }
+      const view = state.editorViewRef
+      if (!view) return
+      const active = document.activeElement
+      const editorHasFocus = !!active && (active === view.dom || view.dom.contains(active))
+      if (editorHasFocus) return
+      // Leave a deliberately-focused note-title input alone.
+      if (active instanceof HTMLElement && active.dataset.noteTitleInput != null) return
+      focusEditorNormalMode()
+    }
+    const onVisibility = (): void => {
+      if (document.visibilityState === 'visible') heal()
+    }
+    window.addEventListener('focus', heal)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('focus', heal)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [])
 
   if (!hasCompletedOnboarding) {
     return (
@@ -951,6 +1043,8 @@ function App(): JSX.Element {
         </Suspense>
         <PromptHost />
         <ConfirmHost />
+        <ToastHost />
+        <ExcalidrawEmbedMenuHost />
         <ServerDirectoryPickerHost />
         <AppUpdateNotice hidden={zenMode} />
       </div>
@@ -966,6 +1060,8 @@ function App(): JSX.Element {
         </Suspense>
         <PromptHost />
         <ConfirmHost />
+        <ToastHost />
+        <ExcalidrawEmbedMenuHost />
         <ServerDirectoryPickerHost />
         <AppUpdateNotice hidden={zenMode} />
       </div>
@@ -1023,6 +1119,11 @@ function App(): JSX.Element {
           <TemplatePalette />
         </Suspense>
       )}
+      {embedDrawingPaletteOpen && (
+        <Suspense fallback={null}>
+          <EmbedDrawingPalette />
+        </Suspense>
+      )}
       {settingsOpen && (
         <Suspense fallback={null}>
           <SettingsModal />
@@ -1035,6 +1136,8 @@ function App(): JSX.Element {
       )}
       <PromptHost />
       <ConfirmHost />
+      <ToastHost />
+      <ExcalidrawEmbedMenuHost />
       <ServerDirectoryPickerHost />
       <AppUpdateNotice hidden={zenMode || settingsOpen} />
       <Suspense fallback={null}>

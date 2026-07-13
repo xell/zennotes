@@ -1,0 +1,36 @@
+name: Verify release channels
+
+# Guards against the recurring problem of external distribution channels (AUR,
+# Homebrew tap) and the website silently serving an old version after a
+# release. Runs daily so any drift goes red within a day and stays red until the
+# stale channel is republished. Run manually right after publishing a release to
+# confirm every public channel picked up the new version.
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to check (defaults to releases/latest)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify all public channels serve the latest release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The script uses only Node built-ins (global fetch), so no install needed.
+      - name: Verify channels
+        run: node tooling/scripts/verify-release-channels.mjs ${{ inputs.version }}

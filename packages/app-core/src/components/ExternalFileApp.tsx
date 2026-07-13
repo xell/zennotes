@@ -21,7 +21,7 @@ import {
 } from '@codemirror/view'
 import { Vim, vim } from '@replit/codemirror-vim'
 import { history, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { vimAwareDefaultKeymap } from '../lib/cm-vim-default-keymap'
+import { vimAwareDefaultKeymap, vimAwareMarkdownKeymap } from '../lib/cm-vim-default-keymap'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
 import { applyVimInsertEscape } from '../lib/vim-insert-escape'
@@ -163,7 +163,8 @@ export function ExternalFileApp(): JSX.Element {
           wordWrapCompartment.of(
             appliedPrefsRef.current.wordWrap ? EditorView.lineWrapping : []
           ),
-          markdown({ base: markdownLanguage, codeLanguages: resolveCodeLanguage, addKeymap: true }),
+          markdown({ base: markdownLanguage, codeLanguages: resolveCodeLanguage, addKeymap: false }),
+          vimAwareMarkdownKeymap,
           markdownListIndentPlugin,
           frontmatterStyle,
           orderedListRenumber,

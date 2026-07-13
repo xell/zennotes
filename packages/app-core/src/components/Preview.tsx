@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { createRoot, type Root } from "react-dom/client";
 import type { NoteMeta } from "@shared/ipc";
 import { renderMarkdown } from "../lib/markdown";
 import { expandEmbeds, hasNoteEmbeds } from "../lib/transclusion";
@@ -20,6 +21,9 @@ import {
   resolveAssetVaultRelativePath,
 } from "../lib/local-assets";
 import { assetTabPath } from "../lib/asset-tabs";
+import { isExcalidrawPath, isObsidianExcalidrawPath } from "@shared/excalidraw";
+import { resolveExcalidrawEmbedPath } from "../lib/excalidraw-preview";
+import { LazyExcalidrawPreview } from "./LazyExcalidrawPreview";
 import { enhancePreviewHeadingFolds } from "../lib/preview-heading-fold";
 import { renderDiagrams } from "../lib/diagram-renderers";
 import { attachInlineDiagramPanZoom } from "../lib/inline-diagram-pan-zoom";
@@ -459,7 +463,9 @@ export const Preview = memo(function Preview({
     () =>
       (target: string): { path: string; title: string } | null => {
         const n = resolveWikilinkTarget(notes, target);
-        return n ? { path: n.path, title: n.title } : null;
+        if (!n) return null;
+        if (isExcalidrawPath(n.path) || isObsidianExcalidrawPath(n.path)) return null;
+        return { path: n.path, title: n.title };
       },
     [notes],
   );
@@ -523,6 +529,9 @@ export const Preview = memo(function Preview({
   const locateAssetInManagerRef = useRef(locateAssetInManager);
   const updateActiveBodyRef = useRef(updateActiveBody);
   const persistActiveRef = useRef(persistActive);
+  // React roots for rendered Excalidraw embed placeholders — unmounted on
+  // every re-render and on component teardown to avoid leaks.
+  const excalidrawRootsRef = useRef<Root[]>([]);
 
   useEffect(() => {
     notesRef.current = notes;
@@ -863,15 +872,62 @@ export const Preview = memo(function Preview({
       root.replaceChildren(...Array.from(stage.childNodes));
       await renderDiagrams(root, { themeKey: effectiveMode, expanded: false });
       if (cancelled) return;
+      renderExcalidrawEmbeds(root);
       requestAnimationFrame(() => {
         if (!cancelled && embedsReadyRef.current) onRenderedRef.current?.();
       });
+    };
+
+    const renderExcalidrawEmbeds = (container: HTMLElement): void => {
+      // Unmount roots from the previous render before hydrating the new DOM.
+      for (const r of excalidrawRootsRef.current) {
+        try {
+          r.unmount();
+        } catch {
+          /* node already gone */
+        }
+      }
+      excalidrawRootsRef.current = [];
+      const notePaths = notes.map((n) => n.path);
+      container
+        .querySelectorAll<HTMLElement>("[data-excalidraw-embed]")
+        .forEach((host) => {
+          const target = host.getAttribute("data-excalidraw-embed") || "";
+          if (!target.trim()) return;
+          const wAttr = host.getAttribute("data-embed-width");
+          const hAttr = host.getAttribute("data-embed-height");
+          const resolved = resolveExcalidrawEmbedPath(notePaths, target) ?? target;
+          const r = createRoot(host);
+          excalidrawRootsRef.current.push(r);
+          r.render(
+            <LazyExcalidrawPreview
+              path={resolved}
+              width={wAttr ? Number(wAttr) : undefined}
+              height={hAttr ? Number(hAttr) : undefined}
+              className="excalidraw-embed-preview"
+              onClick={() => {
+                // Open the drawing (isExcalidrawPath → Excalidraw editor). An
+                // asset tab (zen://asset/…) would route to the generic asset
+                // viewer and offer to download the file instead. (#360)
+                void openNoteInTabRef.current(resolved);
+              }}
+            />,
+          );
+        });
     };
 
     void applyRenderedDom();
 
     return () => {
       cancelled = true;
+      for (const r of excalidrawRootsRef.current) {
+        try {
+          r.unmount();
+        } catch {
+          /* node already gone */
+        }
+      }
+      excalidrawRootsRef.current = [];
     };
   }, [
     assetFilesKey,

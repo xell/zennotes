@@ -51,7 +51,7 @@ export const HELP_QUICK_START: HelpCard[] = [
   {
     title: 'Insert structure while you type',
     body:
-      'Type `/` to insert headings, lists, callouts, code blocks, tables, links, images, and other markdown structures. Type `@` to insert date shortcuts like Today and Tomorrow as ISO dates.'
+      'Type `/` to insert headings, lists, callouts, code blocks, tables, links, images, and other markdown structures. Type `@` to insert date shortcuts like Today and Tomorrow as ISO dates, or `@time` / `@now` for the current time.'
   },
   {
     title: 'Format a selection',
@@ -76,7 +76,7 @@ export const HELP_QUICK_START: HelpCard[] = [
   {
     title: 'Use files without leaving ZenNotes',
     body:
-      'Images, SVGs, PDFs, audio, video, and other local files can appear in the vault tree and open in ZenNotes tabs or reference panes. The files stay ordinary vault files, but opening them does not have to bounce you out to another app.'
+      'Images, SVGs, PDFs, audio, video, Excalidraw drawings, and other local files can appear in the vault tree and open in ZenNotes tabs or reference panes. The files stay ordinary vault files, but opening them does not have to bounce you out to another app.'
   },
   {
     title: 'Pick up where you left off',
@@ -109,7 +109,12 @@ export const HELP_HOW_TO_GUIDES: HelpCard[] = [
   {
     title: 'Make and edit your own templates',
     body:
-      'Open Settings → Templates. Press “New template” to author one: a template is just markdown with optional YAML frontmatter (`name`, `description`, `category`, `titleTemplate`, `targetFolder`, `targetSubpath`) and a body. Use the variables `{{title}}`, `{{date}}`, `{{date:YYYY-MM-DD}}` (any moment-style format), `{{time}}`, `{{week}}`, and `{{cursor}}` (where the caret lands). Custom templates are saved as plain `.md` files under `.zennotes/templates/`. You can also fork a built-in by pressing Edit on it — that creates an editable copy that shadows the original, and Reset restores the built-in. From any note, the “Save Current Note as Template…” command captures it as a new template.'
+      'Open Settings → Templates. Press "New template" to author one: a template is just markdown with optional YAML frontmatter (`name`, `description`, `category`, `titleTemplate`, `targetFolder`, `targetSubpath`) and a body. Use the variables `{{title}}`, `{{date}}`, `{{date:YYYY-MM-DD}}` (any moment-style format), `{{time}}`, `{{week}}`, and `{{cursor}}` (where the caret lands). Custom templates are saved as plain `.md` files under `.zennotes/templates/`. You can also fork a built-in by pressing Edit on it — that creates an editable copy that shadows the original, and Reset restores the built-in. From any note, the "Save Current Note as Template…" command captures it as a new template.'
+  },
+  {
+    title: 'Draw diagrams with Excalidraw',
+    body:
+      'Run "New Drawing" from the command palette to create a `.excalidraw` file and open it in a built-in Excalidraw editor tab. Drawings are first-class vault files — they appear in the sidebar, can be moved and archived like notes, and auto-refresh when edited. To embed a drawing inside a note, use "Embed Existing Drawing…" (pick from a searchable list) or "Embed New Drawing" (create one at the cursor and switch to its editor). The embed syntax is `![[name.excalidraw]]`, the same as images, and supports optional size hints like `![[name.excalidraw|600]]` or `![[name.excalidraw|600x400]]`. Clicking an embed opens the drawing in a new tab. Obsidian-style `.excalidraw.md` files are also supported.'
   },
   {
     title: 'Turn a CSV into a database',
@@ -227,12 +232,22 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
   {
     title: 'Tasks, tags, archive, and trash are vault-wide views',
     body:
-      'Tasks scans every note for checkboxes, Tags lets you browse notes that carry all of the selected tags (toggle Match to Any for a union), Archive gives you a dedicated list of cold-storage notes, and Trash gives you a recovery surface for deleted notes without turning the left rail into a second browser.'
+      'Tasks scans every note for checkboxes, Tags lets you browse notes that carry all of the selected tags (toggle Match to Any for a union), Archive gives you a dedicated list of cold-storage notes, and Trash gives you a recovery surface for deleted notes without turning the left rail into a second browser. Selected tags accumulate so you can narrow across several at once; clear them with the Selected strip’s “Clear all”, the `c` key, or a right-click on any tag chip (which also offers “Unselect others” to keep just that one).'
   },
   {
     title: 'The Tasks calendar schedules and reschedules',
     body:
       "Switch Tasks to Calendar (button or `2`) to see tasks laid out by due date. A task written inside a daily note automatically shows on that day — no `due:` needed — so the day you wrote it on is the day it lands. Type in the box under the grid to add a task to the selected day (it’s created in that day’s daily note, offering to create the note first for a day that has none). Reschedule by dragging a task onto another day, or from the keyboard: `Tab` picks a task in the day list, `<` / `>` shifts it a day earlier/later, and `T` moves it to today."
+  },
+  {
+    title: 'The Tasks Kanban board, custom statuses, and any field',
+    body:
+      'Switch Tasks to Kanban (button or `3`) for a column board. "Group by" offers Status (Today / Upcoming / Waiting / Done, derived from due dates and `@waiting`), Priority, Folder, Custom status, and one entry per inline `@field` you use. Any task field works: tag tasks with `@key:value` tokens like `@status:review`, `@sprint:24`, or `@area:backend`, and each key becomes its own board with a column per value (auto-discovered, so it appears the moment you use it). For the status field, list the columns in order in `config.toml` under `[view]`, e.g. `kanban_statuses = ["backlog", "in_progress", "review", "done"]`; other fields sort their columns automatically. A note-level `status:` in frontmatter sets a default for that note’s tasks. Everything is keyboard-first: `h`/`l` move between columns, `j`/`k` between cards, `g` cycles the group-by, `Shift+H` / `Shift+L` send the focused card to the previous/next column (rewriting its `@field` token), and `Space`/`Enter` toggle/open. Drag does the same with the mouse. Rename status columns with `[kanban_column_titles]`.'
+  },
+  {
+    title: 'Forward a task to another note',
+    body:
+      'Forwarding moves a task to a different note while leaving a record behind — the bullet-journal “migrate” gesture. Type `>` inside a task’s checkbox (turning `- [ ]` into `- [>]`) to open a note picker, run “Forward Task to Note…” from the command palette with the cursor on a task, or press `>` on a task in the Tasks list. The original stays as `- [>] … [[Target]]` (a forwarded marker linking to where it went), and a fresh `- [ ] … [[Source]]` copy is added to the note you pick, backlinked home. Forwarded tasks collect under their own “Forwarded” group in the Tasks list, kept out of Today and Done.'
   },
   {
     title: 'Moving notes is path-first',
@@ -250,9 +265,9 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
       'When you type `/` at the start of a line or after whitespace, ZenNotes opens an inline insert menu for common markdown structures such as headings, bulleted or numbered lists, to-do items, callouts, code blocks, dividers, tables, math blocks, links, images, and even creating a new note page.'
   },
   {
-    title: '@ shortcuts insert relative dates',
+    title: '@ inserts dates and links notes',
     body:
-      'Typing `@` in normal text opens date suggestions for Today, Yesterday, and Tomorrow. Choosing one inserts an ISO date like `2026-04-15`, which keeps notes file-friendly, searchable, and easy to sort.'
+      'Typing `@` in normal text opens suggestions: the date shortcuts (Today, Yesterday, Tomorrow), the current time (Now — type `@time` or `@now`), plus any notes matching what you type. Choosing a date inserts an ISO date like `2026-04-15`; choosing Now inserts the current time in your configured 12-hour or 24-hour format (Settings → Editor → Time format); choosing a note inserts a `[[wikilink]]`, so `@` is a quick alternative to `[[`. A bare `@` leads with the dates and Now — start typing letters and matching notes appear.'
   },
   {
     title: 'Templates scaffold new notes',
@@ -272,7 +287,7 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
   {
     title: 'Links are actionable',
     body:
-      'Use [[wikilinks]] or markdown links. In normal mode, the follow-link motion opens the link under the cursor, offers to create missing notes, and pins PDFs into the reference pane. Prefix a wikilink with `!` to embed rather than link: `![[Note]]` inlines the target note content in the reading view and PDF export — recursively, with cycle protection — so a master note can pull in sub-notes and export to PDF as one document. `![[image.png]]` embeds an image.'
+      'Use [[wikilinks]] or markdown links. Following a link — click it, Cmd/Ctrl-click it, or use the follow-link motion (`gd`) in normal mode — opens the note under the cursor and pins PDFs into the reference pane. If the note does not exist yet, following the link offers to create it (after you confirm) rather than leaving a dead link. Prefix a wikilink with `!` to embed rather than link: `![[Note]]` inlines the target note content in the reading view and PDF export — recursively, with cycle protection — so a master note can pull in sub-notes and export to PDF as one document. `![[image.png]]` embeds an image, and `![[drawing.excalidraw]]` embeds an Excalidraw drawing as a PNG preview.'
   },
   {
     title: 'Files stay local',
@@ -288,6 +303,11 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
     title: 'The CLI is the bridge to launchers',
     body:
       'The `zn` command-line tool can list, read, search, capture, edit, archive, trash, inspect tasks, and start the MCP server without the app running. Raycast uses it for search, then uses `zennotes://open` and `zennotes://open-window` links to bring the selected note back into ZenNotes. On macOS, Settings → CLI can install the bundled Raycast extension locally so users do not need to wait for the Raycast Store version.'
+  },
+  {
+    title: 'Excalidraw drawings are first-class files',
+    body:
+      'A `.excalidraw` file is a note type alongside Markdown and databases — listed in the sidebar, opened in a dedicated Excalidraw editor tab, and saved back as JSON. Embed one inside a note with `![[drawing.excalidraw]]` (same syntax as images, with optional `|width` or `|WxH` size hints). The embed renders as a PNG preview in both the editor and reading view, refreshes live when the drawing is edited, and opens in a new tab on click. Obsidian `.excalidraw.md` files are also recognized.'
   },
   {
     title: 'Math, diagrams, and plots render from plain fences',
@@ -424,9 +444,9 @@ export const HELP_SHORTCUT_SECTIONS: HelpShortcutSection[] = [
       },
       {
         keys: '@',
-        action: 'Open date shortcuts',
+        action: 'Open date/time shortcuts',
         detail:
-          'Show inline suggestions for Today, Yesterday, and Tomorrow while writing so you can insert dates without leaving the keyboard.'
+          'Show inline suggestions for Today, Yesterday, Tomorrow, and the current time (`@time` / `@now`) while writing so you can insert dates and times without leaving the keyboard.'
       },
       {
         keys: 'Select text, then m',
@@ -464,7 +484,8 @@ export const HELP_SHORTCUT_SECTIONS: HelpShortcutSection[] = [
       { keys: 'j / k', action: 'Move row cursor', detail: 'Step through task rows, tagged notes, or trashed notes.' },
       { keys: 'g g / G', action: 'Jump to top or bottom', detail: 'Move to the first or last visible result.' },
       { keys: 'Enter / o', action: 'Open current result', detail: 'Open the selected task source note, tagged note, or trashed note.' },
-      { keys: 'x', action: 'Toggle task', detail: 'Tasks view only: check or uncheck the selected task. Space also toggles unless Space is your Vim leader key, in which case it starts a leader sequence.' },
+      { keys: 'x', action: 'Toggle task', detail: 'Tasks view only: check or uncheck the selected task. A checked task lingers in place for a couple of seconds before it drops into Done, so you can toggle it again to undo. Space also toggles unless Space is your Vim leader key, in which case it starts a leader sequence.' },
+      { keys: '>', action: 'Forward task', detail: 'Tasks list only: forward the selected task to another note. Opens a note picker; the original becomes a forwarded record (`[>]`) linking to the target, and a fresh copy is added there, backlinked home. Forwarded tasks live under a “Forwarded” group.' },
       { keys: 'r', action: 'Restore trashed note', detail: 'Trash view only: restore the selected trashed note.' },
       { keys: 'x / d', action: 'Delete forever', detail: 'Trash view only: permanently delete the selected trashed note after confirmation.' },
       { keys: '/', action: 'Filter the view', detail: 'Focus the local filter box for tasks, tag matches, or trashed notes.' },
@@ -507,6 +528,11 @@ export const HELP_VIM_COMMANDS: HelpExCommand[] = [
     detail: 'Writes the current note, then closes it. On virtual views like Tasks, Tags, Help, or Trash it just closes.'
   },
   {
+    command: ':saveas name / :sav name',
+    summary: 'Save the note under a new name',
+    detail: 'Like Vim: writes a copy of the current note under the given title and keeps the original, then switches to editing the copy.'
+  },
+  {
     command: ':format',
     summary: 'Format markdown',
     detail: 'Runs markdown formatting on the active note.'
@@ -524,12 +550,17 @@ export const HELP_VIM_COMMANDS: HelpExCommand[] = [
   {
     command: ':daily',
     summary: "Open today's daily note",
-    detail: 'Open or create today’s daily note (requires daily notes enabled in Settings → Vault). Uses the assigned daily template if one is set.'
+    detail: 'Open or create today’s daily note (requires daily notes enabled in Settings → Vault → Periodic notes). Uses the assigned daily template if one is set.'
   },
   {
     command: ':weekly',
     summary: "Open this week's note",
-    detail: 'Open or create this week’s note with the configured weekly note pattern (requires weekly notes enabled in Settings → Vault). Uses the assigned weekly template if one is set.'
+    detail: 'Open or create this week’s note with the configured weekly note pattern (requires weekly notes enabled in Settings → Vault → Periodic notes). Uses the assigned weekly template if one is set.'
+  },
+  {
+    command: ':monthly',
+    summary: "Open this month's note",
+    detail: 'Open or create this month’s note with the configured monthly note pattern (requires monthly notes enabled in Settings → Vault → Periodic notes). Uses the assigned monthly template if one is set.'
   },
   {
     command: ':tag foo bar',
@@ -612,6 +643,11 @@ export const HELP_VIM_COMMANDS: HelpExCommand[] = [
     detail: 'Open wikilinks, open external links, create missing notes, or pin PDFs into the reference pane.'
   },
   {
+    command: 'o / O',
+    summary: 'Open a line, continuing the list',
+    detail: 'On a list item, `o` (below) and `O` (above) carry the marker forward like pressing Enter: bullets repeat, numbered lists advance and renumber, checkboxes start a fresh unchecked box, and indentation is kept. On a non-list line they open a plain new line as usual.'
+  },
+  {
     command: '<Tab> / <Shift-Tab> on the ex line',
     summary: 'Complete ex commands',
     detail: 'Cycle through every registered ex command with a wildmenu popup, and complete supported command arguments like `:view edit|split|preview` and `:zen toggle|on|off`.'
@@ -669,12 +705,17 @@ export const HELP_VIM_COMMANDS: HelpExCommand[] = [
   {
     command: '<Space> d',
     summary: "Leader today's daily note",
-    detail: 'Open or create today’s daily note (when daily notes are enabled in Settings → Vault).'
+    detail: 'Open or create today’s daily note (when daily notes are enabled in Settings → Vault → Periodic notes).'
   },
   {
     command: '<Space> w',
     summary: "Leader this week's note",
-    detail: 'Open or create this week’s note (when weekly notes are enabled in Settings → Vault).'
+    detail: 'Open or create this week’s note (when weekly notes are enabled in Settings → Vault → Periodic notes).'
+  },
+  {
+    command: '<Space> m',
+    summary: "Leader this month's note",
+    detail: 'Open or create this month’s note (when monthly notes are enabled in Settings → Vault → Periodic notes).'
   },
   {
     command: ':outline',
@@ -712,7 +753,7 @@ export const HELP_SETTINGS: HelpSettingsSection[] = [
   {
     title: 'Appearance',
     items: [
-      { label: 'Theme, mode, and variant', detail: 'Pick a theme family — Apple, Gruvbox, Catppuccin, GitHub, Solarized, One, Nord, Tokyo Night, Kanagawa (Wave / Dragon / Lotus), Rosé Pine (Rosé Pine / Moon / Dawn), or the monochrome, true-black (OLED-friendly) Black Metal — plus light or dark mode and the active flavor or contrast where the theme supports it.' },
+      { label: 'Theme, mode, and variant', detail: 'Pick a theme family — Apple, Gruvbox, Catppuccin, GitHub, Solarized, One, Nord, Tokyo Night, Kanagawa (Wave / Dragon / Paper Ink (Custom) / Lotus), Rosé Pine (Rosé Pine / Moon / Dawn), or the monochrome, true-black (OLED-friendly) Black Metal — plus light or dark mode and the active flavor or contrast where the theme supports it.' },
       { label: 'Dark sidebar', detail: 'Tint the sidebar slightly darker than the canvas so the chrome reads as a distinct surface.' },
       { label: 'Sidebar arrows', detail: 'Show or hide disclosure arrows for collapsible sidebar folders and sections.' },
       { label: 'Use theme for PDF export', detail: 'Under Settings → Appearance → PDF export. Off by default, so exported PDFs use a clean light print theme. Turn it on to render the PDF in your current theme instead — colors and dark/light, including custom themes — as a full-bleed page.' }
@@ -722,6 +763,7 @@ export const HELP_SETTINGS: HelpSettingsSection[] = [
     title: 'Editor behavior',
     items: [
       { label: 'Vim mode', detail: 'Turn CodeMirror Vim bindings on or off for the editor and reference pane.' },
+      { label: 'Sync clipboard with Vim registers', detail: 'Mirror Vim and the system clipboard in both directions (like Vim\'s clipboard=unnamed): yank, delete, and change (y/d/c/x) copy to the clipboard, and p / P paste whatever is on the clipboard, so you can move text between ZenNotes and other apps without leaving normal mode. Only available when Vim mode is enabled.' },
       { label: 'Leader key hints', detail: 'Show a which-key style guide after pressing the configured Leader key so available leader actions stay visible while you decide. This setting is only available when Vim mode is enabled.' },
       { label: 'Leader hint behavior', detail: 'Choose whether leader hints auto-hide after a timeout or stay open until you dismiss them with the Leader key or Esc. These controls only appear when Vim mode is enabled.' },
       { label: 'Leader hint duration', detail: 'When behavior is Timed, control how long the which-key overlay stays visible and how long the pending leader sequence remains active after pressing the Leader key. This setting is only available in Vim mode.' },
@@ -730,6 +772,7 @@ export const HELP_SETTINGS: HelpSettingsSection[] = [
       { label: 'Render tables in live preview', detail: 'Show Markdown tables as interactive WYSIWYG widgets (edit cells, drag, right-click/`m` menu). Turn it off to keep tables as plain markdown text so you can edit them with the keyboard and Vim motions like any other line. When widgets are on, Arrow keys (and h/j/k/l) navigate cells; Shift+V then Shift+J/Shift+K move whole lines in the raw source.' },
       { label: 'Note tabs', detail: 'Enable or disable tab-based editing and split-friendly note workflows.' },
       { label: 'Word wrap', detail: 'Wrap long lines to the editor width or let them scroll horizontally.' },
+      { label: 'Blinking cursor', detail: 'Blink the editor caret and the Vim block cursor, or turn it off for a solid cursor — for example to match the macOS "Prefer non-blinking cursor" accessibility setting. Applies to both the insert-mode caret and the Vim normal-mode block cursor.' },
       { label: 'PDFs in edit mode', detail: 'Choose between compact PDF cards or full inline PDF embeds while writing.' },
       { label: 'Date-titled Quick Notes', detail: 'Name quick notes by date instead of timestamp-based titles.' },
       { label: 'Quick Note prefix', detail: 'Choose the prefix used for new quick note titles, or leave it blank for a bare timestamp/date.' }
@@ -761,8 +804,10 @@ export const HELP_SETTINGS: HelpSettingsSection[] = [
     items: [
       { label: 'Vault location', detail: 'Reveal or change the root folder ZenNotes treats as the active vault.' },
       { label: 'Primary notes location', detail: 'Treat `inbox/` as the main notes area, or use the vault root directly for an Obsidian-style flat vault.' },
+      { label: 'New Drawings & Databases location', detail: 'Choose where new Excalidraw drawings and databases are created so they do not pile up in the vault root: the primary notes location (the default), the folder of the note you are currently viewing, or a specific subfolder you name (e.g. `assets/drawings`). Only new files are affected; existing ones stay put.' },
       { label: 'Daily notes', detail: "Enable a daily-notes workflow, choose a directory pattern, naming pattern, locale, and template so each day’s note starts in the right place. Supported tokens are `yyyy`, `yy`, `M`, `MM`, `MMM`, `MMMM`, `d`, `dd`, `EEE`, `EEEE`, `w`, and `ww`; quote literal words like `'Daily Notes'/yyyy/MM-MMM`. Open today’s note with `Space d`, `:daily`, or the command palette. Two task options live here too: “Tasks are due on the note’s date” makes tasks in a daily note show on the calendar for that day (on by default), and “Roll over unfinished tasks to today” moves every unchecked task from past daily notes into today when you open it (off by default; also runnable from the command palette)." },
       { label: 'Weekly notes', detail: "Enable weekly notes with a directory pattern, naming pattern, locale, and template. Weekly patterns support the same tokens as daily notes plus ISO week `w` and `ww`; the default title pattern is `yyyy-'W'ww`. Open this week’s note with `Space w`, `:weekly`, or the command palette." },
+      { label: 'Monthly notes', detail: 'Enable monthly notes with a directory pattern, naming pattern, locale, and template. It creates one note per calendar month, handy for monthly reviews and reflections. The default title pattern is `yyyy-MM` (e.g. `2026-07`). Open this month’s note with `Space m`, `:monthly`, or the command palette. Each notes section in Settings now collapses its fields when its toggle is off.' },
       { label: 'System folder labels', detail: 'Rename how Inbox, Quick Notes, Archive, and Trash appear in the UI without renaming the real folders on disk.' }
     ]
   },

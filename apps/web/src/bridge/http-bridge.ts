@@ -566,6 +566,10 @@ async function revealNoteTarget(_relPath: string): Promise<void> {
   // No OS file manager on the web.
 }
 
+async function revealFilePath(_absPath: string): Promise<void> {
+  // No OS file manager on the web.
+}
+
 async function revealFolder(_folder: NoteFolder, _subpath: string): Promise<void> {
   // No OS file manager on the web.
 }
@@ -1031,6 +1035,18 @@ async function deleteAsset(_relPath: string): Promise<DeletedAsset> {
 
 async function restoreDeletedAsset(_asset: DeletedAsset): Promise<AssetMeta> {
   throw new Error('Asset restore is only available in the desktop app right now.')
+}
+
+async function listDeletedAssets(): Promise<DeletedAsset[]> {
+  return []
+}
+
+async function purgeDeletedAsset(_undoToken: string): Promise<void> {
+  throw new Error('Asset deletion is only available in the desktop app right now.')
+}
+
+async function emptyDeletedAssets(): Promise<void> {
+  throw new Error('Asset deletion is only available in the desktop app right now.')
 }
 
 // Bucket for File objects "pretending" to be filesystem paths. The
@@ -1525,6 +1541,7 @@ export const httpBridge: ZenBridge = {
   exportNotePdf,
   revealNote,
   revealNoteTarget,
+  revealFilePath,
   moveNote,
   importFilesToNote,
   importPastedImage,
@@ -1533,6 +1550,9 @@ export const httpBridge: ZenBridge = {
   duplicateAsset,
   deleteAsset,
   restoreDeletedAsset,
+  listDeletedAssets,
+  purgeDeletedAsset,
+  emptyDeletedAssets,
   createFolder,
   renameFolder,
   deleteFolder,

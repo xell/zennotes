@@ -1,5 +1,7 @@
 import { defaultKeymap } from '@codemirror/commands'
-import type { EditorView, KeyBinding } from '@codemirror/view'
+import { markdownKeymap } from '@codemirror/lang-markdown'
+import { Prec, type Extension } from '@codemirror/state'
+import { keymap, type EditorView, type KeyBinding } from '@codemirror/view'
 import { getCM } from '@replit/codemirror-vim'
 
 /**
@@ -52,28 +54,43 @@ const defaultKeymapWithoutMacEmacs: readonly KeyBinding[] = defaultKeymap.filter
 const ARROW_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'])
 
 /**
- * Vim arrow-key conflict (arrows don't extend the selection in visual mode).
+ * Keys that Vim maps to motions in normal/visual mode but which `defaultKeymap`
+ * (and `markdownKeymap`) bind to *editing* commands: the arrows (issue #287),
+ * plus Enter (`<CR>` → `j^`: first non-blank of the next line) and Backspace
+ * (`<BS>` → `h`). Without deferral, Enter in normal mode inserts a newline
+ * (via `insertNewlineContinueMarkup` / `insertNewlineAndIndent`) and Backspace
+ * deletes a character, instead of moving the cursor like real Vim.
+ */
+const VIM_MOTION_KEYS = new Set([...ARROW_KEYS, 'Enter', 'Backspace'])
+
+/**
+ * Vim key conflicts (arrows / Enter / Backspace act as edits, not motions).
  *
  * `defaultKeymap` binds the arrows to caret motions (`cursorCharLeft`/…) with
- * `preventDefault: true`, and (like the mac emacs chords above) the keymap's
+ * `preventDefault: true`, Enter to `insertNewlineAndIndent`, and Backspace to
+ * `deleteCharBackward`; and (like the mac emacs chords above) the keymap's
  * handler runs at higher precedence than the Vim plugin's. So in Vim mode the
  * arrows just move the caret — which in *visual* mode collapses the selection
- * instead of extending it the way `h`/`j`/`k`/`l` do (issue #287). `hjkl` have
- * no competing keymap binding, so they were never affected — hence the
- * arrows-vs-hjkl asymmetry users hit.
+ * instead of extending it the way `h`/`j`/`k`/`l` do (issue #287) — and Enter/
+ * Backspace *edit the text* in normal mode instead of applying Vim's `<CR>`/
+ * `<BS>` motions. `hjkl` have no competing keymap binding, so they were never
+ * affected — hence the asymmetry users hit.
  *
- * Unlike the emacs chords we can't simply drop the arrows: Vim only maps them
- * to motions in normal/visual mode (`<Left>`→`h`, …), not in *insert* mode, so
- * insert-mode caret movement still relies on these bindings. Instead, in Vim
- * mode each plain-arrow binding defers to the Vim plugin while Vim is in a
- * non-insert mode — returning `false` with no `preventDefault` lets the
- * keypress fall through to the (lower-precedence) Vim plugin, which then
- * applies the motion. Insert mode (and Vim-off) keep the native caret motion.
- * The Shift-arrow selection handlers are left untouched.
+ * Unlike the emacs chords we can't simply drop these keys: Vim only maps them
+ * in normal/visual mode (`<Left>`→`h`, `<CR>`→`j^`, …), not in *insert* mode,
+ * so insert-mode caret movement, newline insertion and deletion still rely on
+ * these bindings. Instead, in Vim mode each binding defers to the Vim plugin
+ * while Vim is in a non-insert mode — returning `false` with no
+ * `preventDefault` lets the keypress fall through to the (lower-precedence)
+ * Vim plugin, which then applies the motion. Insert mode (and Vim-off) keep
+ * the native behavior. Shift-modified handlers are left untouched.
  */
-function deferArrowsToVim(bindings: readonly KeyBinding[]): KeyBinding[] {
+function deferKeysToVim(
+  bindings: readonly KeyBinding[],
+  keys: ReadonlySet<string>
+): KeyBinding[] {
   return bindings.map((binding) => {
-    if (!binding.key || !ARROW_KEYS.has(binding.key) || !binding.run) return binding
+    if (!binding.key || !keys.has(binding.key) || !binding.run) return binding
     const native = binding.run
     return {
       ...binding,
@@ -90,8 +107,11 @@ function deferArrowsToVim(bindings: readonly KeyBinding[]): KeyBinding[] {
   })
 }
 
-/** Vim-mode keymap: emacs chords stripped, arrows made Vim-aware (see above). */
-const vimModeKeymap: readonly KeyBinding[] = deferArrowsToVim(defaultKeymapWithoutMacEmacs)
+/** Vim-mode keymap: emacs chords stripped, motion keys made Vim-aware (see above). */
+const vimModeKeymap: readonly KeyBinding[] = deferKeysToVim(
+  defaultKeymapWithoutMacEmacs,
+  VIM_MOTION_KEYS
+)
 
 /**
  * CodeMirror's `defaultKeymap`, made Vim-aware: in Vim mode the macOS
@@ -102,3 +122,22 @@ const vimModeKeymap: readonly KeyBinding[] = deferArrowsToVim(defaultKeymapWitho
 export function vimAwareDefaultKeymap(vimMode: boolean): readonly KeyBinding[] {
   return vimMode ? vimModeKeymap : defaultKeymap
 }
+
+/**
+ * Vim-aware replacement for `markdown({ addKeymap: true })`'s keymap.
+ *
+ * The markdown language support binds Enter → `insertNewlineContinueMarkup`
+ * and Backspace → `deleteMarkupBackward` at `Prec.high`, which beats both the
+ * Vim plugin *and* the deferred bindings above — so in Vim normal mode Enter
+ * inserted a newline instead of moving to the first non-blank of the next
+ * line (`<CR>` → `j^`). Deferral can't be layered on top (returning `false`
+ * would fall through to the original high-precedence binding), so the editors
+ * must pass `addKeymap: false` to `markdown()` and add this extension instead:
+ * the same `markdownKeymap` at the same precedence, with Enter/Backspace
+ * deferring to Vim in non-insert mode. The wrapper checks the live Vim state
+ * per keypress (no-op when Vim is off), so this needs no reconfiguration on
+ * Vim toggle.
+ */
+export const vimAwareMarkdownKeymap: Extension = Prec.high(
+  keymap.of(deferKeysToVim(markdownKeymap, new Set(['Enter', 'Backspace'])))
+)

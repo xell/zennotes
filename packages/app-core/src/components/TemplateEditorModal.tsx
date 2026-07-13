@@ -10,7 +10,7 @@ import { Compartment, EditorState, type Transaction } from '@codemirror/state'
 import { EditorView, drawSelection, highlightActiveLine, keymap, tooltips } from '@codemirror/view'
 import { vim } from '@replit/codemirror-vim'
 import { history, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { vimAwareDefaultKeymap } from '../lib/cm-vim-default-keymap'
+import { vimAwareDefaultKeymap, vimAwareMarkdownKeymap } from '../lib/cm-vim-default-keymap'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { yamlFrontmatter } from '@codemirror/lang-yaml'
 import { syntaxHighlighting, HighlightStyle, defaultHighlightStyle } from '@codemirror/language'
@@ -125,9 +125,10 @@ export function TemplateEditorModal({
           content: markdown({
             base: markdownLanguage,
             codeLanguages: resolveCodeLanguage,
-            addKeymap: true
+            addKeymap: false
           })
         }),
+        vimAwareMarkdownKeymap,
         markdownListIndentPlugin,
         syntaxHighlighting(templateHighlight),
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),

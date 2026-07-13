@@ -107,11 +107,14 @@ function endsWithUnescapedPipe(text: string): boolean {
 }
 
 function unescapeCell(text: string): string {
-  return text.replace(/\\([|\\])/g, '$1')
+  // Symmetric with escapeCell: only `\|` is an escaped pipe. Backslashes are
+  // otherwise literal, so LaTeX like `\sum` and `\\` line breaks survive a
+  // parse/serialize round-trip instead of losing a backslash. (#319)
+  return text.replace(/\\\|/g, '|')
 }
 
 function escapeCell(text: string): string {
-  return text.replace(/([|\\])/g, '\\$1')
+  return text.replace(/\|/g, '\\|')
 }
 
 function parseAlign(spec: string): ColumnAlign {

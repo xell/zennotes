@@ -15,6 +15,7 @@ import { findLeaf } from './pane-layout'
 import { requestPaneMode } from './pane-mode'
 import { resolveQuickNoteTitle } from './quick-note-title'
 import { selectedInboxFolderForIsolation, goUpIsolationWithConfirm } from './sidebar-isolation'
+import { forwardTaskWithPicker, taskAtEditorCursor } from './forward-task'
 import { getKeymapDisplay, type KeymapId } from './keymaps'
 import { dispatchKeyboardContextMenu, findTabContextMenuTarget } from './keyboard-context-menu'
 import { resolveSystemFolderLabels } from './system-folder-labels'
@@ -161,7 +162,7 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       title: 'New Database',
       category: 'Note',
       keywords: 'database table csv records spreadsheet board kanban base',
-      run: () => getState().createDatabase('inbox', '')
+      run: () => void getState().newDatabase()
     },
     {
       id: 'note.daily.today',
@@ -192,6 +193,15 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       run: () => getState().openThisWeekWeeklyNote()
     },
     {
+      id: 'note.monthly.thisMonth',
+      title: "Open This Month's Note",
+      category: 'Note',
+      keywords: 'monthly month review reflection date log',
+      shortcut: leaderShortcut('vim.leaderMonthlyNote'),
+      when: () => getState().vaultSettings.monthlyNotes.enabled,
+      run: () => getState().openThisMonthMonthlyNote()
+    },
+    {
       id: 'template.create',
       title: 'New Note from Template…',
       category: 'Note',
@@ -207,6 +217,29 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       shortcut: leaderShortcut('vim.leaderInsertTemplate'),
       when: () => !!getState().activeNote,
       run: () => getState().openTemplatePaletteForInsert()
+    },
+    {
+      id: 'drawing.new',
+      title: 'New Drawing',
+      category: 'Note',
+      keywords: 'excalidraw drawing diagram sketch create new canvas',
+      run: () => void getState().newDrawing()
+    },
+    {
+      id: 'embed.drawing.existing',
+      title: 'Embed Existing Drawing…',
+      category: 'Note',
+      keywords: 'excalidraw drawing diagram sketch insert embed image picture canvas',
+      when: () => !!getState().activeNote,
+      run: () => getState().setEmbedDrawingPaletteOpen(true)
+    },
+    {
+      id: 'embed.drawing.new',
+      title: 'Embed New Drawing',
+      category: 'Note',
+      keywords: 'excalidraw drawing diagram sketch create new insert embed canvas',
+      when: () => !!getState().activeNote,
+      run: () => void getState().embedNewDrawing()
     },
     {
       id: 'template.removeBuiltins',
@@ -845,6 +878,26 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       keywords: 'expand unfold all every reset',
       when: () => !!getState().editorViewRef && !!getState().activeNote,
       run: () => runFoldCommand('unfoldAll')
+    },
+    {
+      id: 'task.forward',
+      title: 'Forward Task to Note…',
+      category: 'Editor',
+      keywords: 'forward task move migrate rollover bullet journal due',
+      when: () => {
+        const view = getState().editorViewRef
+        return !!view && !!getState().activeNote && !!taskAtEditorCursor(view)
+      },
+      run: async () => {
+        const view = getState().editorViewRef
+        if (!view) return
+        const task = taskAtEditorCursor(view)
+        if (!task) {
+          window.alert('Put the cursor on a task line to forward it.')
+          return
+        }
+        await forwardTaskWithPicker(task)
+      }
     },
     {
       id: 'nav.back',

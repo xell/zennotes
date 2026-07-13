@@ -2,6 +2,12 @@ import { installZenBridge } from '@zennotes/bridge-contract/bridge'
 import { renderZenNotesApp } from '@zennotes/app-core/main'
 import { renderExportNoteWindow } from './export-window'
 
+// Point Excalidraw's font loader at our local, CSP-allowed protocol instead of
+// its default esm.sh CDN (which the renderer CSP blocks, so no fonts applied).
+// Must be set before the lazy Excalidraw bundle loads. (#324)
+const excalidrawGlobal = window as unknown as { EXCALIDRAW_ASSET_PATH?: string }
+excalidrawGlobal.EXCALIDRAW_ASSET_PATH = 'zen-excalidraw://assets/'
+
 const root = document.getElementById('root')
 
 function renderBootError(message: string): void {

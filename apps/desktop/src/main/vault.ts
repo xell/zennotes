@@ -18,6 +18,9 @@ import {
   DEFAULT_WEEKLY_NOTE_LOCALE,
   DEFAULT_WEEKLY_NOTE_TITLE_PATTERN,
   DEFAULT_WEEKLY_NOTES_DIRECTORY,
+  DEFAULT_MONTHLY_NOTE_LOCALE,
+  DEFAULT_MONTHLY_NOTE_TITLE_PATTERN,
+  DEFAULT_MONTHLY_NOTES_DIRECTORY,
   AssetMeta,
   DeletedAsset,
   type FolderIconId,
@@ -26,6 +29,7 @@ import {
   type PrimaryNotesLocation,
   type VaultSettings,
   type VaultViewSettings,
+  type FileLocationSetting,
   FolderEntry,
   ImportedAsset,
   ImportedAssetKind,
@@ -75,6 +79,10 @@ const LEGACY_ATTACHMENTS_DIRS = [PRIMARY_ATTACHMENTS_DIR, '_assets']
 const ATTACHMENTS_DIRS = [ASSETS_DIR, ...LEGACY_ATTACHMENTS_DIRS]
 const INTERNAL_VAULT_DIR = '.zennotes'
 const DELETED_ASSETS_DIR = 'deleted-assets'
+// Sidecar metadata written next to each deleted asset so it survives a restart
+// and can be listed + restored to its original location from the Trash view.
+// A dotfile with an app-specific name so it never collides with an asset file.
+const DELETED_ASSET_META = '.zn-deleted.json'
 const VAULT_SETTINGS_FILE = 'vault.json'
 const MANUAL_ORDER_FILE = 'manual-order-v1.json'
 const NOTE_META_CACHE_FILE = 'note-meta-cache-v1.json'
@@ -202,6 +210,12 @@ const DEFAULT_VAULT_SETTINGS: VaultSettings = {
     directory: DEFAULT_WEEKLY_NOTES_DIRECTORY,
     titlePattern: DEFAULT_WEEKLY_NOTE_TITLE_PATTERN,
     locale: DEFAULT_WEEKLY_NOTE_LOCALE
+  },
+  monthlyNotes: {
+    enabled: false,
+    directory: DEFAULT_MONTHLY_NOTES_DIRECTORY,
+    titlePattern: DEFAULT_MONTHLY_NOTE_TITLE_PATTERN,
+    locale: DEFAULT_MONTHLY_NOTE_LOCALE
   },
   folderIcons: {},
   folderColors: {},
@@ -790,10 +804,24 @@ function cloneVaultSettings(settings: VaultSettings): VaultSettings {
       legacyPatterns: settings.weeklyNotes.legacyPatterns?.map((pattern) => ({ ...pattern })),
       templateId: settings.weeklyNotes.templateId
     },
+    monthlyNotes: {
+      enabled: settings.monthlyNotes.enabled,
+      directory: settings.monthlyNotes.directory,
+      titlePattern: settings.monthlyNotes.titlePattern,
+      locale: settings.monthlyNotes.locale,
+      legacyPatterns: settings.monthlyNotes.legacyPatterns?.map((pattern) => ({ ...pattern })),
+      templateId: settings.monthlyNotes.templateId
+    },
     folderIcons: { ...settings.folderIcons },
     folderColors: { ...settings.folderColors },
     favorites: [...settings.favorites],
-    ...(settings.view ? { view: cloneVaultViewSettings(settings.view) } : {})
+    ...(settings.view ? { view: cloneVaultViewSettings(settings.view) } : {}),
+    ...(settings.drawingsLocation
+      ? { drawingsLocation: { ...settings.drawingsLocation } }
+      : {}),
+    ...(settings.databasesLocation
+      ? { databasesLocation: { ...settings.databasesLocation } }
+      : {})
   }
 }
 
@@ -843,6 +871,24 @@ function normalizeWeeklyNotesDirectory(value: unknown): string {
   return trimmed || DEFAULT_WEEKLY_NOTES_DIRECTORY
 }
 
+function normalizeMonthlyNoteTitlePattern(value: unknown): string {
+  if (typeof value !== 'string') return DEFAULT_MONTHLY_NOTE_TITLE_PATTERN
+  const trimmed = value.trim().replace(/[\\/]+/g, '-')
+  return trimmed || DEFAULT_MONTHLY_NOTE_TITLE_PATTERN
+}
+
+function normalizeMonthlyNoteLocale(value: unknown): string {
+  if (typeof value !== 'string') return DEFAULT_MONTHLY_NOTE_LOCALE
+  const trimmed = value.trim()
+  return trimmed || DEFAULT_MONTHLY_NOTE_LOCALE
+}
+
+function normalizeMonthlyNotesDirectory(value: unknown): string {
+  if (typeof value !== 'string') return DEFAULT_MONTHLY_NOTES_DIRECTORY
+  const trimmed = value.trim().replace(/^\/+|\/+$/g, '')
+  return trimmed || DEFAULT_MONTHLY_NOTES_DIRECTORY
+}
+
 function normalizeTemplateId(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
@@ -889,8 +935,46 @@ function normalizeWeeklyNoteLegacyPatterns(value: unknown): VaultSettings['weekl
   return out
 }
 
+function normalizeMonthlyNoteLegacyPatterns(
+  value: unknown
+): VaultSettings['monthlyNotes']['legacyPatterns'] {
+  if (!Array.isArray(value)) return []
+  const out: NonNullable<VaultSettings['monthlyNotes']['legacyPatterns']> = []
+  const seen = new Set<string>()
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue
+    const pattern = item as { directory?: unknown; titlePattern?: unknown; locale?: unknown }
+    const next = {
+      directory: normalizeMonthlyNotesDirectory(pattern.directory),
+      titlePattern: normalizeMonthlyNoteTitlePattern(pattern.titlePattern),
+      locale: normalizeMonthlyNoteLocale(pattern.locale)
+    }
+    const key = `${next.directory}\0${next.titlePattern}\0${next.locale}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(next)
+  }
+  return out
+}
+
 function normalizePrimaryNotesLocation(value: unknown): PrimaryNotesLocation {
   return value === 'root' ? 'root' : 'inbox'
+}
+
+/** Persist a drawings/databases file-location setting; mirrors the renderer's
+ *  normalizer so the round-trip through vault.json keeps the value. (#362) */
+function normalizeFileLocation(value: unknown): FileLocationSetting {
+  const v = value as { mode?: unknown; folder?: unknown } | null | undefined
+  if (v?.mode === 'active-note') return { mode: 'active-note' }
+  if (v?.mode === 'folder') {
+    // Keep `folder` mode even when empty so the setting sticks while the user is
+    // still typing the folder; an empty folder resolves to the primary root.
+    const folder = (typeof v.folder === 'string' ? v.folder : '')
+      .trim()
+      .replace(/^\/+|\/+$/g, '')
+    return { mode: 'folder', folder }
+  }
+  return { mode: 'primary' }
 }
 
 function normalizeVaultSettings(
@@ -914,6 +998,14 @@ function normalizeVaultSettings(
         titlePattern: DEFAULT_WEEKLY_NOTE_TITLE_PATTERN,
         locale: DEFAULT_WEEKLY_NOTE_LOCALE
       },
+      monthlyNotes: {
+        enabled: DEFAULT_VAULT_SETTINGS.monthlyNotes.enabled,
+        directory: DEFAULT_MONTHLY_NOTES_DIRECTORY,
+        titlePattern: DEFAULT_MONTHLY_NOTE_TITLE_PATTERN,
+        locale: DEFAULT_MONTHLY_NOTE_LOCALE
+      },
+      drawingsLocation: { mode: 'primary' },
+      databasesLocation: { mode: 'primary' },
       folderIcons: {},
       folderColors: {},
       favorites: []
@@ -939,6 +1031,16 @@ function normalizeVaultSettings(
       legacyPatterns?: unknown
       templateId?: unknown
     } | null
+    monthlyNotes?: {
+      enabled?: unknown
+      directory?: unknown
+      titlePattern?: unknown
+      locale?: unknown
+      legacyPatterns?: unknown
+      templateId?: unknown
+    } | null
+    drawingsLocation?: unknown
+    databasesLocation?: unknown
     folderIcons?: Record<string, unknown> | null
     folderColors?: Record<string, unknown> | null
     favorites?: unknown
@@ -979,6 +1081,19 @@ function normalizeVaultSettings(
       legacyPatterns: normalizeWeeklyNoteLegacyPatterns(candidate.weeklyNotes?.legacyPatterns),
       templateId: normalizeTemplateId(candidate.weeklyNotes?.templateId)
     },
+    monthlyNotes: {
+      enabled:
+        typeof candidate.monthlyNotes?.enabled === 'boolean'
+          ? candidate.monthlyNotes.enabled
+          : DEFAULT_VAULT_SETTINGS.monthlyNotes.enabled,
+      directory: normalizeMonthlyNotesDirectory(candidate.monthlyNotes?.directory),
+      titlePattern: normalizeMonthlyNoteTitlePattern(candidate.monthlyNotes?.titlePattern),
+      locale: normalizeMonthlyNoteLocale(candidate.monthlyNotes?.locale),
+      legacyPatterns: normalizeMonthlyNoteLegacyPatterns(candidate.monthlyNotes?.legacyPatterns),
+      templateId: normalizeTemplateId(candidate.monthlyNotes?.templateId)
+    },
+    drawingsLocation: normalizeFileLocation(candidate.drawingsLocation),
+    databasesLocation: normalizeFileLocation(candidate.databasesLocation),
     folderIcons,
     folderColors: normalizeFolderColors(candidate.folderColors),
     favorites: normalizeFavorites(candidate.favorites),
@@ -3380,8 +3495,61 @@ export async function deleteAsset(root: string, rel: string): Promise<DeletedAss
   const trashDir = resolveSafe(root, `${INTERNAL_VAULT_DIR}/${DELETED_ASSETS_DIR}/${undoToken}`)
   await fs.mkdir(trashDir, { recursive: true })
   const name = path.basename(source.abs)
+  const deletedAt = new Date().toISOString()
   await fs.rename(source.abs, path.join(trashDir, name))
-  return { path: source.rel, name, undoToken }
+  // Persist the original location so the asset can be listed + restored from the
+  // Trash view even after a restart (not just via the in-session undo stack).
+  await fs.writeFile(
+    path.join(trashDir, DELETED_ASSET_META),
+    JSON.stringify({ path: source.rel, name, deletedAt }, null, 2),
+    'utf8'
+  )
+  return { path: source.rel, name, undoToken, deletedAt }
+}
+
+/** Enumerate assets in the deleted-assets store that carry restore metadata,
+ *  newest first. Entries without metadata (pre-2.11 deletes) are skipped. */
+export async function listDeletedAssets(root: string): Promise<DeletedAsset[]> {
+  const baseDir = resolveSafe(root, `${INTERNAL_VAULT_DIR}/${DELETED_ASSETS_DIR}`)
+  let tokens: string[]
+  try {
+    tokens = await fs.readdir(baseDir)
+  } catch {
+    return []
+  }
+  const out: DeletedAsset[] = []
+  for (const undoToken of tokens) {
+    try {
+      const raw = await fs.readFile(path.join(baseDir, undoToken, DELETED_ASSET_META), 'utf8')
+      const meta = JSON.parse(raw) as { path?: unknown; name?: unknown; deletedAt?: unknown }
+      if (typeof meta.path !== 'string' || typeof meta.name !== 'string') continue
+      // The asset file itself must still be present to be restorable.
+      await fs.access(path.join(baseDir, undoToken, meta.name))
+      out.push({
+        path: meta.path,
+        name: meta.name,
+        undoToken,
+        deletedAt: typeof meta.deletedAt === 'string' ? meta.deletedAt : undefined
+      })
+    } catch {
+      // Missing/invalid metadata or file — not listable from the Trash view.
+    }
+  }
+  out.sort((a, b) => (b.deletedAt ?? '').localeCompare(a.deletedAt ?? ''))
+  return out
+}
+
+/** Permanently delete one asset from the deleted-assets store. */
+export async function purgeDeletedAsset(root: string, undoToken: string): Promise<void> {
+  const token = cleanDeletedAssetToken(undoToken)
+  const trashDir = resolveSafe(root, `${INTERNAL_VAULT_DIR}/${DELETED_ASSETS_DIR}/${token}`)
+  await fs.rm(trashDir, { recursive: true, force: true })
+}
+
+/** Permanently delete every asset in the deleted-assets store. */
+export async function emptyDeletedAssets(root: string): Promise<void> {
+  const baseDir = resolveSafe(root, `${INTERNAL_VAULT_DIR}/${DELETED_ASSETS_DIR}`)
+  await fs.rm(baseDir, { recursive: true, force: true }).catch(() => {})
 }
 
 export async function restoreDeletedAsset(root: string, deleted: DeletedAsset): Promise<AssetMeta> {

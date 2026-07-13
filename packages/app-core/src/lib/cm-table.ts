@@ -54,6 +54,11 @@ function vimEnabled(): boolean {
   return useStore.getState().vimMode
 }
 
+/** How long (ms) the pieces of a custom insert-escape sequence (e.g. jk) may be
+ *  spread apart and still count as the escape rather than typed text. Mirrors
+ *  Vim's default `timeoutlen`. (#341) */
+const INSERT_ESCAPE_TIMEOUT_MS = 1000
+
 /** Render a cell's markdown source to inline HTML (sanitized by the markdown
  *  pipeline). Strips the wrapping `<p>` so the content sits inline in the cell.
  *  Empty cells render nothing. */
@@ -143,6 +148,10 @@ class TableWidget extends WidgetType {
   /** Pending text-object scope after `i`/`a` — in visual mode (`viw`) and in
    *  operator-pending (`diw`, `ca"`). */
   private visualScope: 'i' | 'a' | null = null
+  /** Recent printable keys typed in INSERT mode, used to detect the configurable
+   *  insert-escape sequence (e.g. jk). The Vim plugin's `Vim.map` mapping doesn't
+   *  reach this contenteditable widget, so it is honored here directly. (#341) */
+  private insertEscapeKeys: { ch: string; at: number }[] = []
   private pendingScope: 'i' | 'a' | null = null
   /** Set in toDOM — CodeMirror hands the live view there. Block widgets are
    *  provided by a StateField, which has no view at build time. */
@@ -602,22 +611,32 @@ class TableWidget extends WidgetType {
 
     if (vimEnabled()) {
       if (this.cellMode === 'insert') {
-        // INSERT: Escape commits the cell text and drops back to NORMAL, staying
-        // put (classic Vim). Everything else types normally / falls through to
-        // the shared Tab / Enter handling below.
+        // INSERT: Escape (or the configurable insert-escape sequence, e.g. jk)
+        // commits the cell text and drops back to NORMAL, staying put (classic
+        // Vim). Everything else types normally / falls through to the shared
+        // Tab / Enter handling below.
         if (event.key === 'Escape') {
           event.preventDefault()
           event.stopPropagation()
-          const sel = window.getSelection()
-          const caret =
-            sel && sel.anchorNode && editable.contains(sel.anchorNode) ? sel.anchorOffset : 0
-          editable.dataset.raw = editable.textContent ?? ''
-          editable.setAttribute('contenteditable', 'false')
-          this.cellMode = 'normal'
-          // Vim leaves the cursor on the char left of the caret.
-          this.cursorOffset = Math.max(0, caret - 1)
-          this.enterNormalCell(editable)
+          this.exitInsertToNormal(editable, 0)
           return
+        }
+        // #341: the Vim plugin's `jk`-style insert-escape mapping never reaches
+        // this contenteditable widget, so honor the configured sequence here.
+        const escSeq = useStore.getState().vimInsertEscape.trim()
+        if (escSeq && event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
+          const now = Date.now()
+          const recent = this.insertEscapeKeys.filter((k) => now - k.at < INSERT_ESCAPE_TIMEOUT_MS)
+          if ((recent.map((k) => k.ch).join('') + event.key).endsWith(escSeq)) {
+            // Sequence complete: strip the already-typed prefix chars and exit
+            // insert. This final key is swallowed rather than inserted.
+            event.preventDefault()
+            event.stopPropagation()
+            this.insertEscapeKeys = []
+            this.exitInsertToNormal(editable, escSeq.length - 1)
+            return
+          }
+          this.insertEscapeKeys = [...recent, { ch: event.key, at: now }].slice(-escSeq.length)
         }
       } else {
         // NORMAL: h/j/k/l move between cells, i/a start editing, Esc leaves the
@@ -986,6 +1005,7 @@ class TableWidget extends WidgetType {
    *  focus handler, snapping back to NORMAL. */
   private enterInsertMode(cell: HTMLElement, caretOffset: number): void {
     this.cellMode = 'insert'
+    this.insertEscapeKeys = []
     this.pendingOp = null
     this.pendingScope = null
     this.visualMode = false
@@ -998,6 +1018,26 @@ class TableWidget extends WidgetType {
       cell.dataset.rendered = 'false'
     }
     placeCaretAt(cell, caretOffset)
+  }
+
+  /** Commit the focused cell and drop from INSERT back to NORMAL. Optionally
+   *  removes `removeBefore` chars just before the caret first, used to strip a
+   *  typed insert-escape prefix (the `j` of `jk`) before exiting. (#341) */
+  private exitInsertToNormal(editable: HTMLElement, removeBefore: number): void {
+    const sel = window.getSelection()
+    let caret = sel && sel.anchorNode && editable.contains(sel.anchorNode) ? sel.anchorOffset : 0
+    let text = editable.textContent ?? ''
+    if (removeBefore > 0 && caret >= removeBefore) {
+      text = text.slice(0, caret - removeBefore) + text.slice(caret)
+      caret -= removeBefore
+      editable.textContent = text
+    }
+    editable.dataset.raw = text
+    editable.setAttribute('contenteditable', 'false')
+    this.cellMode = 'normal'
+    // Vim leaves the cursor on the char left of the caret.
+    this.cursorOffset = Math.max(0, caret - 1)
+    this.enterNormalCell(editable)
   }
 
   /** Delete `[from, to)` from the focused cell's source in place (no dispatch —

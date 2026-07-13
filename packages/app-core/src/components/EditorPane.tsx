@@ -54,9 +54,16 @@ import { isImeComposing } from '../lib/ime'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
 import { vimImeControl } from '../lib/cm-vim-ime'
+import { forwardOnCheckboxArrow } from '../lib/cm-forward-task'
 import { completionNavKeymap } from '../lib/cm-completion-nav'
-import { vimAwareDefaultKeymap } from '../lib/cm-vim-default-keymap'
-import { setYankToClipboardEnabled } from '../lib/cm-vim-clipboard'
+import { vimAwareDefaultKeymap, vimAwareMarkdownKeymap } from '../lib/cm-vim-default-keymap'
+import { scrollOff } from '../lib/cm-scrolloff'
+import { offerCreateNoteFromLink } from '../lib/create-note-from-link'
+import {
+  setYankToClipboardEnabled,
+  setPasteFromClipboardEnabled,
+  vimClipboardPasteExtension,
+} from '../lib/cm-vim-clipboard'
 import { wireYankHighlight, yankHighlightExtension } from '../lib/cm-yank-highlight'
 import { frontmatterStyle } from '../lib/cm-frontmatter'
 import { codeBlockFontPlugin } from '../lib/cm-code-block-font'
@@ -77,7 +84,7 @@ import { wysiwygExtensions } from '../lib/cm-wysiwyg-compose'
 import { applyHighlight, HIGHLIGHT_COLORS } from '../lib/cm-highlight'
 import { slashCommandSource, slashCommandRender } from '../lib/cm-slash-commands'
 import { dateShortcutSource } from '../lib/cm-date-shortcuts'
-import { wikilinkSource, wikilinkHeadingSource } from '../lib/cm-wikilinks'
+import { wikilinkSource, wikilinkHeadingSource, atNoteSource } from '../lib/cm-wikilinks'
 import { resolveWikilinkTarget, wikilinkHeadingAnchor } from '../lib/wikilinks'
 import { openDatabaseFromWikilink, openWikilinkHeading } from '../lib/wikilink-navigation'
 import {
@@ -203,7 +210,6 @@ import {
 } from '../lib/editor-paste-images'
 import {
   paneModeForPath,
-  paneModesWithPathMode,
   ZEN_SET_PANE_MODE_EVENT,
   type PaneMode,
   type PaneModesByPath
@@ -273,9 +279,15 @@ function buildEditorKeymap(vimMode: boolean, overrides: KeymapOverrides): Extens
 
 function markdownEditingExtensions(): Extension[] {
   return [
-    markdown({ base: markdownLanguage, codeLanguages: resolveCodeLanguage, addKeymap: true }),
+    markdown({ base: markdownLanguage, codeLanguages: resolveCodeLanguage, addKeymap: false }),
+    vimAwareMarkdownKeymap,
+    // Not markdownListIndentPlugin here — it's already applied conditionally
+    // via a reconfigurable Compartment elsewhere in this file (off in split
+    // mode, so the editor half shows raw Markdown); adding it to this static
+    // list too would defeat that toggle.
     frontmatterStyle,
     orderedListRenumber,
+    forwardOnCheckboxArrow,
     headingFolding(),
     codeBlockFontPlugin
   ]
@@ -637,8 +649,13 @@ function followEditorLink(target: string): boolean {
     focusSoon()
     return true
   }
-  return false
+  // Dead link — don't leave it a silent dead end. Offer to create the note (with
+  // a confirmation), matching the `gd` follow-link path. (Discord: dead links)
+  void offerCreateNoteFromLink(target)
+  return true
 }
+
+const EMPTY_PANE_MODES: PaneModesByPath = {}
 
 export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const paneId = pane.id
@@ -703,6 +720,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const hideActiveLineMarkup = useStore((s) => s.hideActiveLineMarkup)
   const editorFontSize = useStore((s) => s.editorFontSize)
   const editorLineHeight = useStore((s) => s.editorLineHeight)
+  const editorScrollOff = useStore((s) => s.editorScrollOff)
   const lineNumberMode = useStore((s) => s.lineNumberMode)
   const textFont = useStore((s) => s.textFont)
   const tabsEnabled = useStore((s) => s.tabsEnabled)
@@ -714,6 +732,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const tabNavOverrides = useStore((s) => s.keymapOverrides)
   const workspaceMode = useStore((s) => s.workspaceMode)
   const wordWrap = useStore((s) => s.wordWrap)
+  const cursorBlink = useStore((s) => s.cursorBlink)
   const systemFolderLabels = useStore((s) => s.systemFolderLabels)
   const folderLabels = resolveSystemFolderLabels(systemFolderLabels)
   const vaultSettings = useStore((s) => s.vaultSettings)
@@ -721,7 +740,8 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const isGitRepo = useStore((s) => s.isGitRepo)
   const diffInlineDiffs = useStore((s) => s.diffInlineDiffs)
 
-  const [modesByPath, setModesByPath] = useState<PaneModesByPath>({})
+  const modesByPath = useStore((s) => s.paneModes[paneId]) ?? EMPTY_PANE_MODES
+  const setPaneModeForPath = useStore((s) => s.setPaneModeForPath)
   const mode = paneModeForPath(modesByPath, activeTab)
   const [connectionsOpen, setConnectionsOpen] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
@@ -795,6 +815,8 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const lineNumbersCompartmentRef = useRef<Compartment | null>(null)
   const wordWrapCompartmentRef = useRef<Compartment | null>(null)
   const diffCompartmentRef = useRef<Compartment | null>(null)
+  const scrolloffCompartmentRef = useRef<Compartment | null>(null)
+  const drawSelectionCompartmentRef = useRef<Compartment | null>(null)
   // history() lives in a compartment so we can reset undo history on a note
   // switch — otherwise Cmd+Z crosses notes and overwrites the current one (#247).
   const historyCompartmentRef = useRef<Compartment | null>(null)
@@ -881,10 +903,12 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   }, [isActive, toggleConnectionsPanel])
 
   // Mirror `set clipboard=unnamed`: when enabled, Vim yank/delete/change also
-  // copy to the system clipboard. The patch is global, so any pane can drive it.
-  // Also install the highlight-on-yank handler (idempotent). (#144)
+  // copy to the system clipboard, and `p` / `P` paste from it. The patch is
+  // global, so any pane can drive it. Also install the highlight-on-yank
+  // handler (idempotent). (#144, #357)
   useEffect(() => {
     setYankToClipboardEnabled(vimYankToClipboard)
+    setPasteFromClipboardEnabled(vimYankToClipboard)
     wireYankHighlight()
   }, [vimYankToClipboard])
 
@@ -907,7 +931,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       setDiffRefreshKey((k) => k + 1)
       return
     }
-    setModesByPath((current) => paneModesWithPathMode(current, activeTab, nextMode))
+    setPaneModeForPath(paneId, activeTab, nextMode)
     setActivePane(paneId)
     setFocusedPanel('editor')
     requestAnimationFrame(() => {
@@ -917,7 +941,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       }
       focusEditorNormalMode()
     })
-  }, [activeTab, mode, paneId, setActivePane, setFocusedPanel])
+  }, [activeTab, mode, paneId, setPaneModeForPath, setActivePane, setFocusedPanel])
 
   useEffect(() => {
     const compartment = diffCompartmentRef.current
@@ -1494,6 +1518,8 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       const listIndentCompartment = new Compartment()
       const lineNumbersCompartment = new Compartment()
       const wordWrapCompartment = new Compartment()
+      const scrolloffCompartment = new Compartment()
+      const drawSelectionCompartment = new Compartment()
       const historyCompartment = new Compartment()
       const diffCompartment = new Compartment()
       vimCompartmentRef.current = vimCompartment
@@ -1504,6 +1530,8 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       listIndentCompartmentRef.current = listIndentCompartment
       lineNumbersCompartmentRef.current = lineNumbersCompartment
       wordWrapCompartmentRef.current = wordWrapCompartment
+      scrolloffCompartmentRef.current = scrolloffCompartment
+      drawSelectionCompartmentRef.current = drawSelectionCompartment
       historyCompartmentRef.current = historyCompartment
       diffCompartmentRef.current = diffCompartment
       const s0 = useStore.getState()
@@ -1528,12 +1556,16 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
           vimCompartment.of(s0.vimMode ? vim() : []),
           historyCompartment.of(history()),
           diffCompartment.of([]),
-          drawSelection(),
+          drawSelectionCompartment.of(
+            drawSelection({ cursorBlinkRate: s0.cursorBlink ? 1200 : 0 })
+          ),
           highlightActiveLine(),
           taskJumpHighlightField,
           yankHighlightExtension,
+          vimClipboardPasteExtension,
           commentDecorationField,
           wordWrapCompartment.of(s0.wordWrap ? EditorView.lineWrapping : []),
+          scrolloffCompartment.of(scrollOff(s0.editorScrollOff)),
           markdownCompartment.of(deferInitialRichMarkdown ? [] : markdownEditingExtensions()),
           markdownSyntaxCompartment.of(
             deferInitialRichMarkdown ? [] : markdownSyntaxHighlightExtensions()
@@ -1554,7 +1586,13 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
           lineNumbersCompartment.of(lineNumberExtension(s0.lineNumberMode)),
           tooltips({ parent: document.body }),
           autocompletion({
-            override: [slashCommandSource, dateShortcutSource, wikilinkSource, wikilinkHeadingSource],
+            override: [
+              slashCommandSource,
+              dateShortcutSource,
+              atNoteSource,
+              wikilinkSource,
+              wikilinkHeadingSource
+            ],
             addToOptions: [{ render: slashCommandRender.render, position: 0 }],
             icons: false,
             optionClass: (completion) =>
@@ -1968,6 +2006,24 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       effects: comp.reconfigure(wordWrap ? EditorView.lineWrapping : [])
     })
   }, [wordWrap])
+  useEffect(() => {
+    const view = viewRef.current
+    const comp = scrolloffCompartmentRef.current
+    if (!view || !comp) return
+    view.dispatch({ effects: comp.reconfigure(scrollOff(editorScrollOff)) })
+  }, [editorScrollOff])
+  useEffect(() => {
+    const view = viewRef.current
+    const comp = drawSelectionCompartmentRef.current
+    if (!view || !comp) return
+    // 0 disables blinking for both the drawn caret and the Vim block cursor
+    // (both read cursorBlinkRate from the drawSelection config). (#160)
+    view.dispatch({
+      effects: comp.reconfigure(
+        drawSelection({ cursorBlinkRate: cursorBlink ? 1200 : 0 })
+      )
+    })
+  }, [cursorBlink])
 
   // Re-measure CM on prefs that change line geometry.
   useEffect(() => {

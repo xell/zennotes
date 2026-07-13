@@ -4,7 +4,10 @@
 // to round-trip a toggle — see `src/shared/tasks.ts`.
 
 export const FENCE_RE = /^(\s*)(```|~~~)/
-export const TASK_LINE_RE = /^(\s*(?:>\s*)*(?:[-+*]|\d+[.)])\s+\[)( |x|X)(\].*)$/
+// Group 2 is the checkbox state char: space (open), x/X (done), or `>` (forwarded
+// to another note, #316). The leading `(?:>\s*)*` is a blockquote prefix — a
+// different `>`, unrelated to the state char inside the brackets.
+export const TASK_LINE_RE = /^(\s*(?:>\s*)*(?:[-+*]|\d+[.)])\s+\[)( |x|X|>)(\].*)$/
 
 export type TaskPriority = 'high' | 'med' | 'low'
 
@@ -164,7 +167,9 @@ export function setTaskWaitingAtIndex(
 }
 
 const PRIORITY_TOKEN_RE = /(^|\s)!(?:high|med|medium|low|h|m|l)\b/i
-const DUE_TOKEN_RE = /(^|\s)due:\S+/i
+// Optional whitespace after the colon so a spaced `due: 2026-01-01` token is
+// stripped/replaced as one unit when rescheduling, matching the parser. (#343)
+const DUE_TOKEN_RE = /(^|\s)due:\s*\S+/i
 
 /** Replace, insert, or remove the priority token (`!high|!med|!low`)
  *  on the task line at `taskIndex`. Pass `null` to clear. */
@@ -217,6 +222,46 @@ export function setTaskDueAtIndex(
   })
 }
 
+// A valid inline-field key is a lowercase slug (mirrors INLINE_FIELD_RE in
+// tasks.ts). Guarding here keeps the dynamic RegExp safe and predictable.
+const FIELD_KEY_RE = /^[a-z][a-z0-9_-]*$/
+
+/** Replace, insert, or remove an inline `@<key>:<value>` field token on the
+ *  task line at `taskIndex`. Pass `value = null` to clear it. Generalizes the
+ *  status token so any field (`status`, `sprint`, `area`, …) round-trips the
+ *  same way. (#354) */
+export function setTaskFieldAtIndex(
+  markdown: string,
+  taskIndex: number,
+  key: string,
+  value: string | null
+): string {
+  if (!FIELD_KEY_RE.test(key)) return markdown
+  const tokenRe = new RegExp(`(^|\\s)@${key}:\\S+`, 'i')
+  return editTaskAtIndex(markdown, taskIndex, (match) => {
+    const prefix = match[1]
+    const checkChar = match[2]
+    const tailWithBracket = match[3]
+    if (!tailWithBracket.startsWith(']')) return null
+    const tail = tailWithBracket.slice(1)
+    const cleaned = tail.replace(tokenRe, '$1').replace(/\s{2,}/g, ' ')
+    const nextTail = value
+      ? `${cleaned.replace(/\s+$/u, '')} @${key}:${value}`
+      : cleaned.replace(/\s+$/u, '')
+    return `${prefix}${checkChar}]${nextTail}`
+  })
+}
+
+/** Replace, insert, or remove the `@status:<id>` token. Thin wrapper over
+ *  {@link setTaskFieldAtIndex} for the default `status` field. (#354) */
+export function setTaskStatusAtIndex(
+  markdown: string,
+  taskIndex: number,
+  status: string | null
+): string {
+  return setTaskFieldAtIndex(markdown, taskIndex, 'status', status)
+}
+
 /** Replace everything after the checkbox on the task line at `taskIndex` with
  *  `text` (verbatim — the caller owns any `due:`/`!priority` tokens). Used by
  *  inline task editing. */
@@ -232,6 +277,24 @@ export function setTaskTextAtIndex(
     if (!tailWithBracket.startsWith(']')) return null
     const trimmed = text.trim()
     return `${prefix}${checkChar}]${trimmed ? ` ${trimmed}` : ''}`
+  })
+}
+
+/** Mark the task line at `taskIndex` as forwarded (`[>]`) and append `linkToken`
+ *  (a wikilink to the note it was forwarded to) if not already present. Used by
+ *  task forwarding (#316). Pass `linkToken = ''` to only flip the state. */
+export function setTaskForwardedAtIndex(
+  markdown: string,
+  taskIndex: number,
+  linkToken: string
+): string {
+  return editTaskAtIndex(markdown, taskIndex, (match) => {
+    const prefix = match[1]
+    const tailWithBracket = match[3]
+    if (!tailWithBracket.startsWith(']')) return null
+    const tail = tailWithBracket.slice(1).replace(/\s+$/u, '')
+    const nextTail = !linkToken || tail.includes(linkToken) ? tail : `${tail} ${linkToken}`
+    return `${prefix}>]${nextTail}`
   })
 }
 

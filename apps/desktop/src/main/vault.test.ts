@@ -8,16 +8,19 @@ import {
   archiveNote,
   deleteAsset,
   duplicateAsset,
+  emptyDeletedAssets,
   ensureVaultLayout,
   forgetLocalVault,
   getVaultSettings,
   importPastedImage,
   invalidateNoteMetaCache,
+  listDeletedAssets,
   listNotes,
   listFolders,
   moveAsset,
   moveToTrash,
   rememberLocalVault,
+  purgeDeletedAsset,
   renameAsset,
   renameFolder,
   restoreDeletedAsset,
@@ -275,6 +278,47 @@ describe('deleteAsset', () => {
 
     expect(restored.path).toBe(rel)
     await expect(readFile(path.join(root, rel), 'utf8')).resolves.toBe('image-bytes')
+  })
+
+  it('lists deleted assets so they are restorable without the in-session undo (#330)', async () => {
+    const root = await makeTempDir('zennotes-list-deleted-assets-')
+    await ensureVaultLayout(root)
+    await writeFile(path.join(root, 'One.png'), 'one-bytes', 'utf8')
+    await writeFile(path.join(root, 'Two.pdf'), 'two-bytes', 'utf8')
+
+    await deleteAsset(root, 'One.png')
+    await deleteAsset(root, 'Two.pdf')
+
+    const listed = await listDeletedAssets(root)
+    expect(listed).toHaveLength(2)
+    expect(listed.map((d) => d.name).sort()).toEqual(['One.png', 'Two.pdf'])
+    for (const d of listed) {
+      expect(typeof d.undoToken).toBe('string')
+      expect(typeof d.deletedAt).toBe('string')
+    }
+
+    // Restore straight from the listed record — no in-memory undo entry needed.
+    const entry = listed.find((d) => d.name === 'One.png')
+    expect(entry).toBeTruthy()
+    const restored = await restoreDeletedAsset(root, entry!)
+    expect(restored.path).toBe('One.png')
+    await expect(readFile(path.join(root, 'One.png'), 'utf8')).resolves.toBe('one-bytes')
+    expect(await listDeletedAssets(root)).toHaveLength(1)
+  })
+
+  it('purges a single deleted asset and empties them all (#330)', async () => {
+    const root = await makeTempDir('zennotes-purge-deleted-assets-')
+    await ensureVaultLayout(root)
+    await writeFile(path.join(root, 'A.png'), 'a', 'utf8')
+    await writeFile(path.join(root, 'B.png'), 'b', 'utf8')
+    const a = await deleteAsset(root, 'A.png')
+    await deleteAsset(root, 'B.png')
+
+    await purgeDeletedAsset(root, a.undoToken)
+    expect((await listDeletedAssets(root)).map((d) => d.name)).toEqual(['B.png'])
+
+    await emptyDeletedAssets(root)
+    expect(await listDeletedAssets(root)).toHaveLength(0)
   })
 
   it('does not delete markdown notes through the asset path', async () => {

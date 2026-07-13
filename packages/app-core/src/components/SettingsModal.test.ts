@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => {
         primaryNotesLocation: 'inbox',
         dailyNotes: { enabled: true, directory: 'Daily Not' },
         weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+        monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
         folderIcons: {}
       },
       vaultTextSearchBackend: 'auto',
@@ -198,6 +199,7 @@ describe('SettingsModal date note directories', () => {
       primaryNotesLocation: 'inbox',
       dailyNotes: { enabled: true, directory: 'inbox/Journal' },
       weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {}
     })
   })

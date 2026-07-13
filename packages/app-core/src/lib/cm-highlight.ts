@@ -189,29 +189,49 @@ function collectMatches(view: EditorView): HlMatch[] {
   return accepted
 }
 
-function buildDecorations(view: EditorView): DecorationSet {
+interface HighlightDecorations {
+  /** Everything the view renders: the inner tint mark + the hidden `==` markers. */
+  all: DecorationSet
+  /** ONLY the hidden markers — the set fed to `atomicRanges`. The inner tint mark
+   *  must never be atomic, or the cursor/Backspace would treat the whole
+   *  highlighted word as one unit and delete it wholesale. (#351) */
+  atomic: DecorationSet
+}
+
+function buildDecorations(view: EditorView): HighlightDecorations {
   const { state } = view
   const entries: Array<{ from: number; to: number; deco: Decoration }> = []
+  const hidden: Array<{ from: number; to: number; deco: Decoration }> = []
   for (const m of collectMatches(view)) {
     entries.push({ from: m.innerFrom, to: m.innerTo, deco: Decoration.mark({ class: m.cls }) })
     // Hide the surrounding syntax unless the cursor is inside this highlight.
     if (!selectionTouches(state, m.start, m.end)) {
-      if (m.innerFrom > m.start) entries.push({ from: m.start, to: m.innerFrom, deco: HIDE })
-      if (m.end > m.innerTo) entries.push({ from: m.innerTo, to: m.end, deco: HIDE })
+      if (m.innerFrom > m.start) hidden.push({ from: m.start, to: m.innerFrom, deco: HIDE })
+      if (m.end > m.innerTo) hidden.push({ from: m.innerTo, to: m.end, deco: HIDE })
     }
   }
-  entries.sort((a, b) => a.from - b.from || a.to - b.to)
-  return Decoration.set(
-    entries.map((e) => e.deco.range(e.from, e.to)),
-    true
-  )
+  const allEntries = [...entries, ...hidden].sort((a, b) => a.from - b.from || a.to - b.to)
+  hidden.sort((a, b) => a.from - b.from || a.to - b.to)
+  return {
+    all: Decoration.set(
+      allEntries.map((e) => e.deco.range(e.from, e.to)),
+      true
+    ),
+    atomic: Decoration.set(
+      hidden.map((e) => e.deco.range(e.from, e.to)),
+      true
+    )
+  }
 }
 
 const highlightPlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet
+    atomic: DecorationSet
     constructor(view: EditorView) {
-      this.decorations = buildDecorations(view)
+      const built = buildDecorations(view)
+      this.decorations = built.all
+      this.atomic = built.atomic
     }
     update(update: ViewUpdate): void {
       if (
@@ -220,16 +240,20 @@ const highlightPlugin = ViewPlugin.fromClass(
         update.viewportChanged ||
         update.focusChanged
       ) {
-        this.decorations = buildDecorations(update.view)
+        const built = buildDecorations(update.view)
+        this.decorations = built.all
+        this.atomic = built.atomic
       }
     }
   },
   {
     decorations: (p) => p.decorations,
-    // Replacing decorations that hide ranges must be declared as atomic so the
-    // cursor steps over the hidden markers (reveal happens on entry).
+    // Only the hidden `==` markers are atomic, so the cursor steps over them
+    // (reveal happens on entry). The inner tint mark is deliberately excluded —
+    // it is real, editable text; making it atomic broke Backspace inside a
+    // highlight, deleting the whole preceding run. (#351)
     provide: (plugin) =>
-      EditorView.atomicRanges.of((view) => view.plugin(plugin)?.decorations ?? Decoration.none)
+      EditorView.atomicRanges.of((view) => view.plugin(plugin)?.atomic ?? Decoration.none)
   }
 )
 

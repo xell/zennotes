@@ -265,7 +265,14 @@ export function CommandPalette(): JSX.Element {
       // closePalette's focus restore; the retry wins that race. Skipped when the
       // command opened the Settings modal so we don't pull focus behind it.
       const s = useStore.getState()
-      if (s.focusedPanel === 'editor' && !s.settingsOpen) focusEditorNormalMode()
+      if (
+        s.focusedPanel === 'editor' &&
+        !s.settingsOpen &&
+        !s.embedDrawingPaletteOpen &&
+        !s.templatePaletteOpen &&
+        !s.bufferPaletteOpen
+      )
+        focusEditorNormalMode()
     } catch (err) {
       console.error('command failed', cmd.id, err)
     }

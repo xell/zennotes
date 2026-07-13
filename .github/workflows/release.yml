@@ -92,23 +92,31 @@ jobs:
       - name: Install Linux packaging tools
         if: startsWith(matrix.name, 'Linux')
         # `bsdtar` (libarchive-tools) is required by electron-builder's pacman
-        # target to generate the package .MTREE; it isn't on the GitHub Ubuntu
-        # runners (x64 or arm64).
+        # target to generate the package .MTREE; `rpmbuild` (rpm) backs the rpm
+        # target. Neither is on the GitHub Ubuntu runners (x64 or arm64).
         #
-        # electron-builder only bundles an x86 `fpm`, so the deb/pacman targets
-        # fail with "Exec format error" on the native arm64 runner. Install a
-        # native fpm there and switch electron-builder to it via USE_SYSTEM_FPM.
-        # Scope the flag to arm64 by exporting it to $GITHUB_ENV only here:
-        # defining USE_SYSTEM_FPM at all (even empty) makes electron-builder use
-        # a system fpm, which the x64 runner doesn't have.
+        # electron-builder's *bundled* fpm is an ancient x86 build (1.9.3, 2015):
+        # it can't run on the arm64 runner at all ("Exec format error"), and it
+        # is too old to emit an rpm that modern rpmbuild accepts on either arch
+        # (verified on macOS: bundled fpm -> rpmbuild exit 1; system fpm -> ok).
+        # So install a current fpm from RubyGems on BOTH runners and switch
+        # electron-builder to it via USE_SYSTEM_FPM (it also builds deb/pacman).
         run: |
+          # The GitHub Ubuntu runners ship pre-configured Microsoft/azure-cli apt
+          # repos (packages.microsoft.com) that intermittently serve a broken,
+          # unsigned InRelease, which makes `apt-get update` exit 100 and fails
+          # the Linux build for reasons unrelated to us. We only need the Ubuntu
+          # archives here, so drop those third-party lists first.
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                     /etc/apt/sources.list.d/azure-cli.list \
+                     /etc/apt/sources.list.d/*microsoft* \
+                     /etc/apt/sources.list.d/*azure* 2>/dev/null || true
           sudo apt-get update
-          sudo apt-get install -y libarchive-tools
-          if [ "${{ matrix.name }}" = "Linux arm64" ]; then
-            sudo apt-get install -y ruby ruby-dev build-essential
-            sudo gem install fpm --no-document
-            echo "USE_SYSTEM_FPM=true" >> "$GITHUB_ENV"
-          fi
+          # libarchive-tools -> bsdtar (pacman .MTREE); rpm -> rpmbuild (rpm
+          # target); ruby toolchain -> a current fpm from RubyGems.
+          sudo apt-get install -y libarchive-tools rpm ruby ruby-dev build-essential
+          sudo gem install fpm --no-document
+          echo "USE_SYSTEM_FPM=true" >> "$GITHUB_ENV"
 
       - name: Build release artifacts
         run: ${{ matrix.command }}
@@ -123,7 +131,7 @@ jobs:
             files+=("$file")
           done < <(
             find dist -maxdepth 1 -type f \
-              \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.pacman' -o -name '*.tar.gz' -o -name '*.blockmap' -o -name 'latest*.yml' -o -name 'latest*.yaml' \)
+              \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.pacman' -o -name '*.rpm' -o -name '*.tar.gz' -o -name '*.blockmap' -o -name 'latest*.yml' -o -name 'latest*.yaml' \)
           )
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No release artifacts found in dist/" >&2

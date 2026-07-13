@@ -1,7 +1,7 @@
 {
   "name": "@zennotes/desktop",
   "productName": "ZenNotes",
-  "version": "2.10.0",
+  "version": "2.13.1",
   "description": "ZenNotes desktop shell",
   "private": true,
   "main": "./out/main/index.js",
@@ -133,6 +133,10 @@
         "filter": ["tab_groups.node"]
       },
       {
+        "from": "../../node_modules/@excalidraw/excalidraw/dist/prod/fonts",
+        "to": "excalidraw-fonts"
+      },
+      {
         "from": "build/icon.png",
         "to": "icon.png"
       },
@@ -244,6 +248,7 @@
         "AppImage",
         "deb",
         "pacman",
+        "rpm",
         "tar.gz"
       ],
       "icon": "build/icons",
@@ -267,6 +272,9 @@
       ]
     },
     "deb": {
+      "afterInstall": "build/after-install.sh"
+    },
+    "rpm": {
       "afterInstall": "build/after-install.sh"
     }
   }

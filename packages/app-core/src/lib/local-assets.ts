@@ -1,5 +1,6 @@
 import { useStore } from '../store'
 import { externalLinkUrl } from './internal-links'
+import { isExcalidrawPath, isObsidianExcalidrawPath } from '@shared/excalidraw'
 
 const IMAGE_EXTENSIONS = new Set([
   '.apng',
@@ -17,7 +18,7 @@ const VIDEO_EXTENSIONS = new Set(['.m4v', '.mov', '.mp4', '.ogv', '.webm'])
 const HTML_EXTENSIONS = new Set(['.html', '.htm'])
 const TEXT_EXTENSIONS = new Set(['.txt', '.text'])
 
-export type LocalAssetKind = 'image' | 'pdf' | 'audio' | 'video' | 'html' | 'text' | 'file'
+export type LocalAssetKind = 'image' | 'pdf' | 'audio' | 'video' | 'html' | 'text' | 'excalidraw' | 'file'
 
 function stripQueryAndHash(href: string): string {
   return href.split('#')[0]?.split('?')[0] ?? href
@@ -63,6 +64,7 @@ function assetExtension(href: string): string {
 export function classifyLocalAssetHref(href: string): LocalAssetKind | null {
   if (!href || href.startsWith('#') || href.startsWith('//')) return null
   if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(href)) return null
+  if (isExcalidrawPath(href) || isObsidianExcalidrawPath(href)) return 'excalidraw'
   const ext = assetExtension(href)
   if (IMAGE_EXTENSIONS.has(ext)) return 'image'
   if (PDF_EXTENSIONS.has(ext)) return 'pdf'
@@ -269,7 +271,7 @@ function buildImageEmbed(
 }
 
 function buildEmbed(
-  kind: Exclude<LocalAssetKind, 'image' | 'html' | 'text' | 'file'>,
+  kind: Exclude<LocalAssetKind, 'image' | 'html' | 'text' | 'file' | 'excalidraw'>,
   url: string,
   label: string,
   href: string,
@@ -468,8 +470,17 @@ export function enhanceLocalAssetNodes(
     // it renders only on a deliberate open, in a sandboxed tab iframe.
     // 'text' is read-only either way, but a large .txt/.log file rendered
     // as a giant inline block would still be an unpleasant surprise
-    // mid-note, so it gets the same plain-link treatment.
-    if (kind === 'file' || kind === 'image' || kind === 'html' || kind === 'text') return
+    // mid-note, so it gets the same plain-link treatment. 'excalidraw' has
+    // its own dedicated ![[drawing.excalidraw]] wikilink embed syntax
+    // (upstream) — a plain link to one shouldn't also auto-embed.
+    if (
+      kind === 'file' ||
+      kind === 'image' ||
+      kind === 'html' ||
+      kind === 'text' ||
+      kind === 'excalidraw'
+    )
+      return
 
     const paragraph = isStandaloneAnchorParagraph(anchor)
     if (!paragraph || paragraph.dataset.assetEmbed === 'true') return

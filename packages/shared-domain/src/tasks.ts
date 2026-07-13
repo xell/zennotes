@@ -39,6 +39,9 @@ export interface VaultTask {
   /** Display content (checkbox prefix + metadata tokens stripped). */
   content: string
   checked: boolean
+  /** True for a `[>]` task forwarded to another note (#316). Mutually
+   *  exclusive with `checked`; kept out of the today/upcoming/done buckets. */
+  forwarded: boolean
   /** ISO YYYY-MM-DD, validated via Date round-trip. */
   due?: string
   /** True when `due` was *derived* from the containing daily note's date
@@ -48,6 +51,13 @@ export interface VaultTask {
   priority?: TaskPriority
   /** True if `@waiting` appears anywhere on the line. */
   waiting: boolean
+  /** All inline `@key:value` fields on the line (lower-cased), e.g.
+   *  `@status:review @sprint:24`. Any key can drive a Kanban group-by. Optional
+   *  so hand-built task fixtures stay terse; the parser always sets it. (#354) */
+  fields?: Record<string, string>
+  /** Convenience accessor for `fields.status`, falling back to the note's
+   *  `status:` frontmatter. The default Kanban custom field. (#354) */
+  status?: string
   /** Inline `#tags` found on the line. */
   tags: string[]
 }
@@ -57,6 +67,7 @@ export interface VaultTaskGroups {
   upcoming: VaultTask[]
   waiting: VaultTask[]
   done: VaultTask[]
+  forwarded: VaultTask[]
   overdueCount: number
 }
 
@@ -135,10 +146,18 @@ function parseNoteDefaults(body: string): { defaults: NoteDefaults; fmEndOffset:
 // Inline token extraction
 // ---------------------------------------------------------------------------
 
-// Word-boundary anchored so `due:` inside a URL-ish blob won't match.
-const INLINE_DUE_RE = /(?:^|\s)due:(\S+)/i
+// Word-boundary anchored so `due:` inside a URL-ish blob won't match. Optional
+// whitespace after the colon so a `due: 2026-01-01` written (or inserted by the
+// @-date completion) with a space parses the same as `due:2026-01-01`. (#343)
+const INLINE_DUE_RE = /(?:^|\s)due:\s*(\S+)/i
 const INLINE_PRIORITY_RE = /(?:^|\s)!(high|med|medium|low|h|m|l)\b/i
 const INLINE_WAITING_RE = /(?:^|\s)@waiting\b/i
+// Inline free-form task fields: `@<key>:<value>`, e.g. `@status:review` or
+// `@sprint:24`. The colon distinguishes them from `@waiting` and the
+// `@today`/`@tomorrow` date helpers (which have no colon). Any field can drive a
+// Kanban group-by; `status` is simply the default one. Global so a line can
+// carry several fields. (#354)
+const INLINE_FIELD_RE = /(?:^|\s)@([a-z][a-z0-9_-]*):([\p{L}\d][\p{L}\d/_-]*)/giu
 // Match #tag-like tokens but only when preceded by start-of-string/whitespace.
 // Letters in any script (Cyrillic/CJK/…) plus digits, `_`, `-`, `/` (#205).
 const INLINE_TAG_RE = /(?:^|\s)#([\p{L}\d][\p{L}\d/_-]*)/gu
@@ -147,6 +166,7 @@ interface ExtractedTokens {
   due?: string
   priority?: TaskPriority
   waiting: boolean
+  fields: Record<string, string>
   tags: string[]
   /** Tail with matched tokens stripped, for clean display. */
   stripped: string
@@ -156,6 +176,7 @@ function extractTokens(tail: string): ExtractedTokens {
   let due: string | undefined
   let priority: TaskPriority | undefined
   let waiting = false
+  const fields: Record<string, string> = {}
   const tags: string[] = []
   let stripped = tail
 
@@ -177,6 +198,17 @@ function extractTokens(tail: string): ExtractedTokens {
     stripped = stripped.replace(INLINE_WAITING_RE, ' ')
   }
 
+  INLINE_FIELD_RE.lastIndex = 0
+  let fieldMatch: RegExpExecArray | null
+  while ((fieldMatch = INLINE_FIELD_RE.exec(stripped))) {
+    const key = fieldMatch[1].toLowerCase()
+    const value = fieldMatch[2].toLowerCase()
+    if (!(key in fields)) fields[key] = value
+  }
+  if (Object.keys(fields).length > 0) {
+    stripped = stripped.replace(INLINE_FIELD_RE, ' ')
+  }
+
   INLINE_TAG_RE.lastIndex = 0
   let tm: RegExpExecArray | null
   while ((tm = INLINE_TAG_RE.exec(tail))) {
@@ -188,6 +220,7 @@ function extractTokens(tail: string): ExtractedTokens {
     due,
     priority,
     waiting,
+    fields,
     tags,
     stripped: stripped.replace(/\s+/g, ' ').trim()
   }
@@ -241,6 +274,7 @@ export function parseTasksFromBody(body: string, ctx: ParseTasksContext): VaultT
     const checkedChar = taskMatch[2]
     const tail = taskMatch[3].replace(/^\]/, '') // drop the closing `]` of the checkbox
     const checked = checkedChar === 'x' || checkedChar === 'X'
+    const forwarded = checkedChar === '>'
 
     const tokens = extractTokens(tail)
 
@@ -254,9 +288,17 @@ export function parseTasksFromBody(body: string, ctx: ParseTasksContext): VaultT
       rawText: line,
       content: tokens.stripped || tail.trim(),
       checked,
+      forwarded,
       due: tokens.due ?? defaults.due,
       priority: tokens.priority ?? defaults.priority,
       waiting: tokens.waiting,
+      // Fold the note's frontmatter `status:` default into the fields map so the
+      // board can group by `fields.status` uniformly.
+      fields:
+        defaults.status && !tokens.fields.status
+          ? { ...tokens.fields, status: defaults.status }
+          : tokens.fields,
+      status: tokens.fields.status ?? defaults.status,
       tags: tokens.tags
     })
 
@@ -286,9 +328,14 @@ export function groupTasks(tasks: VaultTask[], today: Date): VaultTaskGroups {
   const upcoming: VaultTask[] = []
   const waiting: VaultTask[] = []
   const done: VaultTask[] = []
+  const forwarded: VaultTask[] = []
   let overdueCount = 0
 
   for (const task of tasks) {
+    if (task.forwarded) {
+      forwarded.push(task)
+      continue
+    }
     if (task.checked) {
       done.push(task)
       continue
@@ -336,8 +383,9 @@ export function groupTasks(tasks: VaultTask[], today: Date): VaultTaskGroups {
     if (a.sourcePath !== b.sourcePath) return a.sourcePath < b.sourcePath ? -1 : 1
     return a.taskIndex - b.taskIndex
   })
+  forwarded.sort(byDueThenPath)
 
-  return { today: today_, upcoming, waiting, done, overdueCount }
+  return { today: today_, upcoming, waiting, done, forwarded, overdueCount }
 }
 
 /** Helper for UIs that need to know whether a task is overdue relative to now. */

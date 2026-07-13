@@ -17,6 +17,7 @@ function makeTask(content: string, taskIndex = 0): VaultTask {
     rawText: `- [ ] ${content}`,
     content,
     checked: false,
+    forwarded: false,
     waiting: false,
     tags: []
   }
@@ -203,6 +204,7 @@ describe('daily note patterns', () => {
           locale: 'en-US'
         },
         weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+        monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
         folderIcons: {},
         folderColors: {},
         favorites: []
@@ -242,6 +244,7 @@ describe('weekly note patterns', () => {
           titlePattern: "yyyy-'W'ww-EEE",
           locale: 'en-US'
         },
+        monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
         folderIcons: {},
         folderColors: {},
         favorites: []
@@ -265,6 +268,7 @@ describe('date note pattern history', () => {
         locale: 'en-US'
       },
       weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {},
       folderColors: {},
       favorites: []
@@ -332,6 +336,7 @@ describe('date note pattern history', () => {
         titlePattern: "yyyy-'W'ww",
         locale: 'en-US'
       },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {},
       folderColors: {},
       favorites: []
@@ -399,6 +404,7 @@ describe('favorites reorder', () => {
       primaryNotesLocation: 'inbox' as const,
       dailyNotes: { enabled: true, directory: 'Daily Notes', titlePattern: 'yyyy-MM-dd', locale: 'en-US' },
       weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {},
       folderColors: {},
       favorites
@@ -486,6 +492,7 @@ describe('getOrderedSiblingPaths', () => {
       primaryNotesLocation: 'inbox' as const,
       dailyNotes: { enabled: true, directory: 'Daily Notes', titlePattern: 'yyyy-MM-dd', locale: 'en-US' },
       weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
+      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {},
       folderColors: {},
       favorites: [] as string[]

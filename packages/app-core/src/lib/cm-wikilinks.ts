@@ -411,6 +411,66 @@ export function wikilinkSource(context: CompletionContext): CompletionResult | n
 }
 
 /**
+ * `@`-triggered note linking (#332). `@` already inserts a date shortcut
+ * (Today/Yesterday/Tomorrow); this adds note suggestions to the same trigger so
+ * `@` is a quick alternative to `[[`. At least one character after `@` is
+ * required, so a bare `@` still leads with the date shortcuts. Picking a note
+ * replaces the whole `@query` with a `[[Note]]` wikilink, so backlinks work
+ * exactly as with `[[`.
+ */
+function atNoteMatch(context: CompletionContext): { from: number; query: string } | null {
+  const { state, pos } = context
+  const line = state.doc.lineAt(pos)
+  const before = state.doc.sliceString(line.from, pos)
+  // Same `@` boundary rule as the date shortcuts: start of line, or after
+  // whitespace / an opening bracket.
+  const m = before.match(/(?:^|[\s([{}])(@[^\s@]*)$/)
+  if (!m) return null
+  const token = m[1]
+  return { from: pos - token.length, query: token.slice(1).toLowerCase() }
+}
+
+export function atNoteSource(context: CompletionContext): CompletionResult | null {
+  const match = atNoteMatch(context)
+  if (!match || match.query.length < 1) return null
+
+  const state = useStore.getState()
+  const activePath = state.activeNote?.path ?? null
+  const notes = state.notes.filter((note) => note.folder !== 'trash' && note.path !== activePath)
+  const ranked = notes
+    .filter((note) => matchesNote(note, match.query))
+    .map((note) => ({ note, score: scoreNote(note, match.query, activePath) }))
+    .sort((a, b) => (a.score !== b.score ? a.score - b.score : a.note.title.localeCompare(b.note.title)))
+    .slice(0, 24)
+  if (ranked.length === 0) return null
+
+  const options: Completion[] = ranked.map(({ note }) => {
+    const target = noteTargetFor(note, notes)
+    const subtitle = folderLabelFor(note)
+    return {
+      label: note.title,
+      detail: subtitle,
+      type: 'text',
+      _kind: 'wikilink',
+      _target: target,
+      _subtitle: subtitle,
+      apply: (view: EditorView, _completion: Completion, _from: number, to: number) => {
+        // Replace the whole `@query` with a full `[[Note]]` wikilink.
+        const insert = `[[${target}]]`
+        view.dispatch({
+          changes: { from: match.from, to, insert },
+          selection: { anchor: match.from + insert.length }
+        })
+      }
+    } as WikilinkCompletion
+  })
+
+  // Anchor `from` just after the `@` (like the date source) so both `@` sources
+  // share a menu; the apply above still replaces the `@` itself.
+  return { from: match.from + 1, options, filter: false }
+}
+
+/**
  * Match `[[Note#<headingQuery>` so we can suggest the target note's headings.
  * The note is everything before the first `#`; the heading query is whatever
  * follows the last `#` (so nested `#a#b` still completes the deepest part).

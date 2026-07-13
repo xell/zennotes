@@ -164,21 +164,28 @@ export function slashCommandSource(context: CompletionContext): CompletionResult
           }
           let insert = cmd.insert
           let leadPad = ''
+          let tableCaretAfter = false
           if (cmd.label === 'Table') {
             // A GFM table must be separated from surrounding text by blank lines,
             // or strict parsers (PDF export, `:format`) read it as paragraph
             // text and it renders scrambled. Pad it into its own block. (#294)
-            const pad = blockInsertPadding(
-              view.state.doc.sliceString(0, slashStart),
-              view.state.doc.sliceString(to)
-            )
+            const after = view.state.doc.sliceString(to)
+            const pad = blockInsertPadding(view.state.doc.sliceString(0, slashStart), after)
             leadPad = pad.lead
-            insert = pad.lead + insert + pad.trail
+            // The table renders as a block widget; a caret left inside its
+            // replaced range smears into a tall bar at the pane's edge. Land the
+            // caret on the line AFTER the table instead, adding one at the end of
+            // the document where blockInsertPadding leaves no trailing line. (#340)
+            const trail = after.length === 0 ? pad.trail || '\n' : pad.trail
+            insert = pad.lead + cmd.insert + trail
+            tableCaretAfter = true
           }
           const cursorPos =
             cmd.cursorOffset != null
               ? slashStart + insert.length + cmd.cursorOffset
-              : slashStart + leadPad.length + cmd.insert.length
+              : tableCaretAfter
+                ? slashStart + leadPad.length + cmd.insert.length + 1
+                : slashStart + leadPad.length + cmd.insert.length
           view.dispatch({
             changes: { from: slashStart, to, insert },
             selection: { anchor: cursorPos }

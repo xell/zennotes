@@ -64,11 +64,15 @@ export const IPC = {
   VAULT_DUPLICATE_ASSET: 'vault:duplicate-asset',
   VAULT_DELETE_ASSET: 'vault:delete-asset',
   VAULT_RESTORE_DELETED_ASSET: 'vault:restore-deleted-asset',
+  VAULT_LIST_DELETED_ASSETS: 'vault:list-deleted-assets',
+  VAULT_PURGE_DELETED_ASSET: 'vault:purge-deleted-asset',
+  VAULT_EMPTY_DELETED_ASSETS: 'vault:empty-deleted-assets',
   VAULT_CREATE_FOLDER: 'vault:create-folder',
   VAULT_RENAME_FOLDER: 'vault:rename-folder',
   VAULT_DELETE_FOLDER: 'vault:delete-folder',
   VAULT_DUPLICATE_FOLDER: 'vault:duplicate-folder',
   VAULT_REVEAL_FOLDER: 'vault:reveal-folder',
+  VAULT_REVEAL_FILE_PATH: 'vault:reveal-file-path',
   VAULT_REVEAL_FOLDER_TARGET: 'vault:reveal-folder-target',
   VAULT_REVEAL_ASSETS_DIR: 'vault:reveal-assets-dir',
   VAULT_SCAN_TASKS: 'vault:scan-tasks',
@@ -261,6 +265,18 @@ export interface AppUpdateState {
 export type NoteFolder = 'inbox' | 'quick' | 'archive' | 'trash'
 
 export type PrimaryNotesLocation = 'inbox' | 'root'
+
+/** Where a newly created Drawing/Database file is stored. (#362) */
+export type FileLocationMode = 'primary' | 'active-note' | 'folder'
+export interface FileLocationSetting {
+  /** `primary` → the primary notes location root; `active-note` → the folder of
+   *  the note you're viewing; `folder` → the `folder` subfolder of the primary
+   *  location. */
+  mode: FileLocationMode
+  /** Vault-relative subfolder used when `mode === 'folder'`, e.g. `assets/drawings`. */
+  folder?: string
+}
+export const DEFAULT_FILE_LOCATION: FileLocationSetting = { mode: 'primary' }
 export type FolderIconId =
   | 'folder'
   | 'bolt'
@@ -352,6 +368,20 @@ export interface WeeklyNotesSettings {
   templateId?: string
 }
 
+export interface MonthlyNotesSettings {
+  enabled: boolean
+  /** Directory or date-based directory pattern inside the primary notes area. */
+  directory: string
+  /** Date-based title/filename pattern for new monthly notes. */
+  titlePattern?: string
+  /** BCP 47 locale used for localized pattern tokens. `system` = OS/browser locale. */
+  locale?: string
+  /** Prior patterns used only to recognize existing monthly notes after settings changes. */
+  legacyPatterns?: DateNotePatternSettings[]
+  /** Template applied to new monthly notes. Empty/undefined = blank note. */
+  templateId?: string
+}
+
 /**
  * Per-vault overrides for "how this vault looks" — sort order, grouping, the
  * tasks view, etc. Each key falls back to the matching global preference
@@ -366,6 +396,7 @@ export interface VaultViewSettings {
   tasksViewMode?: string
   kanbanGroupBy?: string
   kanbanColumnTitles?: Record<string, string>
+  kanbanStatuses?: string[]
   autoReveal?: boolean
   systemFolderLabels?: Record<string, unknown>
   unifiedSidebar?: boolean
@@ -375,6 +406,12 @@ export interface VaultSettings {
   primaryNotesLocation: PrimaryNotesLocation
   dailyNotes: DailyNotesSettings
   weeklyNotes: WeeklyNotesSettings
+  monthlyNotes: MonthlyNotesSettings
+  /** Where new Excalidraw drawings are created; absent means the default
+   *  (`primary`). Read through `normalizeVaultSettings`, which fills it in. (#362) */
+  drawingsLocation?: FileLocationSetting
+  /** Where new databases are created; absent means the default (`primary`). (#362) */
+  databasesLocation?: FileLocationSetting
   /** Per-vault view overrides (#292); absent/empty means "inherit global". */
   view?: VaultViewSettings
   folderIcons: Record<string, FolderIconId>
@@ -396,6 +433,9 @@ export const DEFAULT_DAILY_NOTE_LOCALE = 'system'
 export const DEFAULT_WEEKLY_NOTES_DIRECTORY = 'Weekly Notes'
 export const DEFAULT_WEEKLY_NOTE_TITLE_PATTERN = "yyyy-'W'ww"
 export const DEFAULT_WEEKLY_NOTE_LOCALE = 'system'
+export const DEFAULT_MONTHLY_NOTES_DIRECTORY = 'Monthly Notes'
+export const DEFAULT_MONTHLY_NOTE_TITLE_PATTERN = 'yyyy-MM'
+export const DEFAULT_MONTHLY_NOTE_LOCALE = 'system'
 
 export const DEFAULT_VAULT_SETTINGS: VaultSettings = {
   primaryNotesLocation: 'inbox',
@@ -413,6 +453,14 @@ export const DEFAULT_VAULT_SETTINGS: VaultSettings = {
     titlePattern: DEFAULT_WEEKLY_NOTE_TITLE_PATTERN,
     locale: DEFAULT_WEEKLY_NOTE_LOCALE
   },
+  monthlyNotes: {
+    enabled: false,
+    directory: DEFAULT_MONTHLY_NOTES_DIRECTORY,
+    titlePattern: DEFAULT_MONTHLY_NOTE_TITLE_PATTERN,
+    locale: DEFAULT_MONTHLY_NOTE_LOCALE
+  },
+  drawingsLocation: { mode: 'primary' },
+  databasesLocation: { mode: 'primary' },
   folderIcons: {},
   folderColors: {},
   favorites: []
@@ -546,6 +594,8 @@ export interface DeletedAsset {
   name: string
   /** Opaque restore token returned by the desktop bridge. */
   undoToken: string
+  /** ISO timestamp of when the asset was deleted (present for 2.11+ deletes). */
+  deletedAt?: string
 }
 
 export interface ImportedAsset {

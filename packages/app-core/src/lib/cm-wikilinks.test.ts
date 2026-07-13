@@ -4,7 +4,7 @@ import { CompletionContext } from '@codemirror/autocomplete'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { describe, expect, it, vi } from 'vitest'
-import { wikilinkSource, wikilinkHeadingSource } from './cm-wikilinks'
+import { wikilinkSource, wikilinkHeadingSource, atNoteSource } from './cm-wikilinks'
 
 const storeState = vi.hoisted(() => ({
   activeNote: {
@@ -173,5 +173,39 @@ describe('wikilinkHeadingSource (#196 — heading autocomplete)', () => {
 
   it('returns null without a # (note mode owns that)', async () => {
     expect(await headingResult('[[Zen Garden')).toBeNull()
+  })
+})
+
+function atResult(doc: string) {
+  const state = EditorState.create({ doc })
+  return atNoteSource(new CompletionContext(state, doc.length, true))
+}
+
+describe('atNoteSource (#332 — @ note linking)', () => {
+  it('suggests notes when typing @<query>', () => {
+    const result = atResult('@Zen')
+    expect(result?.options.map((o) => o.label)).toEqual(expect.arrayContaining(['Zen Garden']))
+  })
+
+  it('replaces the whole @query with a [[wikilink]]', () => {
+    const parent = document.createElement('div')
+    document.body.append(parent)
+    const view = new EditorView({ parent, state: EditorState.create({ doc: '@Zen' }) })
+    const result = atNoteSource(new CompletionContext(view.state, view.state.doc.length, true))
+    const option = result?.options.find((o) => o.label === 'Zen Garden')
+    const apply = option?.apply
+    if (typeof apply !== 'function') throw new Error('expected a function apply handler')
+    apply(view, option!, result!.from, view.state.doc.length)
+    expect(view.state.doc.toString()).toBe('[[Zen Garden]]')
+    view.destroy()
+    parent.remove()
+  })
+
+  it('returns null for a bare @ so the date shortcuts lead', () => {
+    expect(atResult('@')).toBeNull()
+  })
+
+  it('does not trigger mid-word (e.g. inside an email)', () => {
+    expect(atResult('foo@Zen')).toBeNull()
   })
 })

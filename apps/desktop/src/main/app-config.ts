@@ -53,7 +53,7 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
   vimYankToClipboard: {
     section: 'vim',
     tomlKey: 'yank_to_clipboard',
-    comment: 'also copy Vim yank/delete/change to the system clipboard'
+    comment: 'sync the system clipboard with Vim yank/delete/change and p/P paste'
   },
   vimKeymap: {
     section: 'vim',
@@ -129,6 +129,16 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
     comment: 'editor + preview font size (px)'
   },
   editorLineHeight: { section: 'editor', tomlKey: 'line_height', comment: 'line-height multiplier' },
+  editorScrollOff: {
+    section: 'editor',
+    tomlKey: 'scroll_off',
+    comment: 'vim scrolloff — lines kept above/below the cursor (0 = off)'
+  },
+  timeFormat: {
+    section: 'editor',
+    tomlKey: 'time_format',
+    comment: 'clock format for the @time macro (12h or 24h)'
+  },
   previewMaxWidth: {
     section: 'editor',
     tomlKey: 'preview_max_width',
@@ -301,6 +311,24 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
   }
 }
 
+/** A list-valued portable pref rendered as an inline TOML array of strings
+ *  under a `[section]`, always emitted (even when empty) with an inline comment
+ *  so the ordered list is self-documenting. */
+interface ListFieldMap {
+  section: string
+  tomlKey: string
+  comment: string
+}
+
+// List (ordered string[]) portable prefs → [section].key = ["a", "b"].
+const LIST_FIELDS: Partial<Record<PortablePrefKey, ListFieldMap>> = {
+  kanbanStatuses: {
+    section: 'view',
+    tomlKey: 'kanban_statuses',
+    comment: 'custom-status Kanban columns, in order — e.g. ["backlog", "in_progress", "review", "done"]'
+  }
+}
+
 /** A map-valued portable pref rendered as its own TOML table of string→string,
  *  always emitted (even when empty) with a header comment + example so users
  *  can discover the format. */
@@ -426,6 +454,11 @@ function tomlValue(value: unknown): string {
   return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\t/g, '\\t')}"`
 }
 
+/** Render an inline TOML array of strings, e.g. `["a", "b"]`. */
+function tomlArray(values: string[]): string {
+  return `[${values.map((v) => tomlValue(v)).join(', ')}]`
+}
+
 /** Bare key when it's a simple identifier, otherwise a quoted key (e.g. a
  *  KeymapId like "global.searchNotes" or a "status:todo" column id). */
 function tomlKey(key: string): string {
@@ -443,9 +476,12 @@ export function serializeConfig(portable: AppConfigPortable): string {
   const lines: string[] = [`config_version = ${CONFIG_VERSION}`]
   const scalarKeys = Object.keys(SCALAR_FIELDS) as PortablePrefKey[]
 
+  const listKeys = Object.keys(LIST_FIELDS) as PortablePrefKey[]
+
   for (const section of SECTION_ORDER) {
     const keys = scalarKeys.filter((key) => SCALAR_FIELDS[key]?.section === section)
-    if (keys.length === 0) continue
+    const sectionListKeys = listKeys.filter((key) => LIST_FIELDS[key]?.section === section)
+    if (keys.length === 0 && sectionListKeys.length === 0) continue
     lines.push('', `[${section}]`)
     for (const key of keys) {
       const map = SCALAR_FIELDS[key]
@@ -470,6 +506,15 @@ export function serializeConfig(portable: AppConfigPortable): string {
       }
 
       lines.push(`${map.tomlKey} = ${tomlValue(value)}  # ${map.comment}`)
+    }
+    for (const key of sectionListKeys) {
+      const map = LIST_FIELDS[key]
+      if (!map) continue
+      const raw = Object.prototype.hasOwnProperty.call(portable, key)
+        ? portable[key]
+        : PORTABLE_DEFAULTS[key]
+      const arr = Array.isArray(raw) ? raw.filter((v): v is string => typeof v === 'string') : []
+      lines.push(`${map.tomlKey} = ${tomlArray(arr)}  # ${map.comment}`)
     }
   }
 
@@ -561,6 +606,15 @@ export function deserializeConfig(text: string): { version: number; portable: Ap
     if (value && typeof value === 'object' && !Array.isArray(value)) {
       portable[key as PortablePrefKey] = value
     }
+  }
+
+  for (const [key, map] of Object.entries(LIST_FIELDS)) {
+    if (!map) continue
+    const section = parsed[map.section]
+    if (!section || typeof section !== 'object') continue
+    const raw = (section as Record<string, unknown>)[map.tomlKey]
+    if (!Array.isArray(raw)) continue
+    portable[key as PortablePrefKey] = raw.filter((v): v is string => typeof v === 'string')
   }
 
   return { version, portable: migrateConfig(version, portable) }

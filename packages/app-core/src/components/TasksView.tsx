@@ -3,6 +3,7 @@ import { isTasksViewActive, useStore, type TasksViewMode } from '../store'
 import { inferDailyTaskDueDates, type VaultTask } from '@shared/tasks'
 import { buildDailyNoteDateByPath } from '../lib/vault-layout'
 import { computeTasksRender, isOverdue } from '../lib/tasks-filter'
+import { forwardTaskWithPicker } from '../lib/forward-task'
 import { TasksRow } from './TasksRow'
 import { TasksCalendar } from './TasksCalendar'
 import { TasksKanban } from './TasksKanban'
@@ -11,12 +12,13 @@ import { advanceSequence, getKeymapBinding, matchesSequenceToken } from '../lib/
 import { isImeComposing } from '../lib/ime'
 import { isAppOverlayOpen } from '../lib/overlay-open'
 
-type GroupKey = 'today' | 'upcoming' | 'waiting' | 'done'
+type GroupKey = 'today' | 'upcoming' | 'waiting' | 'forwarded' | 'done'
 
 const GROUP_LABELS: Record<GroupKey, string> = {
   today: 'Today',
   upcoming: 'Upcoming',
   waiting: 'Waiting',
+  forwarded: 'Forwarded',
   done: 'Done'
 }
 
@@ -30,6 +32,10 @@ const VIEW_BUTTONS: Array<{
   { id: 'calendar', label: 'Calendar', shortcut: '2', Icon: CalendarIcon },
   { id: 'kanban', label: 'Kanban', shortcut: '3', Icon: KanbanIcon }
 ]
+
+// Grace period (ms) after toggling a task in the list before it re-groups, so a
+// just-checked task doesn't immediately vanish into the collapsed Done group.
+const TASK_LINGER_MS = 2500
 
 export function TasksView(): JSX.Element {
   const rawTasks = useStore((s) => s.vaultTasks)
@@ -73,8 +79,16 @@ export function TasksView(): JSX.Element {
     today: false,
     upcoming: false,
     waiting: false,
+    forwarded: true,
     done: true
   })
+
+  // Keep a just-toggled task in its pre-toggle group for TASK_LINGER_MS so it
+  // doesn't vanish into (collapsed) Done before you can undo. `groupChecked` is
+  // the checked state to group by while it lingers; toggle again to revert.
+  const lingerRef = useRef<Map<string, { groupChecked: boolean }>>(new Map())
+  const lingerTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const [lingerVersion, setLingerVersion] = useState(0)
 
   const filterRef = useRef<HTMLInputElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -95,10 +109,25 @@ export function TasksView(): JSX.Element {
   // back, reopening the view is sufficient to refresh the anchor.
   const today = useMemo(() => new Date(), [])
 
-  const render = useMemo(
-    () => computeTasksRender(tasks, filter, today, collapsed),
-    [tasks, filter, today, collapsed]
-  )
+  const render = useMemo(() => {
+    const linger = lingerRef.current
+    if (linger.size === 0) return computeTasksRender(tasks, filter, today, collapsed)
+    // Group lingering tasks by their PRE-toggle checked state so a just-checked
+    // task stays in its current group instead of jumping straight to Done.
+    const source = tasks.map((t) => {
+      const l = linger.get(t.id)
+      return l ? { ...t, checked: l.groupChecked } : t
+    })
+    const r = computeTasksRender(source, filter, today, collapsed)
+    // Render the real task so the checkbox reflects the actual (new) state while
+    // the row lingers in place.
+    const byId = new Map(tasks.map((t) => [t.id, t]))
+    const rows = r.rows.map((row) =>
+      row.kind === 'task' && row.task ? { ...row, task: byId.get(row.task.id) ?? row.task } : row
+    )
+    return { ...r, rows }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, filter, today, collapsed, lingerVersion])
 
   // Index-into-rows map for just the 'task' rows (what the cursor navigates).
   const taskRowIndices = useMemo(() => {
@@ -155,6 +184,37 @@ export function TasksView(): JSX.Element {
     },
     [safeCursor, setCursorIndex, taskRowIndices.length]
   )
+
+  // Toggle a list task, then keep it pinned in place for a grace period (see the
+  // linger refs). The checked state is written immediately; only the re-group is
+  // deferred, so toggling again within the window simply reverts it in place.
+  const lingerToggle = useCallback(
+    (task: VaultTask) => {
+      const key = task.id
+      if (!lingerRef.current.has(key)) lingerRef.current.set(key, { groupChecked: task.checked })
+      const prev = lingerTimers.current.get(key)
+      if (prev) clearTimeout(prev)
+      lingerTimers.current.set(
+        key,
+        setTimeout(() => {
+          lingerRef.current.delete(key)
+          lingerTimers.current.delete(key)
+          setLingerVersion((v) => v + 1)
+        }, TASK_LINGER_MS)
+      )
+      setLingerVersion((v) => v + 1)
+      void toggleTaskFromList(task)
+    },
+    [toggleTaskFromList]
+  )
+
+  // Clear any pending linger timers on unmount.
+  useEffect(() => {
+    const timers = lingerTimers.current
+    return () => {
+      for (const t of timers.values()) clearTimeout(t)
+    }
+  }, [])
 
   // Move the cursored task one slot up/down by swapping with its neighbor in
   // the same note — this rewrites the note's markdown line order, the single
@@ -398,7 +458,13 @@ export function TasksView(): JSX.Element {
       }
       if (((vimMode && key === ' ') || seq('nav.toggleTask')) && currentTask) {
         consume()
-        void toggleTaskFromList(currentTask)
+        lingerToggle(currentTask)
+        return
+      }
+      // Forward the selected task to another note (#316). Vim-gated single key.
+      if (vimMode && key === '>' && currentTask) {
+        consume()
+        void forwardTaskWithPicker(currentTask)
         return
       }
     }
@@ -415,7 +481,7 @@ export function TasksView(): JSX.Element {
     keymapOverrides,
     vimMode,
     openTaskAt,
-    toggleTaskFromList,
+    lingerToggle,
     closeTasksView,
     setFilter,
     viewMode,
@@ -493,7 +559,7 @@ export function TasksView(): JSX.Element {
             type="button"
             onClick={closeTasksView}
             className="rounded-md px-2 py-1 text-xs text-current/70 hover:bg-paper-200/80"
-            title="Close (:q or Esc)"
+            title="Close (:q)"
           >
             Close
           </button>
@@ -538,7 +604,7 @@ export function TasksView(): JSX.Element {
                 task={task}
                 isOverdue={overdue}
                 isCursor={idx === currentRowIdx}
-                onToggle={() => void toggleTaskFromList(task)}
+                onToggle={() => lingerToggle(task)}
                 onOpen={() => void openTaskAt(task)}
                 onFocusRow={() => {
                   const ti = taskRowIndices.indexOf(idx)

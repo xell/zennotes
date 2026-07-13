@@ -157,13 +157,32 @@ export async function renderTikz(
 
     try {
       const fn = await load();
+      // Only load pgfplots if it's referenced in the source code.
+      // pgfplots is extremely heavy and exhausts the TeX engine's pool size
+      // limit (~920k) when combined with other large packages (like circuitikz).
+      const texPackages: Record<string, string> = { amsmath: "", amssymb: "" };
+      const usesPgfPlots =
+        source.includes("pgfplots") ||
+        source.includes("axis") ||
+        source.includes("plot");
+      if (usesPgfPlots) {
+        texPackages.pgfplots = "";
+      }
+
+      const usesCircuiTikz =
+        source.includes("circuitikz") ||
+        source.includes("ctikzset");
+      if (usesCircuiTikz) {
+        texPackages.circuitikz = "";
+      }
+
       const svg = await fn(wrapSource(source), {
         showConsole: true,
         // Enable the common TikZ libraries people reach for first. The
         // wasm build ships with everything already compiled, so toggling
         // these flags only changes which `\usetikzlibrary{…}` / `\usepackage{…}`
         // statements get injected — negligible runtime cost.
-        texPackages: { pgfplots: "", amsmath: "", amssymb: "" },
+        texPackages,
         tikzLibraries:
           "arrows.meta,calc,positioning,shapes,decorations.pathreplacing,intersections,patterns",
       });

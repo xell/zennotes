@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { JSX, SVGProps } from 'react'
 import type { BlockType } from '../lib/cm-format'
 import { formatKeyToken } from '../lib/keymaps'
@@ -92,6 +92,10 @@ export function EditorSelectionToolbar({
 }: Props): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuIndex, setMenuIndex] = useState(0)
+  // Whether the "Turn into" submenu opens upward — flipped when opening downward
+  // would push it past the bottom of the viewport (#327).
+  const [menuUp, setMenuUp] = useState(false)
+  const submenuRef = useRef<HTMLDivElement | null>(null)
   const [hint, setHint] = useState<Hint | null>(null)
   // In Vim mode, h/j/k/l navigate the toolbar too (the controls aren't text
   // inputs, so the letters are free to act as motions).
@@ -109,6 +113,20 @@ export function EditorSelectionToolbar({
   useEffect(() => {
     if (menuOpen) menuRefs.current[menuIndex]?.focus()
   }, [menuOpen, menuIndex])
+
+  // #327: the submenu defaults to opening downward. If that would push it past
+  // the bottom of the viewport, flip it upward. Measured in a layout effect so
+  // the flip happens before paint (no visible downward flash).
+  useLayoutEffect(() => {
+    if (!menuOpen) {
+      setMenuUp(false)
+      return
+    }
+    const el = submenuRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    if (rect.bottom > window.innerHeight - 8) setMenuUp(true)
+  }, [menuOpen])
 
   // Keep the editor's selection: never let a toolbar mousedown move focus/caret.
   const keepSelection = (e: React.MouseEvent): void => {
@@ -308,9 +326,12 @@ export function EditorSelectionToolbar({
 
       {menuOpen && (
         <div
+          ref={submenuRef}
           role="menu"
           aria-label="Turn into"
-          className="absolute left-1 top-full z-10 mt-1 w-[200px] overflow-hidden rounded-lg bg-paper-100 p-1 shadow-float ring-1 ring-paper-300"
+          className={`absolute left-1 z-10 w-[200px] overflow-hidden rounded-lg bg-paper-100 p-1 shadow-float ring-1 ring-paper-300 ${
+            menuUp ? 'bottom-full mb-1' : 'top-full mt-1'
+          }`}
           onMouseDown={keepSelection}
         >
           {BLOCKS.map(({ type, label, Icon, glyph }, i) => (

@@ -18,7 +18,13 @@ import {
 const MAX_RECENT = 5
 const MAX_TASKS = 6
 
-const NO_COLLAPSE = { today: false, upcoming: false, waiting: false, done: false }
+const NO_COLLAPSE = {
+  today: false,
+  upcoming: false,
+  waiting: false,
+  forwarded: false,
+  done: false
+}
 
 function greetingFor(date: Date): string {
   const h = date.getHours()
@@ -61,8 +67,8 @@ export function HomeView({
   const openTasksView = useStore((s) => s.openTasksView)
   const vaultSettings = useStore((s) => s.vaultSettings)
   const createAndOpen = useStore((s) => s.createAndOpen)
-  const createDatabase = useStore((s) => s.createDatabase)
-  const createDrawingAndOpen = useStore((s) => s.createDrawingAndOpen)
+  const newDatabase = useStore((s) => s.newDatabase)
+  const newDrawing = useStore((s) => s.newDrawing)
   const openTodayDailyNote = useStore((s) => s.openTodayDailyNote)
   const openWeeklyNoteForDate = useStore((s) => s.openWeeklyNoteForDate)
 
@@ -80,12 +86,12 @@ export function HomeView({
       {
         label: 'Database',
         icon: <DatabaseIcon width={15} height={15} />,
-        run: () => void createDatabase('inbox', '')
+        run: () => void newDatabase()
       },
       {
         label: 'Drawing',
         icon: <ExcalidrawIcon width={15} height={15} />,
-        run: () => void createDrawingAndOpen('inbox', '')
+        run: () => void newDrawing()
       }
     ]
     if (vaultSettings?.dailyNotes?.enabled) {
@@ -107,8 +113,8 @@ export function HomeView({
     vaultSettings?.dailyNotes?.enabled,
     vaultSettings?.weeklyNotes?.enabled,
     createAndOpen,
-    createDatabase,
-    createDrawingAndOpen,
+    newDatabase,
+    newDrawing,
     openTodayDailyNote,
     openWeeklyNoteForDate
   ])

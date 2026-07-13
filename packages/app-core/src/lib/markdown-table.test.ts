@@ -82,6 +82,35 @@ describe('parseTable', () => {
 })
 
 describe('serializeTable round-trip', () => {
+  it('preserves latex backslashes on serialize', () => {
+    const t = setCell(parse(SIMPLE), { row: 0, col: 0 }, '\\sum')
+    const out = serializeTable(t)
+    expect(out).toContain('\\sum')
+    expect(parse(out).rows[0][0]).toBe('\\sum')
+  })
+
+  it('still escapes literal pipes', () => {
+    const t = setCell(parse(SIMPLE), { row: 0, col: 0 }, 'a | b')
+    const out = serializeTable(t)
+    expect(out).toContain('a \\| b')
+    expect(parse(out).rows[0][0]).toBe('a | b')
+  })
+
+  it('round-trips latex and pipes together', () => {
+    const t = setCell(parse(SIMPLE), { row: 0, col: 0 }, '\\sum | x')
+    const out = serializeTable(t)
+    expect(out).toContain('\\sum \\| x')
+    expect(parse(out).rows[0][0]).toBe('\\sum | x')
+  })
+
+  it('preserves LaTeX line breaks (double backslash) on round-trip', () => {
+    // A matrix/aligned line break `\\` must not collapse to `\` when parsed back.
+    const t = setCell(parse(SIMPLE), { row: 0, col: 0 }, 'a \\\\ b')
+    const out = serializeTable(t)
+    expect(out).toContain('a \\\\ b')
+    expect(parse(out).rows[0][0]).toBe('a \\\\ b')
+  })
+
   it('produces aligned, padded markdown', () => {
     const t = parse(SIMPLE)
     expect(serializeTable(t)).toBe(`| A   | B   |

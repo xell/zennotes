@@ -22,6 +22,7 @@ import {
 import { useStore } from '../store'
 import { isSameFileHeadingLink, resolveWikilinkTarget, wikilinkHeadingAnchor } from './wikilinks'
 import { openDatabaseFromWikilink, openWikilinkHeading } from './wikilink-navigation'
+import { offerCreateNoteFromLink } from './create-note-from-link'
 
 // Same shape as the Preview pipeline (remarkWikilinks).
 const WIKILINK_RE = /(!?)\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]/g
@@ -152,8 +153,10 @@ function openWikilink(target: string): void {
       void openWikilinkHeading(state.selectedPath, anchor).then(focusEditorSoon)
       return
     }
-    // Not a note — maybe a `.base` database; otherwise leave it to other flows.
-    openDatabaseFromWikilink(target)
+    // Not a note — maybe a `.base` database; otherwise offer to create the note
+    // (with confirmation) so a link to a not-yet-existing note isn't a dead end.
+    if (openDatabaseFromWikilink(target)) return
+    void offerCreateNoteFromLink(target)
     return
   }
 

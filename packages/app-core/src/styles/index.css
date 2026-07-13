@@ -361,6 +361,7 @@
 :root[data-theme="tokyo-night-storm"],
 :root[data-theme="kanagawa-wave"],
 :root[data-theme="kanagawa-dragon"],
+:root[data-theme="kanagawa-paper-ink"],
 :root[data-theme="rose-pine-main"],
 :root[data-theme="rose-pine-moon"],
 :root[data-theme="black-metal"] {
@@ -1139,6 +1140,34 @@
   --z-shadow: 0 0 0;
 }
 
+/* ---- Paper Ink (custom muted dark variant of Kanagawa Paper) ------- */
+:root[data-theme="kanagawa-paper-ink"] {
+  color-scheme: dark;
+  --z-bg: 20 19 27; /* custom ink canvas #14131b */
+  --z-bg-softer: 31 31 40; /* sumiInk3 #1f1f28 */
+  --z-bg-1: 42 42 55; /* sumiInk4 #2a2a37 */
+  --z-bg-2: 54 54 70; /* sumiInk5 #363646 */
+  --z-bg-3: 57 56 54; /* dragonBlack5 #393836 */
+  --z-bg-4: 84 84 109; /* sumiInk6 #54546d */
+  --z-fg: 220 215 186; /* fujiWhite #dcd7ba */
+  --z-fg-1: 200 192 147; /* oldWhite #c8c093 */
+  --z-fg-2: 158 155 147; /* dragonGray2 #9e9b93 */
+  --z-grey-2: 166 166 156; /* dragonGray #a6a69c */
+  --z-grey-1: 122 131 130; /* dragonGray3 #7a8382 */
+  --z-grey-0: 115 124 115; /* dragonAsh #737c73 */
+  --z-grey-dim: 57 56 54;
+  --z-accent: 142 164 158; /* dragonAqua #8ea49e */
+  --z-accent-soft: 112 142 158; /* dragonBlue3 #708e9e */
+  --z-accent-muted: 93 122 136; /* dragonBlue4 #5d7a88 */
+  --z-red: 196 116 110; /* dragonRed #c4746e */
+  --z-green: 105 148 105; /* dragonGreen #699469 */
+  --z-yellow: 196 178 138; /* dragonYellow #c4b28a */
+  --z-blue: 67 89 101; /* dragonBlue5 #435965 */
+  --z-purple: 162 146 163; /* dragonPink #a292a3 */
+  --z-aqua: 142 164 158;
+  --z-shadow: 13 12 12;
+}
+
 /* ---- Lotus (light) ------------------------------------------------- */
 :root[data-theme="kanagawa-lotus"] {
   color-scheme: light;
@@ -1461,7 +1490,7 @@ textarea,
 .cm-editor .cm-scroller {
   font-family: inherit;
   line-height: var(--z-editor-line-height, 1.7);
-  padding: 16px 0 35vh 0;
+  padding: 16px 0 20vh 0;
   overflow-y: auto;
   /* `auto` so long lines can scroll horizontally when word wrap is
      off — wrapping mode keeps things short and no scrollbar appears. */
@@ -1727,6 +1756,22 @@ textarea,
   width: 1.05em;
   height: 1.05em;
   margin-right: 0.15em;
+}
+
+/* Forwarded task marker `- [>]` (#316) — an arrow, sized to sit like the
+   checkbox. Uses the accent so a forwarded task reads as "sent onward". */
+.cm-editor .cm-task-forwarded {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: text-bottom;
+  width: 1.05em;
+  height: 1.05em;
+  margin-right: 0.15em;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--z-accent-fg, var(--z-accent, currentColor));
+  opacity: 0.85;
 }
 
 .cm-editor .cm-task-checkbox-input {
@@ -2774,6 +2819,25 @@ textarea,
   margin-top: -0.25em;
 }
 
+/* Strikethrough (`~~…~~`) around math. `.katex` renders as an inline-block,
+ * an atomic inline that a parent <del>/<s> line-through is not painted across
+ * (and setting `text-decoration` on `.katex` still won't cross its own nested
+ * inline-block glyph spans), so `~~$x$~~` left the rendered formula un-struck
+ * while surrounding prose was crossed out. Overlay a real line across the KaTeX
+ * box so struck math reads as struck. (#359) */
+:is(.prose-zen, .cm-editor) :is(del, s) .katex {
+  position: relative;
+}
+:is(.prose-zen, .cm-editor) :is(del, s) .katex::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 0.075em solid currentColor;
+  pointer-events: none;
+}
+
 :is(.prose-zen, .cm-editor) .local-image-embed {
   margin: 1.35rem 0;
 }
@@ -2923,6 +2987,47 @@ textarea,
 
 .cm-editor .local-image-embed-caption {
   line-height: 1.4;
+}
+
+/* --- Excalidraw embed (CodeMirror live preview + preview pane) --------- */
+.cm-editor .cm-excalidraw-embed {
+  display: block;
+  width: 100%;
+  max-width: min(100%, 980px);
+  margin: 0.5rem 0 0.6rem;
+}
+
+:is(.prose-zen, .cm-editor) .excalidraw-embed-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+  display: block;
+  object-fit: contain;
+}
+
+.excalidraw-embed-host {
+  margin: 0.75rem 0;
+}
+
+.excalidraw-embed-preview {
+  cursor: pointer;
+}
+
+.excalidraw-embed-loading {
+  min-height: 80px;
+  border-radius: 0.5rem;
+  background: theme("colors.paper.200");
+  animation: excalidraw-embed-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes excalidraw-embed-pulse {
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 0.9;
+  }
 }
 
 /* --- PDF embed widget (CodeMirror live preview) ---------------------- */

@@ -3,6 +3,7 @@ import { isTagsViewActive, useStore } from '../store'
 import type { NoteMeta } from '@shared/ipc'
 import { extractTags, matchesSelectedTags } from '../lib/tags'
 import { TagIcon, CloseIcon, DocumentIcon } from './icons'
+import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 import { advanceSequence, getKeymapBinding, matchesSequenceToken } from '../lib/keymaps'
 import { isPrimaryNotesAtRoot, noteFolderSubpath } from '../lib/vault-layout'
 import { isImeComposing } from '../lib/ime'
@@ -35,6 +36,7 @@ export function TagView(): JSX.Element {
   const tagMatchMode = useStore((s) => s.tagMatchMode)
   const setTagMatchMode = useStore((s) => s.setTagMatchMode)
   const toggleTagSelection = useStore((s) => s.toggleTagSelection)
+  const setSelectedTags = useStore((s) => s.setSelectedTags)
   const closeTagView = useStore((s) => s.closeTagView)
   const selectNote = useStore((s) => s.selectNote)
   const keymapOverrides = useStore((s) => s.keymapOverrides)
@@ -45,6 +47,8 @@ export function TagView(): JSX.Element {
   const [cursorIndex, setCursorIndex] = useState(0)
   const [exOpen, setExOpen] = useState(false)
   const [exValue, setExValue] = useState('')
+  // Right-click menu for a selected tag chip (deselect / keep only / clear). (#356)
+  const [tagMenu, setTagMenu] = useState<{ x: number; y: number; tag: string } | null>(null)
 
   const filterRef = useRef<HTMLInputElement>(null)
   const exRef = useRef<HTMLInputElement>(null)
@@ -157,6 +161,10 @@ export function TagView(): JSX.Element {
         case 'w':
         case 'write':
           return
+        case 'clear':
+        case 'clr':
+          store.setSelectedTags([])
+          return
         case 'h':
         case 'help':
           void store.openHelpView()
@@ -188,6 +196,25 @@ export function TagView(): JSX.Element {
     },
     [closeTagView]
   )
+
+  const tagMenuItems = useMemo<ContextMenuItem[]>(() => {
+    const tag = tagMenu?.tag
+    if (!tag) return []
+    return [
+      { label: `Deselect #${tag}`, onSelect: () => toggleTagSelection(tag) },
+      {
+        label: 'Unselect others',
+        disabled: selectedTags.length <= 1,
+        onSelect: () => setSelectedTags([tag])
+      },
+      { kind: 'separator' },
+      {
+        label: 'Clear all tags',
+        hint: vimMode ? 'c' : undefined,
+        onSelect: () => setSelectedTags([])
+      }
+    ]
+  }, [tagMenu, selectedTags, toggleTagSelection, setSelectedTags, vimMode])
 
   useEffect(() => {
     if (!amActive) return
@@ -273,6 +300,12 @@ export function TagView(): JSX.Element {
         s.setTagMatchMode(s.tagMatchMode === 'all' ? 'any' : 'all')
         return
       }
+      // `c` clears every selected tag at once (vim-gated). (#356)
+      if (vimMode && k === 'c' && useStore.getState().selectedTags.length > 0) {
+        consume()
+        setSelectedTags([])
+        return
+      }
       if ((k === 'Enter' || seq('nav.openResult')) && current) {
         consume()
         void openCurrent()
@@ -289,7 +322,8 @@ export function TagView(): JSX.Element {
     keymapOverrides,
     vimMode,
     openCurrent,
-    closeTagView
+    closeTagView,
+    setSelectedTags
   ])
 
   return (
@@ -297,7 +331,7 @@ export function TagView(): JSX.Element {
       ref={rootRef}
       className="flex min-h-0 flex-1 flex-col bg-paper-100 text-ink-900"
     >
-      <div className="flex items-center gap-2 border-b border-current/10 px-4 py-3">
+      <div className="flex items-center gap-2 border-b border-paper-300/50 px-4 py-3">
         <TagIcon width={18} height={18} />
         <h1 className="text-sm font-semibold">Tags</h1>
         <span className="ml-2 rounded bg-current/10 px-1.5 py-0.5 text-xs text-current/60">
@@ -309,7 +343,7 @@ export function TagView(): JSX.Element {
               <span className="text-2xs font-semibold uppercase tracking-wider text-current/40">
                 Match
               </span>
-              <div className="flex overflow-hidden rounded-md ring-1 ring-current/15">
+              <div className="flex overflow-hidden rounded-md ring-1 ring-paper-300/60">
                 {(['all', 'any'] as const).map((m) => (
                   <button
                     key={m}
@@ -324,7 +358,7 @@ export function TagView(): JSX.Element {
                       'px-2 py-1 text-xs transition-colors',
                       tagMatchMode === m
                         ? 'bg-accent/20 font-medium text-accent'
-                        : 'text-current/60 hover:bg-current/10'
+                        : 'text-current/60 hover:bg-paper-200/70'
                     ].join(' ')}
                   >
                     {m === 'all' ? 'All' : 'Any'}
@@ -332,6 +366,16 @@ export function TagView(): JSX.Element {
                 ))}
               </div>
             </div>
+          )}
+          {selectedTags.length >= 1 && (
+            <button
+              type="button"
+              onClick={() => setSelectedTags([])}
+              title="Clear all selected tags (c)"
+              className="rounded-md border border-paper-300/60 px-2 py-1 text-xs text-current/60 transition-colors hover:bg-paper-200/70 hover:text-current/90"
+            >
+              Clear all
+            </button>
           )}
           <input
             ref={filterRef}
@@ -347,12 +391,12 @@ export function TagView(): JSX.Element {
               }
               if (e.key === 'Enter' && !isImeComposing(e)) e.currentTarget.blur()
             }}
-            className="w-56 rounded-md border border-current/15 bg-current/5 px-2 py-1 text-xs outline-none focus:border-current/30"
+            className="w-56 rounded-md border border-paper-300/60 bg-paper-200/60 px-2 py-1 text-xs outline-none focus:border-paper-400/70"
           />
           <button
             type="button"
             onClick={closeTagView}
-            title="Close (:q or Esc)"
+            title="Close (:q)"
             className="flex h-6 w-6 items-center justify-center rounded-md text-current/70 hover:bg-current/10"
           >
             <CloseIcon width={14} height={14} />
@@ -363,49 +407,53 @@ export function TagView(): JSX.Element {
       {/* Tag chip strip — the single source of truth for what's in the
           result set. Click any chip to toggle; shows un-selected tags in
           a quieter style so the user can pick more without leaving. */}
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-current/10 px-4 py-2">
-        <span className="text-2xs font-semibold uppercase tracking-wider text-current/40">
-          Selected
-        </span>
-        {selectedTags.length === 0 ? (
-          <span className="text-xs text-current/50">
-            Click a tag below to start narrowing.
-          </span>
-        ) : (
-          selectedTags.map((t) => (
-            <button
-              key={`sel-${t}`}
-              type="button"
-              onClick={() => toggleTagSelection(t)}
-              className="flex items-center gap-1 rounded-full bg-accent/20 px-2 py-0.5 text-xs font-medium text-accent ring-1 ring-accent/30 hover:bg-accent/30"
-              title="Remove from selection"
-            >
-              <span>#{t}</span>
-              <CloseIcon width={10} height={10} />
-            </button>
-          ))
-        )}
-        {allTags.length > selectedTags.length && (
-          <>
-            <span className="ml-2 text-2xs font-semibold uppercase tracking-wider text-current/40">
-              Add
-            </span>
-            {allTags
-              .filter(([t]) => !selectedTags.includes(t))
-              .map(([t, count]) => (
+      {allTags.length > 0 && (
+        <div className="space-y-2 border-b border-paper-300/50 px-4 py-2.5">
+          {selectedTags.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="w-16 shrink-0 text-2xs font-semibold uppercase tracking-wider text-current/40">
+                Selected
+              </span>
+              {selectedTags.map((t) => (
                 <button
-                  key={`pick-${t}`}
+                  key={`sel-${t}`}
                   type="button"
                   onClick={() => toggleTagSelection(t)}
-                  className="rounded-full bg-current/5 px-2 py-0.5 text-xs text-current/70 hover:bg-current/15 hover:text-current/90"
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    setTagMenu({ x: e.clientX, y: e.clientY, tag: t })
+                  }}
+                  className="flex items-center gap-1 rounded-full bg-accent/20 px-2 py-0.5 text-xs font-medium text-accent ring-1 ring-accent/30 hover:bg-accent/30"
+                  title="Click to remove · right-click for more"
                 >
-                  #{t}
-                  <span className="ml-1 text-current/40">{count}</span>
+                  <span>#{t}</span>
+                  <CloseIcon width={10} height={10} />
                 </button>
               ))}
-          </>
-        )}
-      </div>
+            </div>
+          )}
+          {allTags.length > selectedTags.length && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="w-16 shrink-0 text-2xs font-semibold uppercase tracking-wider text-current/40">
+                {selectedTags.length > 0 ? 'Add' : 'Tags'}
+              </span>
+              {allTags
+                .filter(([t]) => !selectedTags.includes(t))
+                .map(([t, count]) => (
+                  <button
+                    key={`pick-${t}`}
+                    type="button"
+                    onClick={() => toggleTagSelection(t)}
+                    className="rounded-full bg-current/5 px-2 py-0.5 text-xs text-current/70 hover:bg-current/15 hover:text-current/90"
+                  >
+                    #{t}
+                    <span className="ml-1 text-current/40">{count}</span>
+                  </button>
+                ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
         {selectedTags.length === 0 ? (
@@ -470,7 +518,7 @@ export function TagView(): JSX.Element {
 
       {exOpen ? (
         <form
-          className="flex items-center gap-1 border-t border-current/10 px-4 py-1.5 font-mono text-xs"
+          className="flex items-center gap-1 border-t border-paper-300/50 px-4 py-1.5 font-mono text-xs"
           onSubmit={(e) => {
             e.preventDefault()
             runExCommand(exValue)
@@ -502,9 +550,17 @@ export function TagView(): JSX.Element {
           />
         </form>
       ) : (
-        <div className="border-t border-current/10 px-4 py-1.5 text-xs text-current/40">
-          j/k move · Enter/o open · click chips to toggle · / filter · : command · :q close
+        <div className="border-t border-paper-300/50 px-4 py-1.5 text-xs text-current/40">
+          j/k move · Enter/o open · click chips to toggle · c clear tags · / filter · : command · :q close
         </div>
+      )}
+      {tagMenu && (
+        <ContextMenu
+          x={tagMenu.x}
+          y={tagMenu.y}
+          items={tagMenuItems}
+          onClose={() => setTagMenu(null)}
+        />
       )}
     </div>
   )
