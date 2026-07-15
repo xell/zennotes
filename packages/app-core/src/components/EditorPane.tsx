@@ -4396,7 +4396,7 @@ function Breadcrumb({
           type="button"
           onClick={() => setEditing(true)}
           title="Rename note"
-          className="truncate rounded px-1.5 py-0.5 text-sm font-semibold text-ink-900 hover:bg-paper-200/70"
+          className="zen-note-title truncate rounded-full px-1.5 py-0.5 text-sm font-semibold text-ink-900 transition-colors hover:bg-paper-200/70"
         >
           {note.title || 'Untitled'}
         </button>
