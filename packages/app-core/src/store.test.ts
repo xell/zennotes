@@ -107,6 +107,56 @@ beforeEach(() => {
   vi.restoreAllMocks()
 })
 
+describe('lastActivePaneId tracking', () => {
+  it('remembers the previously active pane no matter how activePaneId changes', async () => {
+    const { useStore } = await loadStore()
+    const paneA = findLeaf(useStore.getState().paneLayout, useStore.getState().activePaneId) as PaneLeaf
+    expect(paneA).not.toBeNull()
+    const paneB: PaneLeaf = {
+      kind: 'leaf',
+      id: 'pane-b-test',
+      tabs: ['inbox/B.md'],
+      pinnedTabs: [],
+      activeTab: 'inbox/B.md'
+    }
+    useStore.setState({
+      paneLayout: {
+        kind: 'split',
+        id: 'split-test',
+        direction: 'row',
+        sizes: [0.5, 0.5],
+        children: [paneA, paneB]
+      },
+      activePaneId: paneA.id
+    })
+
+    expect(useStore.getState().lastActivePaneId).toBeNull()
+
+    // Switching to pane B should record pane A as "last active". This goes
+    // through setActivePane, but the tracking itself lives in a store-wide
+    // subscribe (see store.ts, right after the store's creation) rather than
+    // in this specific action, precisely so it doesn't matter which of the
+    // many activePaneId-mutating call sites actually fired.
+    useStore.getState().setActivePane(paneB.id)
+    expect(useStore.getState().lastActivePaneId).toBe(paneA.id)
+
+    // Toggling back flips it the other way — a two-way toggle, not a
+    // one-shot recording.
+    useStore.getState().setActivePane(paneA.id)
+    expect(useStore.getState().lastActivePaneId).toBe(paneB.id)
+  })
+
+  it('does not update when activePaneId is set to its own current value', async () => {
+    const { useStore } = await loadStore()
+    const paneId = useStore.getState().activePaneId
+    useStore.setState({ lastActivePaneId: 'sentinel' })
+
+    useStore.getState().setActivePane(paneId)
+
+    expect(useStore.getState().lastActivePaneId).toBe('sentinel')
+  })
+})
+
 describe('tasks cache freshness', () => {
   it('refreshes tasks when focusing an existing Tasks tab', async () => {
     const freshTasks = [makeTask('new task')]

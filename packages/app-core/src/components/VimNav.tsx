@@ -17,7 +17,7 @@ import {
   resolveNextPanel,
   shouldYieldToHomeNav
 } from '../lib/vim-nav'
-import { focusPaneInDirection } from '../lib/pane-nav'
+import { focusLastActivePane, focusPaneInDirection } from '../lib/pane-nav'
 import { findLeaf } from '../lib/pane-layout'
 import { boundedIndexCount, clampIndex, moveIndex } from '../lib/index-navigation'
 import {
@@ -625,6 +625,14 @@ export function VimNav(): JSX.Element | null {
         // platform-specific Ctrl+W that also means "close" only on Linux/Win. (#321)
         if ((e.key === 'c' || e.key === 'q') && !e.ctrlKey && !e.metaKey && !e.altKey) {
           void state.closeActiveNote()
+          return
+        }
+
+        // <C-w>p (unbound by default) → jump back to whichever pane was
+        // active immediately before this one, matching real Vim's "focus
+        // previous window" binding.
+        if (matchesSequenceToken(e, overrides, 'vim.paneFocusLast')) {
+          focusLastActivePane()
           return
         }
 

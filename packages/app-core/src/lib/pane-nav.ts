@@ -8,6 +8,7 @@
  * deeply nested split still look like simple neighbors.
  */
 import { useStore } from '../store'
+import { findLeaf } from './pane-layout'
 
 export type PaneDirection = 'h' | 'j' | 'k' | 'l'
 type EdgePanel = 'sidebar' | 'notelist' | 'editor' | 'connections'
@@ -175,6 +176,25 @@ export function focusPaneInDirection(direction: PaneDirection): boolean {
     requestAnimationFrame(focusPinnedRefDom)
     return true
   }
+  state.setActivePane(targetId)
+  state.setFocusedPanel('editor')
+  requestAnimationFrame(() => {
+    useStore.getState().editorViewRef?.focus()
+  })
+  return true
+}
+
+/**
+ * Focus whichever pane was active immediately before the current one — a
+ * simple two-way toggle (like Vim's `Ctrl-W p`), not an MRU stack. No-op if
+ * there's no recorded pane, it's already active, or it no longer exists
+ * (e.g. it was closed since it was last focused).
+ */
+export function focusLastActivePane(): boolean {
+  const state = useStore.getState()
+  const targetId = state.lastActivePaneId
+  if (!targetId || targetId === state.activePaneId) return false
+  if (!findLeaf(state.paneLayout, targetId)) return false
   state.setActivePane(targetId)
   state.setFocusedPanel('editor')
   requestAnimationFrame(() => {

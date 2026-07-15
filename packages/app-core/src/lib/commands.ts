@@ -10,7 +10,7 @@ import { isTagsViewActive, isTasksViewActive, isTrashViewActive, useStore } from
 import { confirmApp } from './confirm-requests'
 import { promptApp } from './prompt-requests'
 import { buildMoveNotePrompt, parseMoveNoteTarget } from './move-note'
-import { focusPaneInDirection } from './pane-nav'
+import { focusLastActivePane, focusPaneInDirection } from './pane-nav'
 import { findLeaf } from './pane-layout'
 import { requestPaneMode } from './pane-mode'
 import { resolveQuickNoteTitle } from './quick-note-title'
@@ -989,6 +989,16 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       shortcut: paneShortcut('vim.paneFocusRight'),
       run: () => {
         focusPaneInDirection('l')
+      }
+    },
+    {
+      id: 'pane.focus.last',
+      title: 'Focus Last Pane',
+      category: 'Panes',
+      shortcut: shortcut('global.focusLastPane'),
+      keywords: 'toggle switch alternate previous split group',
+      run: () => {
+        focusLastActivePane()
       }
     }
   )

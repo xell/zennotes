@@ -21,7 +21,7 @@ import { resolveQuickNoteTitle } from './lib/quick-note-title'
 import { isMacPlatform, matchesShortcut, matchesSequenceToken } from './lib/keymaps'
 import { confirmApp } from './lib/confirm-requests'
 import { selectedInboxFolderForIsolation, goUpIsolationWithConfirm } from './lib/sidebar-isolation'
-import { focusPaneOrEdgePanel } from './lib/pane-nav'
+import { focusPaneOrEdgePanel, focusLastActivePane } from './lib/pane-nav'
 import { requestPaneMode } from './lib/pane-mode'
 import { recordRendererPerf } from './lib/perf'
 import { focusEditorNormalMode } from './lib/editor-focus'
@@ -961,6 +961,12 @@ function App(): JSX.Element {
         return
       }
       const overrides = state.keymapOverrides
+      if (matchesShortcut(e, overrides, 'global.focusLastPane')) {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        focusLastActivePane()
+        return
+      }
       const paneDir = matchesShortcut(e, overrides, 'global.focusPaneLeft')
         ? 'h'
         : matchesShortcut(e, overrides, 'global.focusPaneDown')

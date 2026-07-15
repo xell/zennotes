@@ -27,6 +27,7 @@ export type KeymapId =
   | "global.focusPaneRight"
   | "global.focusPaneUp"
   | "global.focusPaneDown"
+  | "global.focusLastPane"
   | "global.modeEdit"
   | "global.modeSplit"
   | "global.modePreview"
@@ -71,6 +72,7 @@ export type KeymapId =
   | "vim.paneFocusDown"
   | "vim.paneFocusUp"
   | "vim.paneFocusRight"
+  | "vim.paneFocusLast"
   | "vim.paneSplitRight"
   | "vim.paneSplitDown"
   | "vim.historyBack"
@@ -334,6 +336,15 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Focus pane right",
     description: "Move focus to the pane/panel on the right. Works without vim mode.",
     defaultBinding: "Alt+L",
+  },
+  {
+    id: "global.focusLastPane",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Focus last focused pane",
+    description: "Jump back to whichever editor pane was focused immediately before this one. Works without vim mode.",
+    defaultBinding: "",
   },
   {
     id: "global.modeEdit",
@@ -779,6 +790,17 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Pane: focus right",
     description: "Move focus to the panel or pane on the right.",
     defaultBinding: "l",
+    vimOnly: true,
+    maxTokens: 1,
+  },
+  {
+    id: "vim.paneFocusLast",
+    kind: "sequence",
+    scope: "pane",
+    group: "vim",
+    title: "Pane: focus last",
+    description: "Jump back to whichever editor pane was focused immediately before this one.",
+    defaultBinding: "",
     vimOnly: true,
     maxTokens: 1,
   },

@@ -2563,6 +2563,12 @@ interface Store {
    *  itself is never touched, so the split proportions just reappear.
    *  Session-only, never persisted; independent of Zen mode. */
   maximizedPaneId: string | null
+  /** The leaf pane that was active immediately before the current one — a
+   *  simple two-way toggle target for "focus last pane", not an MRU stack.
+   *  Kept in sync for every way activePaneId can change (see the subscribe
+   *  call right after this store's creation), not just direct clicks.
+   *  Session-only, never persisted. */
+  lastActivePaneId: string | null
   /** Loaded note contents, keyed by path. Shared across panes so the
    *  same note open in two panes stays in sync on edit. */
   noteContents: Record<string, NoteContent>
@@ -4126,6 +4132,7 @@ export const useStore = create<Store>((set, get) => {
   paneLayout: initialPane,
   activePaneId: initialPane.id,
   maximizedPaneId: null,
+  lastActivePaneId: null,
   noteContents: {},
   noteDirty: {},
   noteComments: {},
@@ -8731,6 +8738,18 @@ export const useStore = create<Store>((set, get) => {
     await Promise.all(dirtyPaths.map(async (path) => get().persistNote(path)))
   }
   }
+})
+
+// activePaneId changes through many call sites (setActivePane, focusTabInPane,
+// openNoteInPane, splitPane, pane removal on close, ...) — rather than thread
+// "record the outgoing pane" through every one of them, derive it centrally
+// from every transition this store ever makes, so no future call site can
+// silently forget to update it. Two-way toggle, not an MRU stack: each
+// transition's outgoing activePaneId becomes the new lastActivePaneId.
+useStore.subscribe((state, prevState) => {
+  if (state.activePaneId === prevState.activePaneId) return
+  if (!prevState.activePaneId || state.lastActivePaneId === prevState.activePaneId) return
+  useStore.setState({ lastActivePaneId: prevState.activePaneId })
 })
 
 // --- Portable config file sync (desktop) ------------------------------------
