@@ -14,21 +14,23 @@ const storeSource = readFileSync(new URL('../store.ts', import.meta.url), 'utf8'
 const stylesSource = readFileSync(new URL('../styles/index.css', import.meta.url), 'utf8')
 
 describe('workspace tab strip overflow styles', () => {
-  it('keeps horizontal tab overflow visible without lifting tabs', () => {
+  it('scrolls horizontal tab overflow without lifting tabs, with the scrollbar widget hidden', () => {
     expect(editorPaneSource).toContain('workspace-tab-strip')
-    // Flat tabs stay at h-10 and scroll horizontally when overflowing (no lift).
+    // Flat tabs stay at h-[var(--z-tab-height)] and scroll horizontally when
+    // overflowing (no lift/wrap unless "Wrap note tabs" is on).
     expect(editorPaneSource).toContain(
       "tabStripOverflowing ? 'overflow-x-auto' : 'overflow-x-hidden'"
     )
     expect(editorPaneSource).toContain('items-stretch')
-    // The tab strip must not HIDE its scrollbar (overflow stays visible). Scope
-    // the check to the tab strip itself — unrelated surfaces such as the
-    // terminal's xterm viewport legitimately style their own ::-webkit-scrollbar,
-    // so a stylesheet-wide `not.toContain('::-webkit-scrollbar')` is too broad.
-    expect(stylesSource).not.toMatch(
+    // The scrollbar WIDGET is hidden — trackpad/wheel scroll still works via
+    // overflow-x-auto above, but a visible bar in a row this short only masks
+    // tab content. Scope the check to the tab strip itself — unrelated
+    // surfaces such as the terminal's xterm viewport legitimately style
+    // their own ::-webkit-scrollbar too.
+    expect(stylesSource).toMatch(
       /\.workspace-tab-strip::-webkit-scrollbar\s*\{[^}]*display:\s*none/s
     )
-    expect(stylesSource).not.toMatch(
+    expect(stylesSource).toMatch(
       /\.workspace-tab-strip[^{]*\{[^}]*scrollbar-width:\s*none/s
     )
   })

@@ -184,11 +184,21 @@
  * Layout tokens — non-theme dimensions, overridable via Quick tweaks.
  * =======================================================================*/
 :root {
-  --z-tab-height: 2.5rem; /* editor tab strip height (default = h-10) */
-  --z-tab-pad-x: 0.5rem; /* editor tab horizontal padding (default = px-2) */
+  --z-tab-height: 2em; /* editor tab strip height, relative to the strip's own text-xs (12px) font-size = 24px */
+  --z-tab-pad-x: 0.2em; /* editor tab horizontal padding, relative to the strip's own text-xs (12px) font-size */
   --z-radius-scale: 1; /* global corner-radius multiplier; 0 = square corners */
   --z-sidebar-row-h: 36px; /* every sidebar row (default = h-9); = DENSITY.default.sidebarRow */
   --z-note-row-h: 76px; /* note-list row slot height; = DENSITY.default.noteRow */
+}
+
+/* The tab strip's own overflow-x-auto still lets you reach off-screen tabs
+   by trackpad/wheel scroll — only the scrollbar widget itself is hidden. In
+   a row this short a visible scrollbar just masks tab content. */
+.workspace-tab-strip {
+  scrollbar-width: none;
+}
+.workspace-tab-strip::-webkit-scrollbar {
+  display: none;
 }
 
 /* ===========================================================================

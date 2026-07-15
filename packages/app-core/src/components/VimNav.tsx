@@ -36,7 +36,7 @@ import {
   dispatchKeyboardContextMenu,
   findTabContextMenuTarget
 } from '../lib/keyboard-context-menu'
-import { navigateActiveBuffer } from '../lib/buffer-navigation'
+import { focusPaneTabByIndex, navigateActiveBuffer } from '../lib/buffer-navigation'
 import { focusEditorNormalMode } from '../lib/editor-focus'
 import { goUpIsolationWithConfirm } from '../lib/sidebar-isolation'
 
@@ -523,6 +523,21 @@ export function VimNav(): JSX.Element | null {
           )
         ) {
           return
+        }
+
+        // Ctrl+1..9: jump straight to the Nth tab (1-indexed, left to right)
+        // in the active pane. Hard-coded rather than a configurable keymap,
+        // and deliberately the literal Control key instead of `Mod` — Cmd+1
+        // is already "Toggle sidebar" (Mod+1), and Cmd+1..9 more generally is
+        // macOS's own native window-tab switcher once tabbingMode is enabled
+        // (see the window-tabbing work), so `Mod` would collide on both counts.
+        for (let i = 0; i < 9; i++) {
+          if (matchesShortcutBinding(e, `Ctrl+${i + 1}`)) {
+            e.preventDefault()
+            e.stopImmediatePropagation()
+            focusPaneTabByIndex(useStore.getState(), i)
+            return
+          }
         }
 
         // #321: gt/gT global fallback (they only fired inside the focused editor

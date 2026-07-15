@@ -2740,21 +2740,24 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   }, [tabMenu, tabs, pinnedTabs, paneId, closeTabInPane, splitPaneWithTab, toggleTabPin, workspaceMode])
 
   const renderTab = useCallback(
-    (tab: {
-      path: string
-      title: string
-      pinned: boolean
-      preview: boolean
-      isQuick: boolean
-      isTasks: boolean
-      isTag: boolean
-      isHelp: boolean
-      isArchive: boolean
-      isTrash: boolean
-      isAssetsView: boolean
-      isAsset: boolean
-      isDiagram: boolean
-    }) => {
+    (
+      tab: {
+        path: string
+        title: string
+        pinned: boolean
+        preview: boolean
+        isQuick: boolean
+        isTasks: boolean
+        isTag: boolean
+        isHelp: boolean
+        isArchive: boolean
+        isTrash: boolean
+        isAssetsView: boolean
+        isAsset: boolean
+        isDiagram: boolean
+      },
+      index: number
+    ) => {
       const active = tab.path === activeTab
       const isVirtual =
         tab.isQuick ||
@@ -2773,7 +2776,14 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
           data-tab-pane-id={paneId}
           data-tab-path={tab.path}
           data-tab-active={active ? 'true' : undefined}
-          className="relative"
+          // This wrapper (not the inner pill div) is the actual flex item in
+          // the strip, so the shrink-to-fit width policy lives here: no
+          // explicit width means the browser sizes it to its content (never
+          // stretching past what the title needs just because room is
+          // available), `shrink`/`grow-0` let flexbox squeeze tabs down
+          // together as more open, and min/max clamp the result to a
+          // readable 100-300px band.
+          className="relative min-w-[100px] max-w-[300px] shrink grow-0"
           draggable={!isVirtual}
           onDragStart={(e) => {
             if (isVirtual) {
@@ -2854,8 +2864,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
             className={[
               // Flat, full-height segmented tabs (VS Code-style): right-border
               // separators, no rounded tops; the active tab is filled. (#185)
-              'group relative flex h-full min-h-8 min-w-0 items-center gap-1.5 border-r border-paper-300/60 px-[var(--z-tab-pad-x)] text-sm transition-colors',
-              tab.pinned ? 'max-w-[140px]' : 'max-w-[220px]',
+              // Fills the wrapper's resolved width exactly (plain block child,
+              // no sizing of its own) — the wrapper above owns min/max-width.
+              'group relative flex h-full min-w-0 items-center gap-1.5 border-r border-paper-300/60 px-[var(--z-tab-pad-x)] transition-colors',
               active && isActive
                 ? focusedPanel === 'tabs'
                   ? 'bg-paper-200 font-medium text-ink-900 ring-1 ring-inset ring-accent/60'
@@ -2912,6 +2923,10 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
                 <DocumentIcon width={13} height={13} className="shrink-0 text-accent" />
               )}
               <span className={['min-w-0 flex-1 truncate', tab.preview ? 'italic' : ''].join(' ')}>
+                {index < 9 && (
+                  <span className="zen-tab-index">{index + 1}</span>
+                )}
+                {index < 9 ? ' ' : ''}
                 {tab.title}
               </span>
             </button>
@@ -2920,12 +2935,15 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
               aria-label={`Close ${tab.title}`}
               onClick={() => void closeTabInPane(paneId, tab.path)}
               className={[
-                // The active tab keeps its close affordance; inactive tabs
-                // reveal it on hover/focus (VS Code convention). (#185)
-                'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm transition',
-                active
-                  ? 'text-ink-500 hover:bg-paper-200 hover:text-ink-900'
-                  : 'opacity-0 hover:bg-paper-300/70 group-hover:opacity-100 focus-visible:opacity-100'
+                // Absolutely positioned (against the "group" pill above) instead
+                // of a normal flex sibling: an invisible flex sibling still
+                // reserves its box, permanently stealing width from the title on
+                // every tab regardless of hover state. Overlaying it removes it
+                // from layout entirely when hidden, so the label can use the
+                // tab's full width; on reveal it simply floats on top of the
+                // title's right edge. Hover/focus-revealed only — including for
+                // the active tab, which no longer keeps it permanently visible.
+                'absolute right-1 top-1/2 -translate-y-1/2 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm bg-paper-200/95 text-ink-500 opacity-0 transition hover:bg-paper-300 hover:text-ink-900 group-hover:opacity-100 focus-visible:opacity-100'
               ].join(' ')}
             >
               <CloseIcon width={12} height={12} />
@@ -3101,8 +3119,11 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   }, [activeTab, hasTabs, wrapTabs, tabStripMeasureKey])
 
   // Outer header holds the back/forward nav buttons + the (flex-1) tab strip.
+  // `text-xs` here is the single source of truth for the strip's 12px type
+  // size — both this row and `tabStripClass` below size themselves off it via
+  // `--z-tab-height`'s `em` unit, so the two stay in lockstep automatically.
   const tabStripHeaderClass = [
-    'glass-header flex shrink-0 items-stretch border-b border-paper-300/70 pl-1',
+    'glass-header flex shrink-0 items-stretch border-b border-paper-300/70 pl-1 text-xs',
     wrapTabs ? 'min-h-[var(--z-tab-height)]' : 'h-[var(--z-tab-height)]'
   ].join(' ')
   const tabStripClass = [
@@ -3339,8 +3360,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
                 title="Show sidebar (⌘1)"
                 onClick={toggleSidebar}
                 tooltipAlign="left"
+                compact
               >
-                <PanelLeftIcon width={16} height={16} />
+                <PanelLeftIcon width={14} height={14} />
               </IconBtn>
             )}
             <IconBtn
@@ -3351,8 +3373,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
               onClick={() => void jumpToPreviousNote()}
               disabled={!canGoBack}
               tooltipAlign="left"
+              compact
             >
-              <ArrowLeftIcon width={16} height={16} />
+              <ArrowLeftIcon width={14} height={14} />
             </IconBtn>
             <IconBtn
               title={`Go forward (${getKeymapDisplay(
@@ -3362,8 +3385,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
               onClick={() => void jumpToNextNote()}
               disabled={!canGoForward}
               tooltipAlign="left"
+              compact
             >
-              <ArrowRightIcon width={16} height={16} />
+              <ArrowRightIcon width={14} height={14} />
             </IconBtn>
           </div>
           <div
@@ -3387,7 +3411,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
                     className="mx-0.5 h-5 shrink-0 self-center border-l border-paper-300/70"
                   />
                 )}
-                {renderTab(tab)}
+                {renderTab(tab, i)}
               </Fragment>
             )
           })}
@@ -3396,8 +3420,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
             <IconBtn
               title={pinnedRefVisible ? 'Hide right pane' : 'Show right pane'}
               onClick={togglePinnedRefVisible}
+              compact
             >
-              <PanelRightIcon width={16} height={16} />
+              <PanelRightIcon width={14} height={14} />
             </IconBtn>
           </div>
         </div>
@@ -4092,7 +4117,8 @@ function IconBtn({
   title,
   active = false,
   disabled = false,
-  tooltipAlign = 'center'
+  tooltipAlign = 'center',
+  compact = false
 }: {
   children: JSX.Element
   onClick: () => void
@@ -4102,6 +4128,9 @@ function IconBtn({
   /** 'left' anchors the tooltip to the button's left edge so it never spills
    *  off the left of the window (used by the leftmost toolbar buttons). */
   tooltipAlign?: 'center' | 'left'
+  /** Shrinks the button to fit the tab strip's 24px row (`--z-tab-height`).
+   *  Leaves the default 28px size for other headers with more headroom. */
+  compact?: boolean
 }): JSX.Element {
   return (
     <button
@@ -4111,7 +4140,8 @@ function IconBtn({
       aria-label={title}
       aria-pressed={active}
       className={[
-        'group relative flex h-7 w-7 items-center justify-center rounded-md transition-colors',
+        'group relative flex items-center justify-center rounded-md transition-colors',
+        compact ? 'h-6 w-6' : 'h-7 w-7',
         disabled
           ? 'cursor-default text-ink-500/40'
           : active
