@@ -4698,10 +4698,63 @@ textarea,
   min-width: 3.2em;
   text-align: center;
 }
+.zen-pdf-btn:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+.zen-pdf-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 2px;
+  background-color: rgb(0 0 0 / 0.1);
+}
+.zen-pdf-input {
+  width: 3em;
+  padding: 2px 4px;
+  border-radius: 5px;
+  border: 1px solid rgb(0 0 0 / 0.14);
+  background-color: rgb(255 255 255 / 0.55);
+  color: inherit;
+  text-align: center;
+}
+.zen-pdf-input:focus {
+  outline: none;
+  border-color: rgb(0 0 0 / 0.3);
+}
+.zen-pdf-select {
+  padding: 2px 4px;
+  border-radius: 5px;
+  border: 1px solid rgb(0 0 0 / 0.14);
+  background-color: rgb(255 255 255 / 0.55);
+  color: inherit;
+  cursor: pointer;
+}
+.zen-pdf-select:focus {
+  outline: none;
+  border-color: rgb(0 0 0 / 0.3);
+}
+.zen-pdf-findbar {
+  backdrop-filter: blur(6px);
+}
+.zen-pdf-find-input {
+  width: 16em;
+  text-align: left;
+}
+.zen-pdf-find-count {
+  min-width: 5em;
+}
 
 .zen-pdf-container {
   padding: 20px 0 48px;
+  /* Theme-aware "desk" behind the pages, so white pages sit on a soft grey
+   * instead of a harsh white expanse. `--z-bg-3` tracks the active ZenNotes
+   * theme (and system light/dark via apple-light/apple-dark), so it stays
+   * right when the theme changes. */
+  background-color: rgb(var(--z-bg-3));
 }
+/* Reading Dark/Invert darkens the page itself, so the desk goes deliberately
+ * dark to match, independent of the app theme (it pairs with the hardcoded
+ * dark page colours / the invert filter). */
 .zen-pdf-scroll-dark {
   background-color: #17171a;
 }
