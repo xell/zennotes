@@ -50,7 +50,12 @@ import { ARCHIVE_TAB_PATH, isArchiveTabPath } from '@shared/archive'
 import { TRASH_TAB_PATH, isTrashTabPath } from '@shared/trash'
 import { ASSETS_VIEW_TAB_PATH, isAssetsViewTabPath } from '@shared/assets-view'
 import { QUICK_NOTES_TAB_PATH, isQuickNotesTabPath } from '@shared/quick-notes'
-import { isAssetTabPath, assetPathFromTab, assetTabPath } from './lib/asset-tabs'
+import {
+  isAssetTabPath,
+  assetPathFromTab,
+  assetTabPath,
+  withAssetTabRewrite
+} from './lib/asset-tabs'
 import { invalidateExcalidrawPreview } from './lib/excalidraw-preview'
 import {
   FENCE_RE,
@@ -5224,6 +5229,18 @@ export const useStore = create<Store>((set, get) => {
       set({ pinnedRefPath: renamed.path })
     }
 
+    // Repoint any open asset tab (PDF viewer, etc.) at the renamed file — it
+    // otherwise keeps the stale path and fails to fetch.
+    set((s) => {
+      const rewrite = (p: string): string =>
+        assetPathFromTab(p) === assetPath ? assetTabPath(renamed.path) : p
+      const nextLayout = rewritePathsInTree(s.paneLayout, rewrite)
+      return {
+        paneLayout: nextLayout,
+        ...activeFieldsFrom(nextLayout, s.activePaneId, s.noteContents, s.noteDirty)
+      }
+    })
+
     for (const [notePath, hrefs] of referenceHrefsByNote) {
       try {
         const content = await window.zen.readNote(notePath)
@@ -5260,6 +5277,17 @@ export const useStore = create<Store>((set, get) => {
     if (get().pinnedRefKind === 'asset' && get().pinnedRefPath === assetPath) {
       set({ pinnedRefPath: moved.path })
     }
+
+    // Repoint any open asset tab (PDF viewer, etc.) at the moved file.
+    set((s) => {
+      const rewrite = (p: string): string =>
+        assetPathFromTab(p) === assetPath ? assetTabPath(moved.path) : p
+      const nextLayout = rewritePathsInTree(s.paneLayout, rewrite)
+      return {
+        paneLayout: nextLayout,
+        ...activeFieldsFrom(nextLayout, s.activePaneId, s.noteContents, s.noteDirty)
+      }
+    })
 
     for (const [notePath, hrefs] of referenceHrefsByNote) {
       try {
@@ -7720,8 +7748,15 @@ export const useStore = create<Store>((set, get) => {
   renameFolder: async (folder, oldSubpath, newSubpath) => {
     await window.zen.renameFolder(folder, oldSubpath, newSubpath)
 
-    const oldPrefix = `${folder}/${oldSubpath}/`
-    const newPrefix = `${folder}/${newSubpath}/`
+    // The prefix must be the REAL vault-relative folder path. For the primary
+    // "inbox" folder mapped to the vault root, that path has no `inbox/`
+    // prefix, so building `${folder}/${subpath}/` would miss every path under
+    // it — notes and asset tabs alike (the reported PDF "Failed to fetch" on
+    // folder rename). `vaultRelativeFolderPath` handles the root-mapped case.
+    const oldFolderPath = vaultRelativeFolderPath(folder, oldSubpath, get().vaultSettings)
+    const newFolderPath = vaultRelativeFolderPath(folder, newSubpath, get().vaultSettings)
+    const oldPrefix = `${oldFolderPath}/`
+    const newPrefix = `${newFolderPath}/`
     const rewritePath = (p: string): string =>
       p.startsWith(oldPrefix) ? newPrefix + p.slice(oldPrefix.length) : p
 
@@ -7752,8 +7787,6 @@ export const useStore = create<Store>((set, get) => {
     // subtree (keys and listed paths) from the old prefix to the new one. A
     // reparent (drag move) additionally drops it from the old parent's list; the
     // caller then positions it at the destination via placeItemManually.
-    const oldFolderPath = vaultRelativeFolderPath(folder, oldSubpath, get().vaultSettings)
-    const newFolderPath = vaultRelativeFolderPath(folder, newSubpath, get().vaultSettings)
     const nextManualOrder = remapManualOrderForMove(
       get().manualNoteOrder,
       oldFolderPath,
@@ -7761,7 +7794,10 @@ export const useStore = create<Store>((set, get) => {
       true
     )
     set((s) => {
-      const nextLayout = rewritePathsInTree(s.paneLayout, rewritePath)
+      // `withAssetTabRewrite` also repoints open asset tabs (`zen://asset/…`)
+      // under the renamed folder, so an open PDF viewer follows the move
+      // instead of failing to fetch the old path.
+      const nextLayout = rewritePathsInTree(s.paneLayout, withAssetTabRewrite(rewritePath))
       const ensured = ensureActivePane(nextLayout, s.activePaneId)
       const contents: Record<string, NoteContent> = {}
       const dirty: Record<string, boolean> = {}

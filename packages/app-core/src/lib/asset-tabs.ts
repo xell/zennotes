@@ -20,6 +20,25 @@ export function assetPathFromTab(path: string | null | undefined): string | null
   }
 }
 
+/**
+ * Adapt a raw vault-path rewrite (as used for note tabs on rename/move) so it
+ * also applies to encoded asset-tab paths (`zen://asset/<encoded>`). Asset
+ * tabs would otherwise be missed by a plain prefix rewrite, leaving an open
+ * PDF/asset viewer pointed at a path that no longer exists after its file or
+ * parent folder is renamed/moved. Pass the result to `rewritePathsInTree`.
+ */
+export function withAssetTabRewrite(rewriteRaw: (p: string) => string): (p: string) => string {
+  return (p: string): string => {
+    if (isAssetTabPath(p)) {
+      const assetPath = assetPathFromTab(p)
+      if (assetPath == null) return p
+      const next = rewriteRaw(assetPath)
+      return next === assetPath ? p : assetTabPath(next)
+    }
+    return rewriteRaw(p)
+  }
+}
+
 export function assetTitleFromPath(path: string | null | undefined): string {
   if (!path) return 'Asset'
   const clean = path.split('#')[0]?.split('?')[0] ?? path
