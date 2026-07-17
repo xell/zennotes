@@ -395,6 +395,31 @@ function normalizePanelWidths(value: unknown): PanelWidths {
   }
 }
 
+/** Default zoom the PDF viewer opens each document at. Values map directly to
+ *  PDF.js `currentScaleValue` presets. */
+export type PdfDefaultZoom = 'page-width' | 'page-fit' | 'page-actual' | 'auto'
+
+/** How the pinch-zoom "fit detents" (Fit Width / Fit Page) resist being left. */
+export interface PdfPinchTuning {
+  /** Percent of accumulated zoom within one pinch needed to break out of a
+   *  fit detent. Higher = stickier (a firmer pinch is required to leave). */
+  stickiness: number
+  /** Milliseconds of pause that resets the break-out accumulation, so separate
+   *  small pinches don't add up to escape a fit — only one continuous pinch. */
+  resetMs: number
+}
+
+/** Validate + hard-clamp pinch tuning from the (user-editable) config. */
+function normalizePdfPinchTuning(value: unknown): PdfPinchTuning {
+  const o = value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+  const num = (x: unknown, def: number, lo: number, hi: number): number =>
+    typeof x === 'number' && Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : def
+  return {
+    stickiness: num(o.stickiness, 15, 5, 40),
+    resetMs: num(o.resetMs, 160, 60, 500)
+  }
+}
+
 interface Prefs {
   vimMode: boolean
   /** Key sequence that exits insert mode (maps to <Esc>), e.g. "jk".
@@ -518,6 +543,10 @@ interface Prefs {
    *  default (the same card the reference pane uses); set to 'full'
    *  to get an inline iframe of the PDF inside the editor. */
   pdfEmbedInEditMode: 'compact' | 'full'
+  /** Zoom mode the PDF viewer opens each document at (Fit Width by default). */
+  pdfDefaultZoom: PdfDefaultZoom
+  /** Pinch-zoom fit-detent feel (break-out stickiness + gesture reset). */
+  pdfPinchTuning: PdfPinchTuning
   /** What the pinned reference points at — a markdown note (loaded
    *  into the editor) or a non-text asset like a PDF (loaded into an
    *  iframe). Defaults to 'note'. */
@@ -789,6 +818,8 @@ export const DEFAULT_PREFS: Prefs = {
   previewSmoothScroll: true,
   editorMaxWidth: 920,
   pdfEmbedInEditMode: 'compact',
+  pdfDefaultZoom: 'page-width',
+  pdfPinchTuning: { stickiness: 15, resetMs: 160 },
   pinnedRefKind: 'note',
   noteRefs: {},
   contentAlign: 'center',
@@ -1027,6 +1058,14 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
       p.pdfEmbedInEditMode === 'full' || p.pdfEmbedInEditMode === 'compact'
         ? p.pdfEmbedInEditMode
         : DEFAULT_PREFS.pdfEmbedInEditMode,
+    pdfDefaultZoom:
+      p.pdfDefaultZoom === 'page-width' ||
+      p.pdfDefaultZoom === 'page-fit' ||
+      p.pdfDefaultZoom === 'page-actual' ||
+      p.pdfDefaultZoom === 'auto'
+        ? p.pdfDefaultZoom
+        : DEFAULT_PREFS.pdfDefaultZoom,
+    pdfPinchTuning: normalizePdfPinchTuning(p.pdfPinchTuning),
     pinnedRefKind:
       p.pinnedRefKind === 'asset' || p.pinnedRefKind === 'note'
         ? p.pinnedRefKind
@@ -1839,6 +1878,8 @@ function collectPrefs(s: {
   previewSmoothScroll: boolean
   editorMaxWidth: number
   pdfEmbedInEditMode: 'compact' | 'full'
+  pdfDefaultZoom: PdfDefaultZoom
+  pdfPinchTuning: PdfPinchTuning
   pinnedRefKind: 'note' | 'asset'
   noteRefs: Record<string, { path: string; kind: 'note' | 'asset' }>
   contentAlign: 'center' | 'left'
@@ -1919,6 +1960,8 @@ function collectPrefs(s: {
     previewSmoothScroll: s.previewSmoothScroll,
     editorMaxWidth: s.editorMaxWidth,
     pdfEmbedInEditMode: s.pdfEmbedInEditMode,
+    pdfDefaultZoom: s.pdfDefaultZoom,
+    pdfPinchTuning: s.pdfPinchTuning,
     pinnedRefKind: s.pinnedRefKind,
     noteRefs: s.noteRefs,
     contentAlign: s.contentAlign,
@@ -2408,6 +2451,12 @@ interface Store {
    *  inlines the actual PDF iframe. Preview mode always shows the full
    *  iframe unless the PDF is the pinned reference. */
   pdfEmbedInEditMode: 'compact' | 'full'
+
+  /** Zoom mode the PDF viewer opens each document at. */
+  pdfDefaultZoom: PdfDefaultZoom
+
+  /** Pinch-zoom fit-detent feel (break-out stickiness + gesture reset gap). */
+  pdfPinchTuning: PdfPinchTuning
 
   /** Whether the pinned reference is a markdown note (default) or
    *  some other asset (PDF, audio, etc.) shown via iframe. */
@@ -2937,6 +2986,8 @@ interface Store {
   setPreviewSmoothScroll: (on: boolean) => void
   setEditorMaxWidth: (px: number) => void
   setPdfEmbedInEditMode: (mode: 'compact' | 'full') => void
+  setPdfDefaultZoom: (mode: PdfDefaultZoom) => void
+  setPdfPinchTuning: (patch: Partial<PdfPinchTuning>) => void
   setContentAlign: (align: 'center' | 'left') => void
   setTagsCollapsed: (collapsed: boolean) => void
   setAutoCalendarPanel: (enabled: boolean) => void
@@ -4088,6 +4139,8 @@ export const useStore = create<Store>((set, get) => {
   previewSmoothScroll: loadPrefs().previewSmoothScroll,
   editorMaxWidth: loadPrefs().editorMaxWidth,
   pdfEmbedInEditMode: loadPrefs().pdfEmbedInEditMode,
+  pdfDefaultZoom: loadPrefs().pdfDefaultZoom,
+  pdfPinchTuning: loadPrefs().pdfPinchTuning,
   pinnedRefKind: loadPrefs().pinnedRefKind,
   noteRefs: loadPrefs().noteRefs,
   contentAlign: loadPrefs().contentAlign,
@@ -7025,6 +7078,16 @@ export const useStore = create<Store>((set, get) => {
 
   setPdfEmbedInEditMode: (mode) => {
     set({ pdfEmbedInEditMode: mode })
+    savePrefs(collectPrefs(get()))
+  },
+
+  setPdfDefaultZoom: (mode) => {
+    set({ pdfDefaultZoom: mode })
+    savePrefs(collectPrefs(get()))
+  },
+
+  setPdfPinchTuning: (patch) => {
+    set((s) => ({ pdfPinchTuning: normalizePdfPinchTuning({ ...s.pdfPinchTuning, ...patch }) }))
     savePrefs(collectPrefs(get()))
   },
 

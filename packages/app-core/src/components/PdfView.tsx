@@ -21,6 +21,7 @@ import 'pdfjs-dist/web/pdf_viewer.css'
 // the `*?url` module declaration.
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { registerPdfBuffer } from '../lib/pdf-buffers'
+import { useStore } from '../store'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
@@ -109,6 +110,37 @@ export function PdfView({
   // without making it a dependency.
   const viewModeRef = useRef<PdfViewMode>('continuous')
   viewModeRef.current = viewMode
+  // Synced ref so the resize observer can read the active zoom preset without
+  // re-binding.
+  const scaleSelectRef = useRef(scaleSelect)
+  scaleSelectRef.current = scaleSelect
+  // Cached numeric scales for the fit presets, so pinch-zoom can snap onto
+  // them as detents. Seeded at init and kept fresh from scalechanging.
+  const fitScalesRef = useRef<{ 'page-width': number | null; 'page-fit': number | null }>({
+    'page-width': null,
+    'page-fit': null
+  })
+  // Which fit the zoom is currently locked onto (null when freely zoomed).
+  // Kept in sync synchronously by onScaleChanging so the wheel handler never
+  // races React state.
+  const lockedFitRef = useRef<'page-width' | 'page-fit' | null>(null)
+  // Accumulated zoom factor within the current pinch gesture while locked, and
+  // the last wheel timestamp used to reset it between gestures.
+  const pinchAccumRef = useRef(1)
+  const lastWheelRef = useRef(0)
+
+  // The configured default zoom, read into a ref so a viewer rebuild (dark
+  // toggle) doesn't re-subscribe. A new document opens at this; on rebuild we
+  // restore the zoom the user had, tracked in restoreScaleRef.
+  const pdfDefaultZoom = useStore((s) => s.pdfDefaultZoom)
+  const defaultZoomRef = useRef(pdfDefaultZoom)
+  defaultZoomRef.current = pdfDefaultZoom
+  const restoreScaleRef = useRef<string | null>(null)
+  // User-tunable pinch break-out feel, read via ref so the wheel handler
+  // (bound once) always sees the latest values.
+  const pinchTuning = useStore((s) => s.pdfPinchTuning)
+  const pinchTuningRef = useRef(pinchTuning)
+  pinchTuningRef.current = pinchTuning
 
   const markDirty = useCallback((value: boolean) => {
     dirtyRef.current = value
@@ -145,6 +177,7 @@ export function PdfView({
           return
         }
         pdfDocRef.current = doc
+        restoreScaleRef.current = null // a new document opens at the default zoom
         savedSizeRef.current = doc.annotationStorage.size
         markDirty(false)
         setNumPages(doc.numPages)
@@ -208,20 +241,40 @@ export function PdfView({
 
     const onPagesInit = (): void => {
       applyViewMode(viewer, viewModeRef.current)
+      // Pre-seed both fit scales (the intermediate set updates currentScale
+      // synchronously without an extra paint) so pinch detents work from the
+      // first gesture, then land on Fit Width as the default.
+      viewer.currentScaleValue = 'page-fit'
+      fitScalesRef.current['page-fit'] = viewer.currentScale
       viewer.currentScaleValue = 'page-width'
+      fitScalesRef.current['page-width'] = viewer.currentScale
+      // First open uses the configured default zoom; a rebuild (dark toggle)
+      // restores whatever zoom the user was at.
+      viewer.currentScaleValue = restoreScaleRef.current ?? defaultZoomRef.current
       container.scrollTop = prevTop
       container.scrollLeft = prevLeft
       setStatus('ready')
     }
     const onScaleChanging = (evt: { scale?: number; presetValue?: string }): void => {
-      setScalePct(Math.round((viewer.currentScale || 1) * 100))
-      if (evt.presetValue && FIT_PRESETS.has(evt.presetValue)) {
-        setScaleSelect(evt.presetValue)
+      const scale = viewer.currentScale || 1
+      setScalePct(Math.round(scale * 100))
+      const preset = evt.presetValue
+      if (preset && FIT_PRESETS.has(preset)) {
+        setScaleSelect(preset)
         setCustomScale(false)
+        if (preset === 'page-width' || preset === 'page-fit') {
+          fitScalesRef.current[preset] = scale
+          lockedFitRef.current = preset
+        } else {
+          lockedFitRef.current = null
+        }
       } else {
         setCustomScale(true)
         setScaleSelect('custom')
+        lockedFitRef.current = null
       }
+      // Remember the current zoom so a viewer rebuild can restore it.
+      restoreScaleRef.current = preset && FIT_PRESETS.has(preset) ? preset : String(scale)
     }
     const onPageChanging = (evt: { pageNumber: number }): void => {
       setCurrentPage(evt.pageNumber)
@@ -281,6 +334,87 @@ export function PdfView({
       console.error('PdfView: failed to set annotation editor mode', err)
     }
   }, [highlightOn, status])
+
+  // Fit modes (Fit Width / Fit Page / Automatic) depend on the pane size, so
+  // recompute them whenever the container resizes (window resize AND split-
+  // pane drags, which a window listener would miss).
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    let raf = 0
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        const v = viewerRef.current
+        const sel = scaleSelectRef.current
+        if (v && FIT_PRESETS.has(sel)) {
+          try {
+            v.currentScaleValue = sel
+          } catch {
+            /* viewer not ready */
+          }
+        }
+      })
+    })
+    observer.observe(container)
+    return () => {
+      cancelAnimationFrame(raf)
+      observer.disconnect()
+    }
+  }, [])
+
+  // Trackpad pinch-zoom arrives as ctrl+wheel. PDF.js's component layer does
+  // not handle it (that lives in the full viewer app), so wire it here: smooth
+  // continuous zoom, with soft detents that snap onto the Fit Width / Fit Page
+  // scales as you pass through them (and stay resize-responsive once snapped).
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const onWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey) return // plain wheel = scroll; ctrl/pinch = zoom
+      e.preventDefault()
+      const v = viewerRef.current
+      if (!v) return
+      const now = performance.now()
+      const gap = now - lastWheelRef.current
+      lastWheelRef.current = now
+      const factor = Math.min(2, Math.max(0.5, Math.exp(-e.deltaY * 0.01)))
+
+      // Locked on a fit: hold it against small pinches. Only when the zoom
+      // accumulated within one continuous gesture (no >160ms pause) grows past
+      // ~15% does it break free — so a firm pinch escapes, a gentle one sticks.
+      if (lockedFitRef.current) {
+        const tuning = pinchTuningRef.current
+        if (gap > tuning.resetMs) pinchAccumRef.current = 1 // new gesture — reset
+        pinchAccumRef.current *= factor
+        const acc = pinchAccumRef.current
+        const band = tuning.stickiness / 100 // e.g. 15% → hold within [0.85, 1.15]
+        if (acc > 1 - band && acc < 1 + band) return // stuck to the fit
+        pinchAccumRef.current = 1
+        lockedFitRef.current = null
+        v.currentScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.currentScale * acc))
+        return
+      }
+
+      // Free zoom, snapping onto a fit when we pass within ~2.5% of it.
+      pinchAccumRef.current = 1
+      const target = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.currentScale * factor))
+      for (const preset of ['page-width', 'page-fit'] as const) {
+        const s = fitScalesRef.current[preset]
+        if (s != null && Math.abs(target - s) / s < 0.025) {
+          try {
+            v.currentScaleValue = preset
+          } catch {
+            /* ignore */
+          }
+          return
+        }
+      }
+      v.currentScale = target
+    }
+    container.addEventListener('wheel', onWheel, { passive: false })
+    return () => container.removeEventListener('wheel', onWheel)
+  }, [])
 
   // --- Page navigation -----------------------------------------------------
   const goToPage = useCallback(

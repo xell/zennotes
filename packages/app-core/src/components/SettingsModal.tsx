@@ -486,6 +486,10 @@ export function SettingsModal(): JSX.Element {
   const setEditorMaxWidth = useStore((s) => s.setEditorMaxWidth);
   const pdfEmbedInEditMode = useStore((s) => s.pdfEmbedInEditMode);
   const setPdfEmbedInEditMode = useStore((s) => s.setPdfEmbedInEditMode);
+  const pdfDefaultZoom = useStore((s) => s.pdfDefaultZoom);
+  const setPdfDefaultZoom = useStore((s) => s.setPdfDefaultZoom);
+  const pdfPinchTuning = useStore((s) => s.pdfPinchTuning);
+  const setPdfPinchTuning = useStore((s) => s.setPdfPinchTuning);
   const contentAlign = useStore((s) => s.contentAlign);
   const setContentAlign = useStore((s) => s.setContentAlign);
   const vault = useStore((s) => s.vault);
@@ -2305,6 +2309,60 @@ export function SettingsModal(): JSX.Element {
                   value={diffInlineDiffs}
                   settingId="diff-inline-diffs"
                   onChange={setDiffInlineDiffs}
+                />
+              </Section>
+            </div>
+          ),
+        },
+        {
+          id: "pdf-viewer",
+          title: "PDF viewer",
+          searchIds: ["pdf-default-zoom", "pdf-pinch-stickiness", "pdf-pinch-gap"],
+          content: (
+            <div className="space-y-6">
+              <Section
+                title="PDF viewer"
+                description="How PDFs open and behave in the built-in viewer."
+              >
+                <SegmentedRow
+                  label="Default zoom"
+                  description="Zoom each PDF opens at. Fit Width fits the page to the pane width, Fit Page shows the whole page, 100% is actual size, and Automatic lets the viewer choose."
+                  value={pdfDefaultZoom}
+                  settingId="pdf-default-zoom"
+                  options={[
+                    { value: "page-width", label: "Fit Width" },
+                    { value: "page-fit", label: "Fit Page" },
+                    { value: "page-actual", label: "100%" },
+                    { value: "auto", label: "Automatic" },
+                  ]}
+                  onChange={(next) => setPdfDefaultZoom(next)}
+                />
+              </Section>
+              <Section
+                title="Pinch zoom"
+                description="Trackpad pinch-zoom catches at Fit Width and Fit Page like detents, so a small pinch won't accidentally knock you off a fit. These control how firmly it holds. Raise stickiness if it slips off too easily; lower it if the fits feel too hard to leave."
+              >
+                <SliderRow
+                  label="Fit stickiness"
+                  description="How much a single pinch must zoom before it breaks out of a Fit Width / Fit Page detent. Higher sticks harder (needs a bigger pinch to leave); lower lets you slip off with a gentle pinch."
+                  value={pdfPinchTuning.stickiness}
+                  min={5}
+                  max={40}
+                  step={1}
+                  unit="%"
+                  settingId="pdf-pinch-stickiness"
+                  onChange={(v) => setPdfPinchTuning({ stickiness: v })}
+                />
+                <SliderRow
+                  label="Gesture gap"
+                  description="A pause longer than this starts a fresh pinch, resetting the break-out progress. So only one continuous pinch counts toward leaving a fit — repeated tiny pinches with pauses won't slowly add up and escape."
+                  value={pdfPinchTuning.resetMs}
+                  min={60}
+                  max={500}
+                  step={10}
+                  unit=" ms"
+                  settingId="pdf-pinch-gap"
+                  onChange={(v) => setPdfPinchTuning({ resetMs: v })}
                 />
               </Section>
             </div>

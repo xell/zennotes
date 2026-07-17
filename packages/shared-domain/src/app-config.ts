@@ -78,6 +78,8 @@ export const PORTABLE_PREF_KEYS = [
   'previewSmoothScroll',
   'pdfEmbedInEditMode',
   'pdfExportUseTheme',
+  'pdfDefaultZoom',
+  'pdfPinchTuning',
   // appearance
   'themeId',
   'themeFamily',
@@ -187,6 +189,8 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   previewSmoothScroll: true,
   pdfEmbedInEditMode: 'compact',
   pdfExportUseTheme: false,
+  pdfDefaultZoom: 'page-width',
+  pdfPinchTuning: { stickiness: 15, resetMs: 160 },
   themeId: 'dark-hard',
   themeFamily: 'gruvbox',
   themeMode: 'dark',
