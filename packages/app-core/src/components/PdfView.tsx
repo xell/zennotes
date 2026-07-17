@@ -1,72 +1,61 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as pdfjs from 'pdfjs-dist'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
-// Vite `?url` import — the worker ships as a separate ESM file that PDF.js
-// runs off the main thread. Without it PDF.js falls back to a slow,
-// deprecated fake-worker on the main thread. `vite/client` (in app-core's
-// tsconfig `types`) provides the `*?url` module declaration.
+// The prebuilt viewer components wire canvas + text layer + annotation
+// editor layer together through an EventBus and UI manager. We use them
+// (rather than rendering pages by hand) specifically because the highlight
+// tool lives in the AnnotationEditorLayer, which the manager owns. See
+// data/pdf.md.
+import { EventBus, PDFLinkService, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs'
+import 'pdfjs-dist/web/pdf_viewer.css'
+// Vite `?url` import — the worker ships as a separate ESM file PDF.js runs
+// off the main thread. `vite/client` (app-core tsconfig `types`) provides
+// the `*?url` module declaration.
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
-// The three reading modes. `light` is the untouched page. `dark` uses
-// PDF.js's render-time `pageColors`, which recolours the default page
-// background and default (black) text during rasterisation while leaving
-// embedded raster images intact — the images-preserved dark mode that
-// motivated choosing PDF.js. `invert` is the coarse fallback: a CSS filter
-// over the whole page layer, which also negates images, offered for
-// documents whose colour cannot be themed by `pageColors` alone.
+// `light` is the untouched page. `dark` uses PDF.js's render-time
+// `pageColors`, which recolours the default page background and default
+// (black) text during rasterisation while leaving embedded raster images
+// intact. `invert` is the coarse CSS-filter fallback (also negates images),
+// for documents whose colour cannot be themed by `pageColors` alone.
 export type PdfReadingMode = 'light' | 'dark' | 'invert'
 
-// Sourced to feel close to the app's own dark chrome. A later pass can read
-// these from live CSS variables so the PDF background tracks the theme.
 const DARK_PAGE_COLORS = { background: '#1f1f22', foreground: '#d6d3cc' } as const
-
 const MIN_SCALE = 0.4
 const MAX_SCALE = 4
-const SCALE_STEP = 0.2
-const DEFAULT_SCALE = 1.2
 
-interface RenderedPage {
-  pageNumber: number
-  wrapper: HTMLDivElement
-  canvas: HTMLCanvasElement
-  textLayerDiv: HTMLDivElement
-}
-
-/**
- * A PDF.js backed viewer that replaces the plain Chromium iframe for `.pdf`
- * asset tabs. This first iteration delivers reading: page rendering, a
- * selectable text layer, zoom, and the three reading modes. Highlight
- * authoring (AnnotationEditorLayer) and sidecar persistence land in a
- * follow-up — see data/pdf.md.
- */
 export function PdfView({ assetUrl, title }: { assetUrl: string; title: string }): JSX.Element {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const pagesRef = useRef<HTMLDivElement>(null)
-  const docRef = useRef<PDFDocumentProxy | null>(null)
-  // Guards against overlapping render passes (mode/zoom changed mid-render)
-  // and against a render landing after the component unmounts.
-  const renderTokenRef = useRef(0)
+  // The scrollable, absolutely-positioned host PDFViewer requires.
+  const containerRef = useRef<HTMLDivElement>(null)
+  // The inner `.pdfViewer` element the pages mount into.
+  const viewerElRef = useRef<HTMLDivElement>(null)
+  const viewerRef = useRef<PDFViewer | null>(null)
 
+  const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null)
   const [mode, setMode] = useState<PdfReadingMode>('light')
-  const [scale, setScale] = useState(DEFAULT_SCALE)
+  const [highlightOn, setHighlightOn] = useState(false)
   const [numPages, setNumPages] = useState(0)
+  const [scalePct, setScalePct] = useState(100)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   const pageColors = mode === 'dark' ? DARK_PAGE_COLORS : undefined
+  // `dark` renders differently (pageColors), so the viewer is rebuilt when
+  // toggling into/out of dark. `invert` is pure CSS, so it shares the light
+  // build — this key drives the rebuild effect below.
+  const buildKey = mode === 'dark' ? 'dark' : 'light'
 
-  // Load (or reload) the document whenever the source URL changes.
+  // Fetch bytes and open the document. The custom `zen-asset://` protocol
+  // may not honour range requests, so we hand PDF.js the whole buffer.
   useEffect(() => {
     let cancelled = false
     setStatus('loading')
     setErrorMessage(null)
+    setPdfDoc(null)
 
-    // The custom `zen-asset://` protocol may not honour HTTP range
-    // requests, so fetch the whole file and hand PDF.js the bytes rather
-    // than a URL it would try to range-stream.
-    const load = async (): Promise<void> => {
+    void (async () => {
       try {
         const response = await fetch(assetUrl)
         if (!response.ok) throw new Error(`Failed to load PDF (${response.status})`)
@@ -77,98 +66,143 @@ export function PdfView({ assetUrl, title }: { assetUrl: string; title: string }
           void doc.destroy()
           return
         }
-        docRef.current = doc
         setNumPages(doc.numPages)
-        setStatus('ready')
+        setPdfDoc(doc)
       } catch (err) {
         if (cancelled) return
         console.error('PdfView: failed to load document', err)
         setErrorMessage(err instanceof Error ? err.message : 'Could not open this PDF.')
         setStatus('error')
       }
-    }
-    void load()
+    })()
 
     return () => {
       cancelled = true
-      const doc = docRef.current
-      docRef.current = null
-      if (doc) void doc.destroy()
     }
   }, [assetUrl])
 
-  // Render every page into the pages container. Re-runs on document load and
-  // whenever scale or reading mode changes (dark mode is a render-time
-  // property, so it needs a re-raster, not just a CSS toggle).
-  const renderAllPages = useCallback(async (): Promise<void> => {
-    const doc = docRef.current
-    const container = pagesRef.current
-    if (!doc || !container) return
-
-    const token = ++renderTokenRef.current
-    const dpr = Math.min(window.devicePixelRatio || 1, 3)
-    // Clear any previously rendered pages.
-    container.replaceChildren()
-
-    for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber++) {
-      if (token !== renderTokenRef.current) return
-      let page
-      try {
-        page = await doc.getPage(pageNumber)
-      } catch (err) {
-        console.error(`PdfView: getPage(${pageNumber}) failed`, err)
-        continue
-      }
-      if (token !== renderTokenRef.current) return
-
-      const viewport = page.getViewport({ scale })
-      const rendered = buildPageShell(pageNumber, viewport.width, viewport.height, scale)
-      container.append(rendered.wrapper)
-
-      const canvas = rendered.canvas
-      canvas.width = Math.floor(viewport.width * dpr)
-      canvas.height = Math.floor(viewport.height * dpr)
-      const ctx = canvas.getContext('2d')
-      if (!ctx) continue
-
-      try {
-        await page.render({
-          canvasContext: ctx,
-          viewport,
-          transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
-          ...(pageColors ? { pageColors } : {})
-        }).promise
-      } catch (err) {
-        console.error(`PdfView: render page ${pageNumber} failed`, err)
-        continue
-      }
-      if (token !== renderTokenRef.current) return
-
-      // Selectable text layer. Wrapped defensively: a text-layer failure
-      // must not blank the (already painted) page canvas.
-      try {
-        const textContent = await page.getTextContent()
-        if (token !== renderTokenRef.current) return
-        const textLayer = new pdfjs.TextLayer({
-          textContentSource: textContent,
-          container: rendered.textLayerDiv,
-          viewport
-        })
-        await textLayer.render()
-      } catch (err) {
-        console.error(`PdfView: text layer page ${pageNumber} failed`, err)
-      }
-    }
-  }, [scale, pageColors])
-
+  // Destroy the document when it is replaced or the view unmounts.
   useEffect(() => {
-    if (status !== 'ready') return
-    void renderAllPages()
-  }, [status, renderAllPages])
+    return () => {
+      if (pdfDoc) void pdfDoc.destroy()
+    }
+  }, [pdfDoc])
 
-  const zoomIn = useCallback(() => setScale((s) => Math.min(MAX_SCALE, +(s + SCALE_STEP).toFixed(2))), [])
-  const zoomOut = useCallback(() => setScale((s) => Math.max(MIN_SCALE, +(s - SCALE_STEP).toFixed(2))), [])
-  const zoomReset = useCallback(() => setScale(DEFAULT_SCALE), [])
+  // Build (or rebuild) the PDFViewer for the current document and dark-ness.
+  useEffect(() => {
+    const container = containerRef.current
+    const viewerEl = viewerElRef.current
+    if (!pdfDoc || !container || !viewerEl) return
+
+    // Preserve scroll across a dark-toggle rebuild.
+    const prevTop = container.scrollTop
+    const prevLeft = container.scrollLeft
+
+    const eventBus = new EventBus()
+    const linkService = new PDFLinkService({ eventBus })
+    let viewer: PDFViewer
+    try {
+      viewer = new PDFViewer({
+        container,
+        viewer: viewerEl,
+        eventBus,
+        linkService,
+        // NONE (not DISABLE) initialises the annotation editor infrastructure
+        // so the highlight tool can be switched on later.
+        annotationEditorMode: pdfjs.AnnotationEditorType.NONE,
+        ...(pageColors ? { pageColors } : {})
+      })
+    } catch (err) {
+      console.error('PdfView: PDFViewer construction failed', err)
+      setErrorMessage('Viewer failed to initialise.')
+      setStatus('error')
+      return
+    }
+    linkService.setViewer(viewer)
+    viewerRef.current = viewer
+
+    const onPagesInit = (): void => {
+      viewer.currentScaleValue = 'page-width'
+      container.scrollTop = prevTop
+      container.scrollLeft = prevLeft
+      setStatus('ready')
+      console.log('PdfView: pages initialised', { numPages: pdfDoc.numPages })
+    }
+    const onScaleChanging = (): void => {
+      setScalePct(Math.round((viewer.currentScale || 1) * 100))
+    }
+    eventBus.on('pagesinit', onPagesInit)
+    eventBus.on('scalechanging', onScaleChanging)
+
+    try {
+      viewer.setDocument(pdfDoc)
+      linkService.setDocument(pdfDoc, null)
+    } catch (err) {
+      console.error('PdfView: setDocument failed', err)
+      setErrorMessage('Failed to display this PDF.')
+      setStatus('error')
+    }
+
+    return () => {
+      eventBus.off('pagesinit', onPagesInit)
+      eventBus.off('scalechanging', onScaleChanging)
+      try {
+        viewer.setDocument(null as unknown as PDFDocumentProxy)
+      } catch {
+        /* viewer already torn down */
+      }
+      viewerRef.current = null
+    }
+  }, [pdfDoc, buildKey, pageColors])
+
+  // Toggle the highlight authoring tool on the live viewer.
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer || status !== 'ready') return
+    try {
+      viewer.annotationEditorMode = {
+        mode: highlightOn ? pdfjs.AnnotationEditorType.HIGHLIGHT : pdfjs.AnnotationEditorType.NONE
+      }
+    } catch (err) {
+      console.error('PdfView: failed to set annotation editor mode', err)
+    }
+  }, [highlightOn, status])
+
+  const zoomIn = useCallback(() => {
+    const v = viewerRef.current
+    if (v) v.currentScale = Math.min(MAX_SCALE, v.currentScale * 1.15)
+  }, [])
+  const zoomOut = useCallback(() => {
+    const v = viewerRef.current
+    if (v) v.currentScale = Math.max(MIN_SCALE, v.currentScale / 1.15)
+  }, [])
+  const zoomReset = useCallback(() => {
+    const v = viewerRef.current
+    if (v) v.currentScaleValue = 'page-width'
+  }, [])
+
+  // Export a portable annotated copy: saveDocument() writes the highlights
+  // back as standard /Highlight annotation objects. This is the acceptance
+  // test — the exported file should open with real highlights in Preview /
+  // PDF Expert. Persisting/reloading via a sidecar is the next phase.
+  const exportPdf = useCallback(async () => {
+    const doc = pdfDoc
+    if (!doc) return
+    try {
+      const bytes = await doc.saveDocument()
+      const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = title.toLowerCase().endsWith('.pdf') ? title : `${title}.pdf`
+      document.body.append(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 10_000)
+    } catch (err) {
+      console.error('PdfView: export failed', err)
+    }
+  }, [pdfDoc, title])
 
   const modeLabel = useMemo<Record<PdfReadingMode, string>>(
     () => ({ light: 'Light', dark: 'Dark', invert: 'Invert' }),
@@ -181,6 +215,20 @@ export function PdfView({ assetUrl, title }: { assetUrl: string; title: string }
         <span className="zen-pdf-pagecount tabular-nums text-ink-500">
           {numPages > 0 ? `${numPages} page${numPages === 1 ? '' : 's'}` : ''}
         </span>
+
+        <button
+          type="button"
+          className={`zen-pdf-btn ${highlightOn ? 'zen-pdf-btn-active' : ''}`}
+          aria-pressed={highlightOn}
+          onClick={() => setHighlightOn((v) => !v)}
+          title="Highlight text (select to highlight)"
+        >
+          Highlight
+        </button>
+        <button type="button" className="zen-pdf-btn" onClick={() => void exportPdf()} title="Export an annotated copy">
+          Export
+        </button>
+
         <div className="zen-pdf-zoom ml-auto flex items-center gap-1">
           <button type="button" className="zen-pdf-btn" onClick={zoomOut} title="Zoom out">
             −
@@ -189,14 +237,15 @@ export function PdfView({ assetUrl, title }: { assetUrl: string; title: string }
             type="button"
             className="zen-pdf-btn zen-pdf-zoom-level tabular-nums"
             onClick={zoomReset}
-            title="Reset zoom"
+            title="Fit width"
           >
-            {Math.round(scale * 100)}%
+            {scalePct}%
           </button>
           <button type="button" className="zen-pdf-btn" onClick={zoomIn} title="Zoom in">
             +
           </button>
         </div>
+
         <div className="zen-pdf-modes flex items-center gap-1">
           {(['light', 'dark', 'invert'] as const).map((m) => (
             <button
@@ -213,58 +262,28 @@ export function PdfView({ assetUrl, title }: { assetUrl: string; title: string }
         </div>
       </div>
 
-      <div
-        ref={scrollRef}
-        className={`zen-pdf-scroll min-h-0 min-w-0 flex-1 overflow-auto ${
-          mode === 'light' ? '' : 'zen-pdf-scroll-dark'
-        }`}
-      >
+      <div className="zen-pdf-viewport relative min-h-0 min-w-0 flex-1">
         {status === 'loading' && (
-          <div className="flex h-full items-center justify-center text-sm text-ink-400">
+          <div className="absolute inset-0 z-10 flex items-center justify-center text-sm text-ink-400">
             Loading {title}…
           </div>
         )}
         {status === 'error' && (
-          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-ink-400">
+          <div className="absolute inset-0 z-10 flex items-center justify-center px-6 text-center text-sm text-ink-400">
             {errorMessage ?? 'Could not open this PDF.'}
           </div>
         )}
+        {/* PDFViewer requires an absolutely-positioned, scrollable container
+            wrapping a `.pdfViewer` element. */}
         <div
-          ref={pagesRef}
-          className={`zen-pdf-pages ${mode === 'invert' ? 'zen-pdf-pages-invert' : ''}`}
-          style={{ visibility: status === 'ready' ? 'visible' : 'hidden' }}
-        />
+          ref={containerRef}
+          className={`zen-pdf-container absolute inset-0 overflow-auto ${
+            mode === 'light' ? '' : 'zen-pdf-scroll-dark'
+          }`}
+        >
+          <div ref={viewerElRef} className={`pdfViewer ${mode === 'invert' ? 'zen-pdf-invert' : ''}`} />
+        </div>
       </div>
     </div>
   )
-}
-
-/**
- * Build the per-page DOM: a positioned wrapper holding the canvas and, above
- * it, the transparent text layer. The `--scale-factor` CSS variable is
- * required by PDF.js's TextLayer to place text spans correctly.
- */
-function buildPageShell(
-  pageNumber: number,
-  cssWidth: number,
-  cssHeight: number,
-  scale: number
-): RenderedPage {
-  const wrapper = document.createElement('div')
-  wrapper.className = 'zen-pdf-page'
-  wrapper.dataset.pageNumber = String(pageNumber)
-  wrapper.style.width = `${Math.floor(cssWidth)}px`
-  wrapper.style.height = `${Math.floor(cssHeight)}px`
-  wrapper.style.setProperty('--scale-factor', String(scale))
-
-  const canvas = document.createElement('canvas')
-  canvas.className = 'zen-pdf-canvas'
-  canvas.style.width = `${Math.floor(cssWidth)}px`
-  canvas.style.height = `${Math.floor(cssHeight)}px`
-
-  const textLayerDiv = document.createElement('div')
-  textLayerDiv.className = 'zen-pdf-textlayer textLayer'
-
-  wrapper.append(canvas, textLayerDiv)
-  return { pageNumber, wrapper, canvas, textLayerDiv }
 }

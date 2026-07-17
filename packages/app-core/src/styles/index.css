@@ -4670,9 +4670,10 @@ textarea,
 
 /* ===========================================================================
  * PDF.js viewer (zen-pdf-*) — custom `.pdf` asset viewer replacing the
- * Chromium built-in one. See data/pdf.md. The `.textLayer` block is the
- * canonical PDF.js text-layer CSS, required for selection geometry to line
- * up with the rendered glyphs; do not simplify it away.
+ * Chromium built-in one. Page/text-layer/annotation-layer geometry comes
+ * from the imported `pdfjs-dist/web/pdf_viewer.css`; the rules here are only
+ * ZenNotes chrome (toolbar, dark background, invert fallback, selection
+ * opt-in). See data/pdf.md.
  * ======================================================================== */
 .zen-pdf-toolbar {
   backdrop-filter: blur(6px);
@@ -4698,75 +4699,43 @@ textarea,
   text-align: center;
 }
 
-/* Must NOT be a flex container: pages carry explicit pixel heights, and a
- * flex/height-constrained parent makes them shrink to fit (thin-rectangle
- * bug) instead of overflowing into scroll. Plain block + overflow-auto. */
-.zen-pdf-scroll {
-  padding: 20px 16px 48px;
+.zen-pdf-container {
+  padding: 20px 0 48px;
 }
 .zen-pdf-scroll-dark {
   background-color: #17171a;
 }
-.zen-pdf-pages {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
+
+/* Pre-existing (embedded) highlight annotations are painted onto the page
+ * canvas via their appearance stream, which multiplies to near-black against
+ * the dark pageColors background and disappears. The interactive
+ * `.highlightAnnotation` section is transparent but clipped to the exact text
+ * quads, so in dark mode we give IT a translucent colour with `screen` blend
+ * to restore a visible highlight over the dark page. The colour is a fixed
+ * yellow — the true per-annotation colour lives in the canvas and is
+ * unreachable from CSS; per-annotation colour arrives when we own highlight
+ * rendering for the persistence phase. */
+.zen-pdf-scroll-dark .annotationLayer .highlightAnnotation {
+  background-color: rgb(250 204 21 / 0.34);
+  mix-blend-mode: screen;
 }
+
 /* Coarse fallback dark mode: negate the whole page layer. hue-rotate keeps
  * coloured content roughly true rather than photographic-negative. This also
  * inverts embedded images, which is why it is an explicit user choice, not
  * the default (dark mode via pageColors preserves images). */
-.zen-pdf-pages-invert {
+.pdfViewer.zen-pdf-invert .page {
   filter: invert(1) hue-rotate(180deg);
 }
 
-.zen-pdf-page {
-  position: relative;
-  overflow: hidden;
-  /* Keep the explicit page height; never let the column flex shrink it. */
-  flex: 0 0 auto;
-  box-shadow: 0 1px 6px rgb(0 0 0 / 0.18);
-  background-color: #fff;
-}
-.zen-pdf-scroll-dark .zen-pdf-page {
-  background-color: transparent;
-  box-shadow: 0 1px 10px rgb(0 0 0 / 0.5);
-}
-.zen-pdf-canvas {
-  display: block;
-}
-
-.zen-pdf-textlayer.textLayer {
-  position: absolute;
-  text-align: initial;
-  inset: 0;
-  overflow: clip;
-  opacity: 1;
-  line-height: 1;
-  text-size-adjust: none;
-  forced-color-adjust: none;
-  transform-origin: 0 0;
-  z-index: 1;
-  /* The app root sets `user-select: none` for chrome; the text layer must
-   * opt back in or the I-beam shows but nothing selects. */
+/* The app root sets `user-select: none` for its chrome; the PDF text layer
+ * must opt back in or the I-beam shows but nothing selects. */
+.zen-pdf-container .textLayer {
   user-select: text;
   -webkit-user-select: text;
 }
-.zen-pdf-textlayer.textLayer span,
-.zen-pdf-textlayer.textLayer br {
-  color: transparent;
-  position: absolute;
-  white-space: pre;
-  cursor: text;
-  transform-origin: 0% 0%;
+.zen-pdf-container .textLayer span,
+.zen-pdf-container .textLayer br {
   user-select: text;
   -webkit-user-select: text;
-}
-.zen-pdf-textlayer.textLayer span.markedContent {
-  top: 0;
-  height: 0;
-}
-.zen-pdf-textlayer.textLayer ::selection {
-  background: rgb(0 100 255 / 0.28);
 }
