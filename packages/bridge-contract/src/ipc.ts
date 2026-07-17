@@ -41,6 +41,7 @@ export const IPC = {
   VAULT_READ_COMMENTS: 'vault:read-comments',
   VAULT_WRITE_COMMENTS: 'vault:write-comments',
   VAULT_WRITE_NOTE: 'vault:write-note',
+  VAULT_WRITE_PDF: 'vault:write-pdf',
   VAULT_APPEND_NOTE: 'vault:append-note',
   VAULT_CREATE_NOTE: 'vault:create-note',
   VAULT_CREATE_EXCALIDRAW: 'vault:create-excalidraw',

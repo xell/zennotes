@@ -12,6 +12,7 @@ import 'pdfjs-dist/web/pdf_viewer.css'
 // off the main thread. `vite/client` (app-core tsconfig `types`) provides
 // the `*?url` module declaration.
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import { registerPdfBuffer } from '../lib/pdf-buffers'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
@@ -26,7 +27,25 @@ const DARK_PAGE_COLORS = { background: '#1f1f22', foreground: '#d6d3cc' } as con
 const MIN_SCALE = 0.4
 const MAX_SCALE = 4
 
-export function PdfView({ assetUrl, title }: { assetUrl: string; title: string }): JSX.Element {
+// The highlight editor's colour palette. This MUST be provided: without it the
+// UI manager's `highlightColorNames` map is null, and rebuilding a saved
+// highlight on reopen throws in the telemetry getter (highlightColorNames.get).
+// These are PDF.js's own default highlight colours.
+const HIGHLIGHT_COLORS = 'yellow=#FFFF98,green=#53FFBC,blue=#80EBFF,pink=#FFCBE6,red=#FF4F5F'
+
+export function PdfView({
+  assetUrl,
+  assetPath,
+  tabPath,
+  title
+}: {
+  assetUrl: string
+  /** Vault-relative path of the PDF, used to save bytes back to the file. */
+  assetPath: string
+  /** The tab's path — the key the close guard looks this buffer up under. */
+  tabPath: string
+  title: string
+}): JSX.Element {
   // The scrollable, absolutely-positioned host PDFViewer requires.
   const containerRef = useRef<HTMLDivElement>(null)
   // The inner `.pdfViewer` element the pages mount into.
@@ -40,6 +59,20 @@ export function PdfView({ assetUrl, title }: { assetUrl: string; title: string }
   const [scalePct, setScalePct] = useState(100)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  // Read synchronously by the close guard, so it stays a ref (not just state).
+  const dirtyRef = useRef(false)
+  // Annotation-storage size at the last save (or load) — the clean baseline
+  // the current size is compared against to derive dirtiness.
+  const savedSizeRef = useRef(0)
+  const pdfDocRef = useRef<PDFDocumentProxy | null>(null)
+
+  const markDirty = useCallback((value: boolean) => {
+    dirtyRef.current = value
+    setDirty(value)
+  }, [])
 
   const pageColors = mode === 'dark' ? DARK_PAGE_COLORS : undefined
   // `dark` renders differently (pageColors), so the viewer is rebuilt when
@@ -61,11 +94,18 @@ export function PdfView({ assetUrl, title }: { assetUrl: string; title: string }
         if (!response.ok) throw new Error(`Failed to load PDF (${response.status})`)
         const data = new Uint8Array(await response.arrayBuffer())
         if (cancelled) return
-        const doc = await pdfjs.getDocument({ data }).promise
+        // ERRORS-only verbosity silences benign per-font worker warnings
+        // ("TT: undefined function", unsupported hinting ops, etc.) that don't
+        // affect rendering, while still surfacing real errors.
+        const doc = await pdfjs.getDocument({ data, verbosity: pdfjs.VerbosityLevel.ERRORS })
+          .promise
         if (cancelled) {
           void doc.destroy()
           return
         }
+        pdfDocRef.current = doc
+        savedSizeRef.current = doc.annotationStorage.size
+        markDirty(false)
         setNumPages(doc.numPages)
         setPdfDoc(doc)
       } catch (err) {
@@ -110,6 +150,7 @@ export function PdfView({ assetUrl, title }: { assetUrl: string; title: string }
         // NONE (not DISABLE) initialises the annotation editor infrastructure
         // so the highlight tool can be switched on later.
         annotationEditorMode: pdfjs.AnnotationEditorType.NONE,
+        annotationEditorHighlightColors: HIGHLIGHT_COLORS,
         ...(pageColors ? { pageColors } : {})
       })
     } catch (err) {
@@ -131,8 +172,15 @@ export function PdfView({ assetUrl, title }: { assetUrl: string; title: string }
     const onScaleChanging = (): void => {
       setScalePct(Math.round((viewer.currentScale || 1) * 100))
     }
+    // Highlights add/remove entries in the document's annotationStorage. Any
+    // editor-state change recomputes dirtiness against the last-saved size.
+    const onEditorStateChanged = (): void => {
+      const size = pdfDoc.annotationStorage.size
+      markDirty(size !== savedSizeRef.current)
+    }
     eventBus.on('pagesinit', onPagesInit)
     eventBus.on('scalechanging', onScaleChanging)
+    eventBus.on('annotationeditorstateschanged', onEditorStateChanged)
 
     try {
       viewer.setDocument(pdfDoc)
@@ -146,6 +194,7 @@ export function PdfView({ assetUrl, title }: { assetUrl: string; title: string }
     return () => {
       eventBus.off('pagesinit', onPagesInit)
       eventBus.off('scalechanging', onScaleChanging)
+      eventBus.off('annotationeditorstateschanged', onEditorStateChanged)
       try {
         viewer.setDocument(null as unknown as PDFDocumentProxy)
       } catch {
@@ -153,7 +202,7 @@ export function PdfView({ assetUrl, title }: { assetUrl: string; title: string }
       }
       viewerRef.current = null
     }
-  }, [pdfDoc, buildKey, pageColors])
+  }, [pdfDoc, buildKey, pageColors, markDirty])
 
   // Toggle the highlight authoring tool on the live viewer.
   useEffect(() => {
@@ -181,28 +230,37 @@ export function PdfView({ assetUrl, title }: { assetUrl: string; title: string }
     if (v) v.currentScaleValue = 'page-width'
   }, [])
 
-  // Export a portable annotated copy: saveDocument() writes the highlights
-  // back as standard /Highlight annotation objects. This is the acceptance
-  // test — the exported file should open with real highlights in Preview /
-  // PDF Expert. Persisting/reloading via a sidecar is the next phase.
-  const exportPdf = useCallback(async () => {
-    const doc = pdfDoc
-    if (!doc) return
+  // Save highlights straight back into the .pdf file. saveDocument() writes
+  // them as standard /Highlight annotation objects, and the main process
+  // overwrites the file atomically. On reopen PDF.js loads them natively —
+  // no sidecar, no re-injection. Resolves true on success.
+  const saveNow = useCallback(async (): Promise<boolean> => {
+    const doc = pdfDocRef.current
+    if (!doc) return false
+    setSaving(true)
     try {
       const bytes = await doc.saveDocument()
-      const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = title.toLowerCase().endsWith('.pdf') ? title : `${title}.pdf`
-      document.body.append(a)
-      a.click()
-      a.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 10_000)
+      const ok = await window.zen.savePdf(assetPath, bytes)
+      if (ok) {
+        savedSizeRef.current = doc.annotationStorage.size
+        markDirty(false)
+      }
+      return ok
     } catch (err) {
-      console.error('PdfView: export failed', err)
+      console.error('PdfView: save failed', err)
+      return false
+    } finally {
+      setSaving(false)
     }
-  }, [pdfDoc, title])
+  }, [assetPath, markDirty])
+
+  // Expose dirty state + save to the store's close guard, keyed by tab path.
+  useEffect(() => {
+    return registerPdfBuffer(tabPath, {
+      isDirty: () => dirtyRef.current,
+      save: saveNow
+    })
+  }, [tabPath, saveNow])
 
   const modeLabel = useMemo<Record<PdfReadingMode, string>>(
     () => ({ light: 'Light', dark: 'Dark', invert: 'Invert' }),
@@ -225,8 +283,14 @@ export function PdfView({ assetUrl, title }: { assetUrl: string; title: string }
         >
           Highlight
         </button>
-        <button type="button" className="zen-pdf-btn" onClick={() => void exportPdf()} title="Export an annotated copy">
-          Export
+        <button
+          type="button"
+          className={`zen-pdf-btn ${dirty ? 'zen-pdf-btn-active' : ''}`}
+          onClick={() => void saveNow()}
+          disabled={!dirty || saving}
+          title={dirty ? 'Save highlights to the PDF' : 'No unsaved changes'}
+        >
+          {saving ? 'Saving…' : dirty ? 'Save' : 'Saved'}
         </button>
 
         <div className="zen-pdf-zoom ml-auto flex items-center gap-1">

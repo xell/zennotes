@@ -19,7 +19,8 @@ import { ToastHost } from './components/ui'
 import { ExcalidrawEmbedMenuHost } from './components/ExcalidrawEmbedMenuHost'
 import { resolveQuickNoteTitle } from './lib/quick-note-title'
 import { isMacPlatform, matchesShortcut, matchesSequenceToken } from './lib/keymaps'
-import { confirmApp } from './lib/confirm-requests'
+import { confirmApp, confirmAppChoice } from './lib/confirm-requests'
+import { anyPdfBufferDirty, saveAllDirtyPdfBuffers } from './lib/pdf-buffers'
 import { selectedInboxFolderForIsolation, goUpIsolationWithConfirm } from './lib/sidebar-isolation'
 import { focusPaneOrEdgePanel, focusLastActivePane } from './lib/pane-nav'
 import { requestPaneMode } from './lib/pane-mode'
@@ -332,6 +333,31 @@ function App(): JSX.Element {
     const handler = (): void => focusEditorNormalMode({ attempts: 10, delayMs: 24 })
     window.addEventListener('zen:focus-editor', handler)
     return () => window.removeEventListener('zen:focus-editor', handler)
+  }, [])
+
+  // Quit guard bridge: closing the app (Cmd+Q) tears down in the main process,
+  // which can't see the renderer-held unsaved-PDF state. Expose a hook the
+  // main process calls (via executeJavaScript) in `before-quit`, before any
+  // teardown. Returns true to proceed (highlights saved or deliberately
+  // discarded), false to abort the quit.
+  useEffect(() => {
+    const w = window as unknown as { __zenConfirmUnsavedPdfs?: () => Promise<boolean> }
+    w.__zenConfirmUnsavedPdfs = async (): Promise<boolean> => {
+      if (!anyPdfBufferDirty()) return true
+      const choice = await confirmAppChoice({
+        title: 'Save changes to your PDFs?',
+        description: 'One or more open PDFs have highlights you have not saved.',
+        confirmLabel: 'Save',
+        altLabel: "Don't Save",
+        cancelLabel: 'Cancel'
+      })
+      if (choice === 'cancel') return false
+      if (choice === 'confirm') await saveAllDirtyPdfBuffers()
+      return true
+    }
+    return () => {
+      delete w.__zenConfirmUnsavedPdfs
+    }
   }, [])
 
   // Closing the sidebar while it holds keyboard focus (⌘1, Leader E, etc.) used

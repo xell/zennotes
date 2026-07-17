@@ -24,8 +24,9 @@ export function ConfirmHost(): JSX.Element | null {
     <Suspense fallback={null}>
       <ConfirmModal
         options={request.options}
-        onConfirm={() => settleConfirmRequest(request, true)}
-        onCancel={() => settleConfirmRequest(request, false)}
+        onConfirm={() => settleConfirmRequest(request, 'confirm')}
+        onAlt={() => settleConfirmRequest(request, 'alt')}
+        onCancel={() => settleConfirmRequest(request, 'cancel')}
       />
     </Suspense>
   )

@@ -716,6 +716,35 @@ export async function writeFileAtomic(absPath: string, data: string): Promise<vo
   }
 }
 
+/** Binary sibling of `writeFileAtomic` — writes raw bytes (e.g. a saved PDF)
+ *  without a text encoding, via the same temp-file + rename atomicity so a
+ *  failed write can never leave a truncated/corrupt file in place. */
+export async function writeFileAtomicBinary(absPath: string, data: Uint8Array): Promise<void> {
+  const tmp = `${absPath}.${process.pid}.${Date.now()}.tmp`
+  await fs.mkdir(path.dirname(absPath), { recursive: true })
+  const handle = await fs.open(tmp, 'w')
+  try {
+    await handle.writeFile(data)
+    try {
+      await handle.sync()
+    } catch (syncErr) {
+      console.warn('fsync failed for atomic write', syncErr)
+    }
+  } finally {
+    await handle.close()
+  }
+  try {
+    await fs.rename(tmp, absPath)
+  } catch (err) {
+    try {
+      await fs.unlink(tmp)
+    } catch {
+      /* ignore */
+    }
+    throw err
+  }
+}
+
 export async function updateConfig(
   updater: (cfg: PersistedConfig) => PersistedConfig | Promise<PersistedConfig>
 ): Promise<PersistedConfig> {

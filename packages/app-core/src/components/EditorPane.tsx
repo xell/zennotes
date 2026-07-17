@@ -3831,7 +3831,7 @@ function AssetTabView({
     // Custom PDF.js viewer (replacing Chromium's built-in one) so we get
     // images-preserved dark reading and, in a follow-up, standard portable
     // highlight annotations. See data/pdf.md.
-    <PdfView assetUrl={assetUrl} title={title} />
+    <PdfView assetUrl={assetUrl} assetPath={assetPath} tabPath={tabPath} title={title} />
   ) : assetKind === 'html' ? (
     // HTML is the one executable asset kind, so it renders inside a
     // sandbox — allow-scripts/allow-forms only, deliberately WITHOUT

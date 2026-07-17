@@ -108,7 +108,8 @@ import {
   unarchiveNote,
   vaultInfo,
   writeNoteComments,
-  writeNote
+  writeNote,
+  writeFileAtomicBinary
 } from './vault'
 import {
   initAppConfig,
@@ -441,6 +442,29 @@ function flushWindowNoteOpens(win: BrowserWindow): void {
 // Finder "Open in ZenNotes" that lands in the hidden quick-capture
 // panel looks like the app opened a quick note instead of the file.
 const workspaceWindowIds = new Set<number>()
+// The app is on its way out (before-quit already ran the unsaved-PDF guard),
+// so per-window close handlers must NOT prompt again.
+let appIsQuitting = false
+// Windows whose unsaved-PDF close prompt was already answered "proceed" — the
+// second `win.close()` after confirming is allowed straight through.
+const windowsAllowedToClose = new Set<number>()
+
+/** Ask one window's renderer whether it's OK to close/quit with unsaved PDF
+ *  highlights. Reaches the renderer-held state + dialog via a `window` hook.
+ *  Resolves false only when the user cancels. */
+async function confirmWindowUnsavedPdfs(win: BrowserWindow): Promise<boolean> {
+  if (win.isDestroyed()) return true
+  try {
+    const proceed = await win.webContents.executeJavaScript(
+      'window.__zenConfirmUnsavedPdfs ? window.__zenConfirmUnsavedPdfs() : true'
+    )
+    return proceed !== false
+  } catch (err) {
+    // Never let a failed check wedge the window/app in a can't-close state.
+    console.error('[close] unsaved-PDF check failed', err)
+    return true
+  }
+}
 // Maps Electron BrowserWindow.id → stable session UUID so each window can be
 // individually identified across launches.
 const windowUuids = new Map<number, string>()
@@ -1429,6 +1453,18 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
   win.on('unmaximize', scheduleWindowStatePersist)
   win.on('move', scheduleTabGroupReconcile)
   win.on('resize', scheduleTabGroupReconcile)
+  // Unsaved-highlights guard for closing this window directly (red button,
+  // Cmd+W-for-window). Skipped during app quit (before-quit already asked) and
+  // on the confirmed second pass.
+  win.on('close', (event) => {
+    if (appIsQuitting || windowsAllowedToClose.has(win.id)) return
+    event.preventDefault()
+    void confirmWindowUnsavedPdfs(win).then((proceed) => {
+      if (!proceed) return // cancelled — window stays open
+      windowsAllowedToClose.add(win.id)
+      if (!win.isDestroyed()) win.close()
+    })
+  })
   win.on('close', flushWindowStatePersist)
   const winWebContentsId = win.webContents.id
   win.on('closed', () => {
@@ -2985,6 +3021,25 @@ function registerIpc(): void {
     }
     const v = requireVault()
     return await writeNote(v.root, relPath, body)
+  })
+
+  handle(IPC.VAULT_WRITE_PDF, async (_e, relPath: string, bytes: Uint8Array) => {
+    if (isRemoteWorkspaceActive()) {
+      throw new Error('Saving PDFs is not supported in remote workspaces yet.')
+    }
+    const v = requireVault()
+    const rootAbs = path.resolve(v.root)
+    const abs = path.resolve(v.root, relPath.split('/').join(path.sep))
+    // Containment + extension guards: never write outside the open vault, and
+    // never let this channel clobber a non-PDF file.
+    if (abs !== rootAbs && !abs.startsWith(rootAbs + path.sep)) {
+      throw new Error('Refusing to write outside the vault.')
+    }
+    if (path.extname(abs).toLowerCase() !== '.pdf') {
+      throw new Error('Refusing to write a non-PDF file.')
+    }
+    await writeFileAtomicBinary(abs, bytes)
+    return true
   })
 
   handle(
@@ -4596,8 +4651,42 @@ app.on('window-all-closed', () => {
 // through; the guard flag stops this from looping (app.quit() below
 // re-fires 'before-quit' for the actual, final quit). Capped with a timeout
 // so a stuck write can't leave the app refusing to quit.
+// Ask each workspace renderer whether it's OK to quit with unsaved PDF
+// highlights. The unsaved state and the Save/Discard/Cancel dialog live in the
+// renderer, so main reaches it via a hook the app installs on `window`.
+// Resolves false if the user cancels in any window.
+async function confirmUnsavedPdfsBeforeQuit(): Promise<boolean> {
+  const wins = BrowserWindow.getAllWindows().filter(
+    (win) => !win.isDestroyed() && isWorkspaceWindow(win)
+  )
+  for (const win of wins) {
+    if (!(await confirmWindowUnsavedPdfs(win))) return false
+  }
+  return true
+}
+
+let quitUnsavedConfirmed = false
+let quitConfirmInFlight = false
 let quitFlushDone = false
 app.on('before-quit', (event) => {
+  // Stage 1: unsaved-highlights confirmation, BEFORE any teardown — so a
+  // cancel leaves the app fully functional (watchers, hotkeys still live).
+  if (!quitUnsavedConfirmed) {
+    event.preventDefault()
+    if (quitConfirmInFlight) return
+    quitConfirmInFlight = true
+    void confirmUnsavedPdfsBeforeQuit().then((proceed) => {
+      quitConfirmInFlight = false
+      if (!proceed) return // user cancelled — stay running, nothing torn down
+      quitUnsavedConfirmed = true
+      appIsQuitting = true // per-window close guards must not re-prompt now
+      app.quit() // re-fires before-quit, now past the guard
+    })
+    return
+  }
+
+  // Stage 2+: teardown + state flush (unchanged), only reached once the quit
+  // is confirmed.
   windowVaults.stopAll()
   stopRemoteWatch()
   quickCaptureQuitting = true

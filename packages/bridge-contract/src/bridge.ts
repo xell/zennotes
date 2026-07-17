@@ -176,6 +176,9 @@ export interface ZenBridge {
   createRecordPage(csvPath: string, title: string, body: string): Promise<string>
   listDatabases(): Promise<DatabaseSummary[]>
   writeNote(relPath: string, body: string): Promise<NoteMeta>
+  /** Overwrite a `.pdf` asset in place with new bytes (e.g. saved highlight
+   *  annotations). Atomic write; resolves true on success. */
+  savePdf(relPath: string, bytes: Uint8Array): Promise<boolean>
   appendToNote(relPath: string, body: string, position: 'start' | 'end'): Promise<NoteMeta>
   createNote(folder: NoteFolder, title?: string, subpath?: string): Promise<NoteMeta>
   /** Create a new `.excalidraw` drawing seeded with an empty scene. */

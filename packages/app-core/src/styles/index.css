@@ -4728,6 +4728,32 @@ textarea,
   filter: invert(1) hue-rotate(180deg);
 }
 
+/* PDF.js's floating editor toolbar (delete, colour picker, etc. shown when a
+ * highlight is selected) lives inside the annotation editor layer, whose
+ * font-size is scaled with the PDF zoom (~230px) to size text editors. The
+ * toolbar buttons re-inherit that (Tailwind preflight sets `button` font-size
+ * 100% / line-height inherit), which inflates the line box and shoves each
+ * static inline-block icon ::before ~200px below its button. Reset the
+ * toolbar's font metrics and flex-centre the icons. */
+.zen-pdf .annotationEditorLayer .editToolbar,
+.zen-pdf .annotationEditorLayer .editToolbar button {
+  font-size: 16px;
+  line-height: 1;
+}
+.zen-pdf .annotationEditorLayer .editToolbar button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* The colour-picker dropdown is shown/hidden by toggling a `.hidden` class,
+ * but the rule that actually hides it (`.hidden { display: none }`) lives in
+ * PDF.js's full viewer.css, not the pdf_viewer.css components stylesheet we
+ * import — so without this the dropdown never collapses. Supply the missing
+ * hide; !important beats the dropdown's own high-specificity display:flex. */
+.zen-pdf .annotationEditorLayer .colorPicker .dropdown.hidden {
+  display: none !important;
+}
+
 /* The app root sets `user-select: none` for its chrome; the PDF text layer
  * must opt back in or the I-beam shows but nothing selects. */
 .zen-pdf-container .textLayer {

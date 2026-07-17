@@ -1527,6 +1527,10 @@ export const httpBridge: ZenBridge = {
   createRecordPage,
   listDatabases,
   writeNote,
+  savePdf: async () => {
+    // PDF highlight saving is a desktop-only feature for now.
+    throw new Error('Saving PDFs is not supported in the web workspace yet.')
+  },
   appendToNote,
   createNote,
   createExcalidraw,

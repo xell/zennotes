@@ -340,6 +340,8 @@ const api: ZenBridge = {
   listDatabases: (): Promise<DatabaseSummary[]> => ipcRenderer.invoke(IPC.VAULT_LIST_DATABASES),
   writeNote: (relPath: string, body: string): Promise<NoteMeta> =>
     ipcRenderer.invoke(IPC.VAULT_WRITE_NOTE, relPath, body),
+  savePdf: (relPath: string, bytes: Uint8Array): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.VAULT_WRITE_PDF, relPath, bytes),
   appendToNote: (relPath: string, body: string, position: 'start' | 'end'): Promise<NoteMeta> =>
     ipcRenderer.invoke(IPC.VAULT_APPEND_NOTE, relPath, body, position),
   createNote: (folder: NoteFolder, title?: string, subpath?: string): Promise<NoteMeta> =>

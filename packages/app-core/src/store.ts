@@ -77,7 +77,8 @@ import { customThemeSlugFromId, type CustomTheme } from '@shared/custom-themes'
 import type { Override } from '@shared/overrides'
 import { formatMarkdown } from './lib/format-markdown'
 import { confirmMoveToTrash } from './lib/confirm-trash'
-import { confirmApp } from './lib/confirm-requests'
+import { confirmApp, confirmAppChoice } from './lib/confirm-requests'
+import { getPdfBuffer } from './lib/pdf-buffers'
 import { pickServerDirectoryApp } from './lib/server-directory-picker-requests'
 import { promptApp } from './lib/prompt-requests'
 import {
@@ -7415,6 +7416,26 @@ export const useStore = create<Store>((set, get) => {
   },
 
   closeTabInPane: async (paneId, path) => {
+    // Unsaved-highlights guard for PDF tabs: a PDF with pending highlight
+    // edits must not close silently. Offer Save / Discard / Cancel; Cancel (or
+    // a failed save) aborts the close entirely.
+    const pdfBuffer = getPdfBuffer(path)
+    if (pdfBuffer?.isDirty()) {
+      const choice = await confirmAppChoice({
+        title: 'Save changes to this PDF?',
+        description: 'This PDF has highlights you have not saved yet.',
+        confirmLabel: 'Save',
+        altLabel: "Don't Save",
+        cancelLabel: 'Cancel'
+      })
+      if (choice === 'cancel') return
+      if (choice === 'confirm') {
+        const saved = await pdfBuffer.save()
+        if (!saved) return
+      }
+      // 'alt' (Don't Save) falls through and closes, discarding edits.
+    }
+
     // Capture the tab's pane-local position before removal so Cmd/Ctrl+Shift+T
     // can reopen multiple closed tabs in the same order and restore pinned state.
     const closingLeaf = findLeaf(get().paneLayout, paneId)

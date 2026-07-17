@@ -7,16 +7,21 @@ export interface ConfirmOptions {
   description?: string
   confirmLabel?: string
   cancelLabel?: string
+  /** When set, a third middle button is shown (e.g. "Discard"). Selecting it
+   *  settles the request with the 'alt' choice. */
+  altLabel?: string
   danger?: boolean
 }
 
 export function ConfirmModal({
   options,
   onConfirm,
+  onAlt,
   onCancel
 }: {
   options: ConfirmOptions
   onConfirm: () => void
+  onAlt?: () => void
   onCancel: () => void
 }): JSX.Element {
   // Modal owns Escape (→ cancel); we only add Enter (→ confirm) here.
@@ -44,6 +49,11 @@ export function ConfirmModal({
         <Button variant="secondary" onClick={onCancel}>
           {options.cancelLabel ?? 'Cancel'}
         </Button>
+        {options.altLabel && onAlt && (
+          <Button variant="danger" onClick={onAlt}>
+            {options.altLabel}
+          </Button>
+        )}
         <Button variant={options.danger ? 'danger' : 'primary'} onClick={onConfirm}>
           {options.confirmLabel ?? 'Confirm'}
         </Button>
