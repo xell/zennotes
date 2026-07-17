@@ -121,6 +121,7 @@ import { AssetsView } from './AssetsView'
 import { QuickNotesView } from './QuickNotesView'
 import { NoteStats } from './StatusBar'
 import { MediaPlayer } from './MediaPlayer'
+import { PdfView } from './PdfView'
 import { readingStats, type ReadingStats } from '../lib/word-count'
 import { isTasksTabPath } from '@shared/tasks'
 import { isDatabaseTabPath, databaseTitleFromTab, databaseTabPath, isDatabaseCsvPath } from '@shared/databases'
@@ -3827,16 +3828,10 @@ function AssetTabView({
       </div>
     </div>
   ) : assetKind === 'pdf' ? (
-    // No dedicated PDF UI needed — mimeTypeForPath serves a real
-    // application/pdf Content-Type, which Chromium's built-in PDF viewer
-    // renders natively inline for a plain iframe (unlike the true
-    // UnsupportedAssetView fallback below, which exists for kinds that have
-    // no such native inline renderer and would otherwise just download).
-    <iframe
-      src={assetUrl}
-      title={title}
-      className="min-h-0 min-w-0 flex-1 border-0 bg-paper-50"
-    />
+    // Custom PDF.js viewer (replacing Chromium's built-in one) so we get
+    // images-preserved dark reading and, in a follow-up, standard portable
+    // highlight annotations. See data/pdf.md.
+    <PdfView assetUrl={assetUrl} title={title} />
   ) : assetKind === 'html' ? (
     // HTML is the one executable asset kind, so it renders inside a
     // sandbox — allow-scripts/allow-forms only, deliberately WITHOUT
