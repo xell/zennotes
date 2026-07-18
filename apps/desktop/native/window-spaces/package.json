@@ -1,0 +1,11 @@
+{
+  "name": "window-spaces-native",
+  "version": "0.0.0",
+  "private": true,
+  "description": "macOS-only Node addon that reads and re-assigns a window's Mission Control Space via the private SkyLight (CoreGraphics Services) API, so ZenNotes can send each window back to the Space it was on before the app quit — the BetterTouchTool 'Move Window to Desktop X' route, which works from a normally signed app. Electron windows never enrol in AppKit window restoration (which is how native apps carry their Space across relaunch), so this is the only way to persist per-window Space assignment.",
+  "main": "build/Release/window_spaces.node",
+  "gypfile": true,
+  "scripts": {
+    "build": "node-gyp rebuild"
+  }
+}

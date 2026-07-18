@@ -24,7 +24,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "build:native": "cd native/tab-groups && node-gyp rebuild",
+    "build:native": "cd native/tab-groups && node-gyp rebuild && cd ../window-spaces && node-gyp rebuild",
     "build:prod": "npm run typecheck && npm run test:run && npm run build",
     "start": "electron-vite preview",
     "test": "vitest",
@@ -131,6 +131,11 @@
         "from": "native/tab-groups/build/Release",
         "to": "tab-groups",
         "filter": ["tab_groups.node"]
+      },
+      {
+        "from": "native/window-spaces/build/Release",
+        "to": "window-spaces",
+        "filter": ["window_spaces.node"]
       },
       {
         "from": "../../node_modules/@excalidraw/excalidraw/dist/prod/fonts",

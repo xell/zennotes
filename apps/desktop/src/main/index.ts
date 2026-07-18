@@ -540,6 +540,212 @@ function loadTabGroupsNative(): TabGroupsNative | null {
 }
 const tabGroupsNative = loadTabGroupsNative()
 
+// Electron windows never enrol in AppKit window restoration, which is how
+// native apps carry their windows back onto their Mission Control Spaces after
+// a quit (dead for Electron on macOS 26 — see data/per-window-space-persistence.md).
+// `native/window-spaces` is a small N-API addon over the private SkyLight API
+// (the BetterTouchTool "Move Window to Desktop X" route) that lets us capture a
+// window's Space and send it back there on relaunch. Same dev/prod path split
+// and ABI-stable N-API contract as the tab-groups addon above; isolated in its
+// own module so the private-API dependency can't destabilise tab persistence.
+interface WindowSpacesNative {
+  /** Token of the Space the window is on, or "" if unknown — which includes the
+   *  ordinary case of the window sitting on a Space that isn't currently
+   *  visible, since the WindowServer only answers for the visible Space. */
+  getWindowSpaceId(handle: Buffer): string
+  /** Token of the Space visible right now on this window's display (pass an
+   *  empty buffer for the primary display). Only trustworthy for a window known
+   *  to be on the active Space, i.e. one that just took focus. */
+  getCurrentSpaceId(handle: Buffer): string
+  /** Relocate the window to the identified Space without switching to it.
+   *  False when the window has no window number yet or the Space no longer
+   *  exists (closed, or ids reshuffled by a reboot) — leave the window put. */
+  moveWindowToSpaceId(handle: Buffer, spaceId: string): boolean
+  /** Diagnostic-only: a token for every Space the WindowServer knows. */
+  getAllSpaceIds(): string[]
+  /** Keep the window bound to one Space rather than following the app onto the
+   *  active Space. Measured as already the case, so this is a guard against
+   *  that changing rather than a fix. Returns the resulting behaviour mask. */
+  setWindowSpaceBound(handle: Buffer): number
+  /** Diagnostic-only: window number, collection behaviour, the raw space ids
+   *  reported for a window, and the full managed-spaces table. */
+  debugWindowSpace(handle: Buffer): {
+    windowNumber: number
+    collectionBehavior: number
+    currentSpaceId: string
+    rawSpaceIds: number[]
+    managedSpaces: { id: number; token: string }[]
+  }
+}
+function loadWindowSpacesNative(): WindowSpacesNative | null {
+  if (!isMac()) return null
+  try {
+    const p = app.isPackaged
+      ? path.join(process.resourcesPath, 'window-spaces', 'window_spaces.node')
+      : path.join(__dirname, '../../native/window-spaces/build/Release/window_spaces.node')
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require(p) as WindowSpacesNative
+  } catch (err) {
+    console.error('[window spaces] native window-spaces addon unavailable, per-window Space persistence disabled', err)
+    return null
+  }
+}
+const windowSpacesNative = loadWindowSpacesNative()
+// TEMP diagnostic: always on while we validate the CGS capture/restore. Flip
+// back to env-gated once it works.
+const DEBUG_WINDOW_SPACES = true
+if (windowSpacesNative) {
+  try {
+    console.error('[window spaces] addon loaded; all spaces:', JSON.stringify(windowSpacesNative.getAllSpaceIds()))
+  } catch (err) {
+    console.error('[window spaces] getAllSpaceIds threw at load', err)
+  }
+} else {
+  console.error('[window spaces] addon NOT loaded (windowSpacesNative is null)')
+}
+
+// The UUID of the Space `win` is currently on, or null when the addon is
+// unavailable or the window isn't realised on screen yet.
+// Last known Space per window, keyed by BrowserWindow id. Maintained from
+// 'focus' (a focused window is necessarily on the visible Space) because
+// CGSCopySpacesForWindows reports nothing for these windows — see
+// data/per-window-space-persistence.md. This map, not a live query, is the
+// reliable capture source at quit time, when every window is asked at once and
+// only one of them is actually on the current Space.
+const windowSpaceByWinId = new Map<number, string>()
+
+// Bind the window to a single Space (rather than letting it follow the app onto
+// whatever Space is active). Called once per window right after creation.
+function nativeBindWindowToSpace(win: BrowserWindow): void {
+  if (!windowSpacesNative || win.isDestroyed()) return
+  try {
+    const mask = windowSpacesNative.setWindowSpaceBound(win.getNativeWindowHandle())
+    if (DEBUG_WINDOW_SPACES) {
+      console.error('[window spaces] bind', windowUuids.get(win.id), 'collectionBehavior ->', mask)
+    }
+  } catch (err) {
+    console.error('[window spaces] failed to bind window to its Space', err)
+  }
+}
+
+// Record the Space this window is on. Only valid to call when the window is
+// known to be on the active Space (on focus, or right after we placed it).
+function rememberWindowSpace(win: BrowserWindow): void {
+  if (!windowSpacesNative || win.isDestroyed()) return
+  try {
+    const uuid = windowSpacesNative.getCurrentSpaceId(win.getNativeWindowHandle())
+    if (uuid && uuid.trim()) {
+      windowSpaceByWinId.set(win.id, uuid)
+      if (DEBUG_WINDOW_SPACES) {
+        console.error('[window spaces] remember', windowUuids.get(win.id), '->', uuid)
+      }
+    }
+  } catch (err) {
+    console.error('[window spaces] failed to read current Space', err)
+  }
+}
+
+// The Space currently visible on the main display, with no window in hand.
+// (An empty buffer resolves to no NSWindow, which the addon treats as "use the
+// primary display".) Used at launch to know which Space we started on.
+function nativeCurrentDisplaySpaceId(): string | null {
+  if (!windowSpacesNative) return null
+  try {
+    const uuid = windowSpacesNative.getCurrentSpaceId(Buffer.alloc(0))
+    return uuid && uuid.trim() ? uuid : null
+  } catch {
+    return null
+  }
+}
+
+// Re-read every window's Space and persist any that changed.
+//
+// Focus alone is not enough: dragging a window to another Space in Mission
+// Control never focuses it, so its Space went unrecorded and it was restored
+// onto the launch Space instead. The WindowServer will happily report a
+// window's Space — but only while that window is on the *visible* Space — so
+// sweeping on a timer picks each window up as the user moves between Spaces
+// during normal work, and the value then sticks in the map.
+function sweepWindowSpaces(): void {
+  if (!windowSpacesNative) return
+  const wins = BrowserWindow.getAllWindows().filter(
+    (win) => !win.isDestroyed() && isWorkspaceWindow(win)
+  )
+  const changed = new Set<BrowserWindow>()
+  const readDirectly: BrowserWindow[] = []
+  for (const win of wins) {
+    try {
+      const uuid = windowSpacesNative.getWindowSpaceId(win.getNativeWindowHandle())
+      if (!uuid || !uuid.trim()) continue
+      readDirectly.push(win)
+      if (windowSpaceByWinId.get(win.id) !== uuid) {
+        windowSpaceByWinId.set(win.id, uuid)
+        changed.add(win)
+      }
+    } catch {
+      /* window went away mid-sweep */
+    }
+  }
+  // Tabs in one native tab group always share a Space, but only the frontmost
+  // tab is readable — the others are ordered out. Propagate from whichever
+  // member we just read directly so a whole group moves together.
+  for (const win of readDirectly) {
+    const uuid = windowSpaceByWinId.get(win.id)
+    if (!uuid) continue
+    for (const member of nativeTabGroupMembers(win)) {
+      if (member.isDestroyed() || member === win) continue
+      if (windowSpaceByWinId.get(member.id) === uuid) continue
+      windowSpaceByWinId.set(member.id, uuid)
+      changed.add(member)
+    }
+  }
+  for (const win of changed) {
+    if (DEBUG_WINDOW_SPACES) {
+      console.error('[window spaces] sweep changed', windowUuids.get(win.id), '->', windowSpaceByWinId.get(win.id))
+    }
+    void persistWindowState(win)
+  }
+}
+
+const WINDOW_SPACE_SWEEP_INTERVAL_MS = 4000
+let windowSpaceSweepTimer: ReturnType<typeof setInterval> | null = null
+function startWindowSpaceSweep(): void {
+  if (!windowSpacesNative || windowSpaceSweepTimer) return
+  windowSpaceSweepTimer = setInterval(sweepWindowSpaces, WINDOW_SPACE_SWEEP_INTERVAL_MS)
+}
+
+function nativeWindowSpaceId(win: BrowserWindow): string | null {
+  if (!windowSpacesNative || win.isDestroyed()) return null
+  let direct = ''
+  try {
+    direct = windowSpacesNative.getWindowSpaceId(win.getNativeWindowHandle())
+    if (DEBUG_WINDOW_SPACES) {
+      const dump = windowSpacesNative.debugWindowSpace(win.getNativeWindowHandle())
+      console.error('[window spaces] capture', windowUuids.get(win.id), 'direct=', JSON.stringify(direct), 'tracked=', windowSpaceByWinId.get(win.id) ?? null, JSON.stringify(dump))
+    }
+  } catch (err) {
+    console.error('[window spaces] failed to read window Space', err)
+  }
+  // Prefer the WindowServer's own answer when it has one; otherwise fall back
+  // to what we tracked on focus.
+  if (direct && direct.trim()) return direct
+  return windowSpaceByWinId.get(win.id) ?? null
+}
+
+// Send `win` back to the Space it was persisted on. No-op (and harmless) when
+// the addon is unavailable, the uuid is empty, or that Space no longer exists.
+function nativeMoveWindowToSpace(win: BrowserWindow, uuid: string | null | undefined): void {
+  if (!windowSpacesNative || win.isDestroyed() || !uuid) return
+  try {
+    const moved = windowSpacesNative.moveWindowToSpaceId(win.getNativeWindowHandle(), uuid)
+    if (DEBUG_WINDOW_SPACES) {
+      console.error('[window spaces] restore', windowUuids.get(win.id), 'to', uuid, '=>', moved)
+    }
+  } catch (err) {
+    console.error('[window spaces] failed to move window to Space', err)
+  }
+}
+
 // The real, current members of `win`'s native tab group (including `win`
 // itself), resolved back to BrowserWindow instances by comparing native
 // view handles. Falls back to `[win]` (i.e. "standalone") if the addon
@@ -672,7 +878,8 @@ async function reconcileAndPersistTabGroups(): Promise<void> {
         windowId: u.uuid,
         root: vault.root,
         windowState: captureWindowState(u.win),
-        tabGroupId: u.tabGroupId
+        tabGroupId: u.tabGroupId,
+        spaceId: nativeWindowSpaceId(u.win)
       })
     }
     return { ...cfg, openWindows: [...merged, ...appended] }
@@ -1315,11 +1522,20 @@ async function persistWindowState(win: BrowserWindow): Promise<void> {
         const idx = sessions.findIndex((s) => s.windowId === uuid)
         // tabGroupId is owned by reconcileAndPersistTabGroups, not here —
         // preserve whatever it already was rather than guessing at it.
+        // Capture the window's current Space here (not in captureWindowState,
+        // which stays sync/geometry-only) so it rides along on every persist.
+        // Fall back to whatever we last saved if the live read comes back
+        // empty (e.g. the window is momentarily off all Spaces mid-move).
+        const spaceId = nativeWindowSpaceId(win) ?? (idx >= 0 ? sessions[idx].spaceId ?? null : null)
+        if (DEBUG_WINDOW_SPACES) {
+          console.error('[window spaces] persist', uuid, 'spaceId=', spaceId, 'existingIdx=', idx)
+        }
         const entry: PersistedWindowSession = {
           windowId: uuid,
           root: vault.root,
           windowState: state,
-          tabGroupId: idx >= 0 ? sessions[idx].tabGroupId ?? null : null
+          tabGroupId: idx >= 0 ? sessions[idx].tabGroupId ?? null : null,
+          spaceId
         }
         updated.openWindows = idx >= 0
           ? sessions.map((s, i) => (i === idx ? entry : s))
@@ -1340,6 +1556,10 @@ interface CreateWindowOptions {
   /** Initial window geometry. When provided, takes precedence over the
    *  global cfg.windowState (which tracks only the last-focused window). */
   windowState?: PersistedWindowState | null
+  /** Mission Control Space to send this window back to once it's on screen
+   *  (session restore path, macOS only). The move happens after the window's
+   *  window number exists — see the ready-to-show handler. */
+  restoreSpaceId?: string | null
 }
 
 async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserWindow> {
@@ -1409,6 +1629,11 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
   workspaceWindowIds.add(win.id)
   windowUuids.set(win.id, winUuid)
 
+  // Belt-and-braces: keep the window bound to a single Space. (Measured as
+  // already the case — collectionBehavior reads 132, FullScreenPrimary|Managed,
+  // with no CanJoinAllSpaces/MoveToActiveSpace — so this is a guard, not a fix.)
+  if (mac) nativeBindWindowToSpace(win)
+
   if (!mainWindow || mainWindow.isDestroyed()) {
     mainWindow = win
     mainWindowReadyForAppEvents = false
@@ -1435,7 +1660,23 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
       restored: !!restoredState
     })
     if (restoredState?.isMaximized) win.maximize()
-    win.show()
+    // A window being sent to another Space must not become key on the way:
+    // macOS follows the key window, which is what yanked the user onto a
+    // different Space during restore. Show it inactive and let the restore
+    // sequence decide what to focus at the end.
+    if (options.restoreSpaceId) win.showInactive()
+    else win.show()
+    // Send the window back to its previous Space now that it's realised (a
+    // hidden/never-shown window has no window number for CGS to target). This
+    // relocates it without switching the visible Space, so windows scatter
+    // back to their Spaces instead of collapsing onto the launch Space.
+    if (options.restoreSpaceId) {
+      nativeMoveWindowToSpace(win, options.restoreSpaceId)
+      // We just placed it, so this is its Space — seed the tracker directly
+      // rather than waiting for a focus event that may never come for a window
+      // restored onto a Space the user isn't looking at.
+      windowSpaceByWinId.set(win.id, options.restoreSpaceId)
+    }
   })
   win.webContents.on('did-start-loading', () => {
     readyWindowIds.delete(win.id)
@@ -1446,6 +1687,17 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
       restored: !!restoredState
     })
   })
+
+  // Focus is the one moment we can be sure this window is on the *visible*
+  // Space, so it's when we learn its Space — and we persist right away rather
+  // than relying on the quit-time flush, which was capturing correctly in
+  // memory but never making it to disk.
+  if (mac) {
+    win.on('focus', () => {
+      rememberWindowSpace(win)
+      scheduleWindowStatePersist()
+    })
+  }
 
   win.on('move', scheduleWindowStatePersist)
   win.on('resize', scheduleWindowStatePersist)
@@ -1765,7 +2017,10 @@ async function setVaultForWindow(
         windowId: uuid,
         root: vault.root,
         windowState: windowStateOnOpen,
-        tabGroupId: idx >= 0 ? sessions[idx].tabGroupId ?? null : null
+        tabGroupId: idx >= 0 ? sessions[idx].tabGroupId ?? null : null,
+        // Owned by the geometry/reconcile persist paths; preserve the last
+        // captured value rather than re-reading it on a vault switch.
+        spaceId: (idx >= 0 ? sessions[idx].spaceId : null) ?? nativeWindowSpaceId(win)
       }
       newSessions = idx >= 0
         ? sessions.map((s, i) => (i === idx ? entry : s))
@@ -4513,6 +4768,13 @@ app.whenReady().then(async () => {
   // Honor a file ZenNotes was launched to open before falling back to a
   // default-vault window, so double-clicking a .md doesn't also pop an
   // unrelated window.
+  // The Space we're launching on. Restored windows are shown *inactive* and
+  // then relocated, so nothing drags the user off this Space; at the end we
+  // focus a window that belongs here (if any).
+  const launchSpaceId = nativeCurrentDisplaySpaceId()
+  if (DEBUG_WINDOW_SPACES) console.error('[window spaces] launch space', launchSpaceId)
+  startWindowSpaceSweep()
+
   const openedFromFile = await flushPendingFileOpens()
   if (!openedFromFile && startupDeepLinkResult !== 'quick-capture') {
     const startupCfg = await loadConfig()
@@ -4525,6 +4787,7 @@ app.whenReady().then(async () => {
             initialVaultRoot: session.root,
             windowId: session.windowId,
             windowState: session.windowState,
+            restoreSpaceId: session.spaceId,
             persistInitialVault: true
           })
           restoredByWindowId.set(session.windowId, win)
@@ -4556,6 +4819,24 @@ app.whenReady().then(async () => {
           } catch (err) {
             console.error('[window tabs] failed to restore tab group', err)
           }
+        }
+      }
+      // Everything was shown inactive so the restore wouldn't drag the user
+      // across Spaces. Now give focus to a window that actually lives on the
+      // Space we launched on; if none does, deliberately focus nothing rather
+      // than pulling the user somewhere else.
+      if (launchSpaceId) {
+        const onLaunchSpace = sessions
+          .filter((s) => s.spaceId === launchSpaceId)
+          .map((s) => restoredByWindowId.get(s.windowId))
+          .find((w): w is BrowserWindow => !!w && !w.isDestroyed())
+        if (onLaunchSpace) {
+          if (DEBUG_WINDOW_SPACES) {
+            console.error('[window spaces] focusing window on launch space', windowUuids.get(onLaunchSpace.id))
+          }
+          onLaunchSpace.focus()
+        } else if (DEBUG_WINDOW_SPACES) {
+          console.error('[window spaces] no restored window belongs on the launch space; focusing nothing')
         }
       }
       if (BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && isWorkspaceWindow(w)).length === 0) {

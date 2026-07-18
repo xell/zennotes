@@ -273,6 +273,12 @@ export interface PersistedWindowSession {
    *  group when last persisted, so the layout can be rebuilt on relaunch.
    *  Null/absent means the window was standalone. */
   tabGroupId?: string | null
+  /** Identifier of the Mission Control Space this window was on when last
+   *  persisted (macOS only), so it can be sent back there on relaunch via the
+   *  private SkyLight API. A Space UUID when macOS reports one, otherwise an
+   *  `id:<managed-id>` token — not every desktop has a UUID. Null/absent means
+   *  we never captured one. */
+  spaceId?: string | null
 }
 
 export interface PersistedRemoteWorkspaceConfig {
@@ -450,7 +456,8 @@ function normalizePersistedConfig(value: unknown): PersistedConfig {
     const windowState = normalizeWindowState(v.windowState)
     if (!windowId || !root || !windowState) return null
     const tabGroupId = typeof v.tabGroupId === 'string' && v.tabGroupId.trim() ? v.tabGroupId.trim() : null
-    return { windowId, root, windowState, tabGroupId }
+    const spaceId = typeof v.spaceId === 'string' && v.spaceId.trim() ? v.spaceId.trim() : null
+    return { windowId, root, windowState, tabGroupId, spaceId }
   }
   const openWindows = Array.isArray(candidate.openWindows)
     ? candidate.openWindows
