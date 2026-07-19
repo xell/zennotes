@@ -30,11 +30,43 @@ pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 // (black) text during rasterisation while leaving embedded raster images
 // intact. `invert` is the coarse CSS-filter fallback (also negates images),
 // for documents whose colour cannot be themed by `pageColors` alone.
-export type PdfReadingMode = 'light' | 'dark' | 'invert'
+// `sepia` is the same mechanism as `dark` — a warm paper/ink pair handed to
+// `pageColors` — so it likewise leaves embedded images untouched, unlike the
+// `invert` filter. Its warmth is user-tunable (`pdfSepiaTone`).
+export type PdfReadingMode = 'light' | 'sepia' | 'dark' | 'invert'
 // Standard viewer page-layout modes, each a scrollMode + spreadMode pair.
 type PdfViewMode = 'single' | 'continuous' | 'two-page'
 
 const DARK_PAGE_COLORS = { background: '#1f1f22', foreground: '#d6d3cc' } as const
+
+// Sepia paper, interpolated by the `pdfSepiaTone` preference: 0 is barely
+// off-white, 100 is a deep aged-paper tone. The ink stays a fixed warm brown —
+// varying it too would trade away contrast just as the paper darkens, which is
+// the opposite of what a warmth control should do.
+const SEPIA_INK = '#5b4636'
+const SEPIA_PAPER_MIN = [253, 248, 239] as const
+const SEPIA_PAPER_MAX = [232, 217, 181] as const
+// The desk sits a little darker than the page so the sheet still reads as a
+// sheet rather than blending into the background.
+const SEPIA_DESK_SHADE = 0.88
+
+function mixChannel(from: number, to: number, t: number): number {
+  return Math.round(from + (to - from) * t)
+}
+
+function sepiaPalette(tone: number): {
+  pageColors: { background: string; foreground: string }
+  desk: string
+} {
+  const t = Math.min(100, Math.max(0, tone)) / 100
+  const rgb = SEPIA_PAPER_MIN.map((from, i) => mixChannel(from, SEPIA_PAPER_MAX[i], t))
+  const hex = (channels: number[]): string =>
+    `#${channels.map((c) => Math.max(0, Math.min(255, c)).toString(16).padStart(2, '0')).join('')}`
+  return {
+    pageColors: { background: hex(rgb), foreground: SEPIA_INK },
+    desk: hex(rgb.map((c) => Math.round(c * SEPIA_DESK_SHADE)))
+  }
+}
 const MIN_SCALE = 0.25
 const MAX_SCALE = 5
 // Fit presets accepted by `currentScaleValue`; anything else is a numeric zoom.
@@ -147,11 +179,18 @@ export function PdfView({
     setDirty(value)
   }, [])
 
-  const pageColors = mode === 'dark' ? DARK_PAGE_COLORS : undefined
-  // `dark` renders differently (pageColors), so the viewer is rebuilt when
-  // toggling into/out of dark. `invert` is pure CSS, so it shares the light
-  // build — this key drives the rebuild effect below.
-  const buildKey = mode === 'dark' ? 'dark' : 'light'
+  const sepiaTone = useStore((s) => s.pdfSepiaTone)
+  // Memoised: this object is a dependency of the viewer-build effect, so a
+  // fresh literal every render would rebuild the viewer on every render.
+  const sepia = useMemo(() => sepiaPalette(sepiaTone), [sepiaTone])
+  const pageColors =
+    mode === 'dark' ? DARK_PAGE_COLORS : mode === 'sepia' ? sepia.pageColors : undefined
+  // `dark` and `sepia` render differently (pageColors), so the viewer is
+  // rebuilt when toggling into/out of them — and, for sepia, when the tone
+  // itself changes, since the colours are baked in at rasterisation time.
+  // `invert` is pure CSS, so it shares the light build — this key drives the
+  // rebuild effect below.
+  const buildKey = mode === 'dark' ? 'dark' : mode === 'sepia' ? `sepia:${sepiaTone}` : 'light'
 
   // Fetch bytes and open the document. The custom `zen-asset://` protocol
   // may not honour range requests, so we hand PDF.js the whole buffer.
@@ -227,6 +266,12 @@ export function PdfView({
         // so the highlight tool can be switched on later.
         annotationEditorMode: pdfjs.AnnotationEditorType.NONE,
         annotationEditorHighlightColors: HIGHLIGHT_COLORS,
+        // Fit Width sizes a page to `container.clientWidth - 40`, that 40 being
+        // a hardcoded allowance for a classic overlay scrollbar, which left a
+        // 20px dead strip down each side. This option is the only lever on it
+        // and it goes straight to 0, so the breathing room is taken from the
+        // container's transparent border instead (see .zen-pdf-container).
+        removePageBorders: true,
         ...(pageColors ? { pageColors } : {})
       })
     } catch (err) {
@@ -524,7 +569,7 @@ export function PdfView({
   }, [tabPath, saveNow])
 
   const modeLabel = useMemo<Record<PdfReadingMode, string>>(
-    () => ({ light: 'Light', dark: 'Dark', invert: 'Invert' }),
+    () => ({ light: 'Light', sepia: 'Sepia', dark: 'Dark', invert: 'Invert' }),
     []
   )
 
@@ -631,7 +676,7 @@ export function PdfView({
 
         {/* Reading modes + annotate (right-aligned) */}
         <div className="zen-pdf-group ml-auto flex items-center gap-1">
-          {(['light', 'dark', 'invert'] as const).map((m) => (
+          {(['light', 'sepia', 'dark', 'invert'] as const).map((m) => (
             <button
               key={m}
               type="button"
@@ -720,8 +765,11 @@ export function PdfView({
         <div
           ref={containerRef}
           className={`zen-pdf-container absolute inset-0 overflow-auto ${
-            mode === 'light' ? '' : 'zen-pdf-scroll-dark'
+            mode === 'dark' || mode === 'invert' ? 'zen-pdf-scroll-dark' : ''
           }`}
+          // Sepia's desk is derived from the chosen tone rather than a fixed
+          // class, so it stays in step as the warmth is adjusted.
+          style={mode === 'sepia' ? { backgroundColor: sepia.desk } : undefined}
         >
           <div ref={viewerElRef} className={`pdfViewer ${mode === 'invert' ? 'zen-pdf-invert' : ''}`} />
         </div>

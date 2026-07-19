@@ -179,6 +179,11 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
     tomlKey: 'pdf_embed_in_edit_mode',
     comment: 'compact | full'
   },
+  pdfSepiaTone: {
+    section: 'editor',
+    tomlKey: 'pdf_sepia_tone',
+    comment: 'PDF Sepia reading-mode paper warmth, 0 (barely tinted) to 100 (deep aged paper)'
+  },
   // appearance
   pdfExportUseTheme: {
     section: 'appearance',

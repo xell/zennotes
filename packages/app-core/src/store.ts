@@ -420,6 +420,12 @@ function normalizePdfPinchTuning(value: unknown): PdfPinchTuning {
   }
 }
 
+/** Clamp the sepia warmth from the (user-editable) config into 0-100. */
+function clampPdfSepiaTone(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 55
+  return Math.min(100, Math.max(0, Math.round(value)))
+}
+
 interface Prefs {
   vimMode: boolean
   /** Key sequence that exits insert mode (maps to <Esc>), e.g. "jk".
@@ -547,6 +553,8 @@ interface Prefs {
   pdfDefaultZoom: PdfDefaultZoom
   /** Pinch-zoom fit-detent feel (break-out stickiness + gesture reset). */
   pdfPinchTuning: PdfPinchTuning
+  /** Sepia reading-mode warmth, 0 (barely tinted) to 100 (deep sepia). */
+  pdfSepiaTone: number
   /** What the pinned reference points at — a markdown note (loaded
    *  into the editor) or a non-text asset like a PDF (loaded into an
    *  iframe). Defaults to 'note'. */
@@ -820,6 +828,7 @@ export const DEFAULT_PREFS: Prefs = {
   pdfEmbedInEditMode: 'compact',
   pdfDefaultZoom: 'page-width',
   pdfPinchTuning: { stickiness: 15, resetMs: 160 },
+  pdfSepiaTone: 55,
   pinnedRefKind: 'note',
   noteRefs: {},
   contentAlign: 'center',
@@ -1066,6 +1075,7 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
         ? p.pdfDefaultZoom
         : DEFAULT_PREFS.pdfDefaultZoom,
     pdfPinchTuning: normalizePdfPinchTuning(p.pdfPinchTuning),
+    pdfSepiaTone: clampPdfSepiaTone(p.pdfSepiaTone),
     pinnedRefKind:
       p.pinnedRefKind === 'asset' || p.pinnedRefKind === 'note'
         ? p.pinnedRefKind
@@ -1880,6 +1890,8 @@ function collectPrefs(s: {
   pdfEmbedInEditMode: 'compact' | 'full'
   pdfDefaultZoom: PdfDefaultZoom
   pdfPinchTuning: PdfPinchTuning
+  /** Sepia reading-mode warmth, 0 (barely tinted) to 100 (deep sepia). */
+  pdfSepiaTone: number
   pinnedRefKind: 'note' | 'asset'
   noteRefs: Record<string, { path: string; kind: 'note' | 'asset' }>
   contentAlign: 'center' | 'left'
@@ -1962,6 +1974,7 @@ function collectPrefs(s: {
     pdfEmbedInEditMode: s.pdfEmbedInEditMode,
     pdfDefaultZoom: s.pdfDefaultZoom,
     pdfPinchTuning: s.pdfPinchTuning,
+    pdfSepiaTone: s.pdfSepiaTone,
     pinnedRefKind: s.pinnedRefKind,
     noteRefs: s.noteRefs,
     contentAlign: s.contentAlign,
@@ -2457,6 +2470,8 @@ interface Store {
 
   /** Pinch-zoom fit-detent feel (break-out stickiness + gesture reset gap). */
   pdfPinchTuning: PdfPinchTuning
+  /** Sepia reading-mode warmth, 0 (barely tinted) to 100 (deep sepia). */
+  pdfSepiaTone: number
 
   /** Whether the pinned reference is a markdown note (default) or
    *  some other asset (PDF, audio, etc.) shown via iframe. */
@@ -2988,6 +3003,7 @@ interface Store {
   setPdfEmbedInEditMode: (mode: 'compact' | 'full') => void
   setPdfDefaultZoom: (mode: PdfDefaultZoom) => void
   setPdfPinchTuning: (patch: Partial<PdfPinchTuning>) => void
+  setPdfSepiaTone: (tone: number) => void
   setContentAlign: (align: 'center' | 'left') => void
   setTagsCollapsed: (collapsed: boolean) => void
   setAutoCalendarPanel: (enabled: boolean) => void
@@ -4141,6 +4157,7 @@ export const useStore = create<Store>((set, get) => {
   pdfEmbedInEditMode: loadPrefs().pdfEmbedInEditMode,
   pdfDefaultZoom: loadPrefs().pdfDefaultZoom,
   pdfPinchTuning: loadPrefs().pdfPinchTuning,
+  pdfSepiaTone: loadPrefs().pdfSepiaTone,
   pinnedRefKind: loadPrefs().pinnedRefKind,
   noteRefs: loadPrefs().noteRefs,
   contentAlign: loadPrefs().contentAlign,
@@ -7088,6 +7105,11 @@ export const useStore = create<Store>((set, get) => {
 
   setPdfPinchTuning: (patch) => {
     set((s) => ({ pdfPinchTuning: normalizePdfPinchTuning({ ...s.pdfPinchTuning, ...patch }) }))
+    savePrefs(collectPrefs(get()))
+  },
+
+  setPdfSepiaTone: (tone) => {
+    set({ pdfSepiaTone: clampPdfSepiaTone(tone) })
     savePrefs(collectPrefs(get()))
   },
 

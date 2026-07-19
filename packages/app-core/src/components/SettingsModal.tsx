@@ -490,6 +490,8 @@ export function SettingsModal(): JSX.Element {
   const setPdfDefaultZoom = useStore((s) => s.setPdfDefaultZoom);
   const pdfPinchTuning = useStore((s) => s.pdfPinchTuning);
   const setPdfPinchTuning = useStore((s) => s.setPdfPinchTuning);
+  const pdfSepiaTone = useStore((s) => s.pdfSepiaTone);
+  const setPdfSepiaTone = useStore((s) => s.setPdfSepiaTone);
   const contentAlign = useStore((s) => s.contentAlign);
   const setContentAlign = useStore((s) => s.setContentAlign);
   const vault = useStore((s) => s.vault);
@@ -2336,6 +2338,22 @@ export function SettingsModal(): JSX.Element {
                     { value: "auto", label: "Automatic" },
                   ]}
                   onChange={(next) => setPdfDefaultZoom(next)}
+                />
+              </Section>
+              <Section
+                title="Sepia reading mode"
+                description="The Sepia button in the PDF toolbar tints the page like aged paper. It recolours the page and its text as the page is drawn, so photos and figures keep their original colours (unlike Invert). This sets how warm that paper looks."
+              >
+                <SliderRow
+                  label="Paper warmth"
+                  description="Low is barely off-white; high is a deep aged-paper tone. The ink stays a fixed warm brown at every setting, so raising the warmth doesn't cost you contrast."
+                  value={pdfSepiaTone}
+                  min={0}
+                  max={100}
+                  step={5}
+                  unit="%"
+                  settingId="pdf-sepia-tone"
+                  onChange={(v) => setPdfSepiaTone(v)}
                 />
               </Section>
               <Section

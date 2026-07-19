@@ -4686,12 +4686,15 @@ textarea,
   color: inherit;
   transition: background-color 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
 }
+/* Ink-based overlays rather than black ones: `--z-ink-900` is dark on light
+ * themes and light on dark ones, so hover/active stay visible either way
+ * (a black wash is invisible over a dark toolbar). */
 .zen-pdf-btn:hover {
-  background-color: rgb(0 0 0 / 0.06);
+  background-color: rgb(var(--z-ink-900) / 0.08);
 }
 .zen-pdf-btn-active {
-  border-color: rgb(0 0 0 / 0.12);
-  background-color: rgb(0 0 0 / 0.08);
+  border-color: rgb(var(--z-ink-900) / 0.16);
+  background-color: rgb(var(--z-ink-900) / 0.11);
   font-weight: 600;
 }
 .zen-pdf-zoom-level {
@@ -4706,32 +4709,37 @@ textarea,
   width: 1px;
   align-self: stretch;
   margin: 2px 2px;
-  background-color: rgb(0 0 0 / 0.1);
+  background-color: rgb(var(--z-ink-900) / 0.14);
 }
+/* Theme-driven, not hardcoded light. These were `background: rgb(255 255 255
+ * / 0.55)` with `color: inherit`, which in a dark theme painted a pale grey
+ * box under the toolbar's own light text — the controls read as blank grey
+ * rectangles. `--z-bg-1` and `--z-ink-900` both flip with the theme, and the
+ * ink-alpha borders/overlays stay visible on either background. */
 .zen-pdf-input {
   width: 3em;
   padding: 2px 4px;
   border-radius: 5px;
-  border: 1px solid rgb(0 0 0 / 0.14);
-  background-color: rgb(255 255 255 / 0.55);
-  color: inherit;
+  border: 1px solid rgb(var(--z-ink-900) / 0.16);
+  background-color: rgb(var(--z-bg-1));
+  color: rgb(var(--z-ink-900));
   text-align: center;
 }
 .zen-pdf-input:focus {
   outline: none;
-  border-color: rgb(0 0 0 / 0.3);
+  border-color: rgb(var(--z-ink-900) / 0.34);
 }
 .zen-pdf-select {
   padding: 2px 4px;
   border-radius: 5px;
-  border: 1px solid rgb(0 0 0 / 0.14);
-  background-color: rgb(255 255 255 / 0.55);
-  color: inherit;
+  border: 1px solid rgb(var(--z-ink-900) / 0.16);
+  background-color: rgb(var(--z-bg-1));
+  color: rgb(var(--z-ink-900));
   cursor: pointer;
 }
 .zen-pdf-select:focus {
   outline: none;
-  border-color: rgb(0 0 0 / 0.3);
+  border-color: rgb(var(--z-ink-900) / 0.34);
 }
 .zen-pdf-findbar {
   backdrop-filter: blur(6px);
@@ -4745,7 +4753,18 @@ textarea,
 }
 
 .zen-pdf-container {
-  padding: 20px 0 48px;
+  /* The gap around the pages lives here, as a transparent *border* rather than
+   * padding. PDF.js sizes pages from `clientWidth`/`clientHeight`, which
+   * include padding but exclude borders — so padding would make it size pages
+   * larger than the space actually left for them and produce scrollbars in Fit
+   * Width and Fit Page. With `removePageBorders` zeroing PDF.js's own 40px
+   * allowance, these widths are the whole margin around the pages; tune them
+   * freely. The desk colour below paints under the border (background-clip
+   * defaults to border-box), so the surface stays continuous. */
+  padding: 0;
+  border: 6px solid transparent;
+  border-top-width: 4px;
+  border-bottom-width: 10px;
   /* Theme-aware "desk" behind the pages, so white pages sit on a soft grey
    * instead of a harsh white expanse. `--z-bg-3` tracks the active ZenNotes
    * theme (and system light/dark via apple-light/apple-dark), so it stays
@@ -4777,6 +4796,27 @@ textarea,
  * coloured content roughly true rather than photographic-negative. This also
  * inverts embedded images, which is why it is an explicit user choice, not
  * the default (dark mode via pageColors preserves images). */
+/* PDF.js's stylesheet is authored against the CSS default box model, but
+ * Tailwind's preflight sets `box-sizing: border-box` on every element, which
+ * silently breaks `.page`. PDF.js gives the page a 9px transparent border
+ * (`--page-border`, how it draws the gap between pages) and sets width/height
+ * to the scaled page size. Under content-box the border sits outside that
+ * size, so the canvas — `height: 100%` of the content box — matches the page
+ * exactly. Under border-box the border eats into it, so the canvas renders
+ * into `height - 18px` while the text layer, whose size PDF.js sets explicitly
+ * via setLayerDimensions to `calc(var(--scale-factor) * pageHeight)`, still
+ * spans the full height.
+ *
+ * The two layers then map the same page onto different heights, so the text
+ * layer drifts from the glyphs by `depth * 18px` — nothing at the top of the
+ * page, ~9px in the middle, 18px at the bottom. The border is a fixed 9px and
+ * never scales, so at 50% zoom (≈7px lines) the selection lands a whole line
+ * below the text, while at 300% (≈44px lines) it looks fine. Restore the box
+ * model PDF.js expects; specificity has to beat its own `.pdfViewer .page`. */
+.zen-pdf .pdfViewer .page {
+  box-sizing: content-box;
+}
+
 .pdfViewer.zen-pdf-invert .page {
   filter: invert(1) hue-rotate(180deg);
 }
