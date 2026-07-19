@@ -423,6 +423,16 @@ function normalizePdfPinchTuning(value: unknown): PdfPinchTuning {
 /** Tabs of the PDF outline panel. `thumbnails` is reserved for the next round. */
 export type PdfSidePanelTab = 'contents' | 'annotations'
 
+/** Only the palette PDF.js is configured with; anything else is ignored so a
+ *  hand-edited config cannot produce highlights in an unpickable colour. */
+const PDF_HIGHLIGHT_COLORS = ['#FFFF98', '#53FFBC', '#80EBFF', '#FFCBE6', '#FF4F5F']
+
+function normalizePdfHighlightColor(value: unknown): string {
+  if (typeof value !== 'string') return PDF_HIGHLIGHT_COLORS[0]
+  const upper = value.toUpperCase()
+  return PDF_HIGHLIGHT_COLORS.includes(upper) ? upper : PDF_HIGHLIGHT_COLORS[0]
+}
+
 function normalizePdfSidePanelTab(value: unknown): PdfSidePanelTab {
   return value === 'annotations' ? 'annotations' : 'contents'
 }
@@ -564,6 +574,8 @@ interface Prefs {
   pdfSepiaTone: number
   /** Last-used tab of the PDF outline panel; seeds newly opened panels. */
   pdfSidePanelTab: PdfSidePanelTab
+  /** Colour new PDF highlights are created in (hex, from PDF.js's palette). */
+  pdfHighlightColor: string
   /** What the pinned reference points at — a markdown note (loaded
    *  into the editor) or a non-text asset like a PDF (loaded into an
    *  iframe). Defaults to 'note'. */
@@ -839,6 +851,7 @@ export const DEFAULT_PREFS: Prefs = {
   pdfPinchTuning: { stickiness: 15, resetMs: 160 },
   pdfSepiaTone: 55,
   pdfSidePanelTab: 'contents',
+  pdfHighlightColor: '#FFFF98',
   pinnedRefKind: 'note',
   noteRefs: {},
   contentAlign: 'center',
@@ -1087,6 +1100,7 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
     pdfPinchTuning: normalizePdfPinchTuning(p.pdfPinchTuning),
     pdfSepiaTone: clampPdfSepiaTone(p.pdfSepiaTone),
     pdfSidePanelTab: normalizePdfSidePanelTab(p.pdfSidePanelTab),
+    pdfHighlightColor: normalizePdfHighlightColor(p.pdfHighlightColor),
     pinnedRefKind:
       p.pinnedRefKind === 'asset' || p.pinnedRefKind === 'note'
         ? p.pinnedRefKind
@@ -1904,6 +1918,7 @@ function collectPrefs(s: {
   /** Sepia reading-mode warmth, 0 (barely tinted) to 100 (deep sepia). */
   pdfSepiaTone: number
   pdfSidePanelTab: PdfSidePanelTab
+  pdfHighlightColor: string
   pinnedRefKind: 'note' | 'asset'
   noteRefs: Record<string, { path: string; kind: 'note' | 'asset' }>
   contentAlign: 'center' | 'left'
@@ -1988,6 +2003,7 @@ function collectPrefs(s: {
     pdfPinchTuning: s.pdfPinchTuning,
     pdfSepiaTone: s.pdfSepiaTone,
     pdfSidePanelTab: s.pdfSidePanelTab,
+    pdfHighlightColor: s.pdfHighlightColor,
     pinnedRefKind: s.pinnedRefKind,
     noteRefs: s.noteRefs,
     contentAlign: s.contentAlign,
@@ -2486,6 +2502,7 @@ interface Store {
   /** Sepia reading-mode warmth, 0 (barely tinted) to 100 (deep sepia). */
   pdfSepiaTone: number
   pdfSidePanelTab: PdfSidePanelTab
+  pdfHighlightColor: string
 
   /** Whether the pinned reference is a markdown note (default) or
    *  some other asset (PDF, audio, etc.) shown via iframe. */
@@ -3019,6 +3036,7 @@ interface Store {
   setPdfPinchTuning: (patch: Partial<PdfPinchTuning>) => void
   setPdfSepiaTone: (tone: number) => void
   setPdfSidePanelTab: (tab: PdfSidePanelTab) => void
+  setPdfHighlightColor: (hex: string) => void
   setContentAlign: (align: 'center' | 'left') => void
   setTagsCollapsed: (collapsed: boolean) => void
   setAutoCalendarPanel: (enabled: boolean) => void
@@ -4174,6 +4192,7 @@ export const useStore = create<Store>((set, get) => {
   pdfPinchTuning: loadPrefs().pdfPinchTuning,
   pdfSepiaTone: loadPrefs().pdfSepiaTone,
   pdfSidePanelTab: loadPrefs().pdfSidePanelTab,
+  pdfHighlightColor: loadPrefs().pdfHighlightColor,
   pinnedRefKind: loadPrefs().pinnedRefKind,
   noteRefs: loadPrefs().noteRefs,
   contentAlign: loadPrefs().contentAlign,
@@ -7131,6 +7150,11 @@ export const useStore = create<Store>((set, get) => {
 
   setPdfSidePanelTab: (tab) => {
     set({ pdfSidePanelTab: normalizePdfSidePanelTab(tab) })
+    savePrefs(collectPrefs(get()))
+  },
+
+  setPdfHighlightColor: (hex) => {
+    set({ pdfHighlightColor: normalizePdfHighlightColor(hex) })
     savePrefs(collectPrefs(get()))
   },
 

@@ -4675,27 +4675,52 @@ textarea,
  * ZenNotes chrome (toolbar, dark background, invert fallback, selection
  * opt-in). See data/pdf.md.
  * ======================================================================== */
+/* PDF.js hands a selected annotation editor `z-index: 100000 !important` so its
+ * edit toolbar floats above page content. That number is absolute, not relative
+ * to the viewer, so the toolbar also floated above ZenNotes' own modals (the
+ * app's scale tops out at toast: 90) — a confirm dialog appeared *behind* the
+ * highlight's colour picker. Isolating the viewer gives it its own stacking
+ * context, so every z-index PDF.js uses is resolved inside it and none can
+ * outrank app chrome. Fixes the whole class of problem rather than that one
+ * selector, which matters because the library sets several. */
+.zen-pdf {
+  isolation: isolate;
+}
+
 .zen-pdf-toolbar {
   backdrop-filter: blur(6px);
 }
+/* Matches the sidebar's IconBtn (bg-accent/15 + text-accent when on), so the
+ * PDF bar reads as ZenNotes chrome rather than a bolted-on viewer toolbar. */
 .zen-pdf-btn {
   padding: 2px 7px;
   border-radius: 6px;
-  border: 1px solid transparent;
+  border: none;
   line-height: 1.4;
-  color: inherit;
-  transition: background-color 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+  color: rgb(var(--z-ink-500));
+  transition: background-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
 }
 /* Ink-based overlays rather than black ones: `--z-ink-900` is dark on light
  * themes and light on dark ones, so hover/active stay visible either way
  * (a black wash is invisible over a dark toolbar). */
-.zen-pdf-btn:hover {
-  background-color: rgb(var(--z-ink-900) / 0.08);
+/* Icon-only bar buttons: a fixed square so the row reads as one set of
+ * controls rather than a ragged mix of glyph and text widths. */
+.zen-pdf-btn-icon {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
-.zen-pdf-btn-active {
-  border-color: rgb(var(--z-ink-900) / 0.16);
-  background-color: rgb(var(--z-ink-900) / 0.11);
-  font-weight: 600;
+.zen-pdf-btn:hover:not(:disabled) {
+  background-color: rgb(var(--z-paper-200));
+  color: rgb(var(--z-ink-900));
+}
+.zen-pdf-btn-active,
+.zen-pdf-btn-active:hover:not(:disabled) {
+  background-color: rgb(var(--z-accent) / 0.15);
+  color: rgb(var(--z-accent));
 }
 .zen-pdf-zoom-level {
   min-width: 3.2em;

@@ -189,6 +189,11 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
     tomlKey: 'pdf_side_panel_tab',
     comment: 'contents | annotations — tab the PDF outline panel opens on'
   },
+  pdfHighlightColor: {
+    section: 'editor',
+    tomlKey: 'pdf_highlight_color',
+    comment: 'colour new PDF highlights use: #FFFF98 | #53FFBC | #80EBFF | #FFCBE6 | #FF4F5F'
+  },
   // appearance
   pdfExportUseTheme: {
     section: 'appearance',

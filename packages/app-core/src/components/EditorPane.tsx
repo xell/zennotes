@@ -122,7 +122,7 @@ import { AssetsView } from './AssetsView'
 import { QuickNotesView } from './QuickNotesView'
 import { NoteStats } from './StatusBar'
 import { MediaPlayer } from './MediaPlayer'
-import { PdfView } from './PdfView'
+import { PdfView, type PdfAssetAction } from './PdfView'
 import { readingStats, type ReadingStats } from '../lib/word-count'
 import { isTasksTabPath } from '@shared/tasks'
 import { isDatabaseTabPath, databaseTitleFromTab, databaseTabPath, isDatabaseCsvPath } from '@shared/databases'
@@ -184,6 +184,7 @@ import {
   PanelLeftIcon,
   PanelRightIcon,
   PinIcon,
+  TargetIcon,
   TagIcon,
   TrashIcon,
   ZapIcon
@@ -3816,6 +3817,47 @@ function AssetTabView({
     window.zen.getAppInfo().runtime === 'desktop' &&
     useStore.getState().workspaceMode !== 'remote'
 
+  // The three asset actions, as data rather than markup: a PDF folds them into
+  // its own single bar (see PdfView), everything else renders them in the
+  // header below.
+  const assetActions: PdfAssetAction[] =
+    canReveal && assetPath
+      ? [
+          {
+            id: 'reference',
+            label: 'Open as Reference',
+            icon: <PinIcon width={14} height={14} />,
+            onClick: () => useStore.getState().pinAssetReference(assetPath)
+          },
+          {
+            id: 'locate',
+            label: 'Locate in Assets Manager',
+            icon: <TargetIcon width={14} height={14} />,
+            onClick: () => void useStore.getState().locateAssetInManager(assetPath)
+          },
+          {
+            id: 'reveal',
+            label: 'Reveal in File Manager',
+            icon: <ArrowUpRightIcon width={14} height={14} />,
+            onClick: () => void window.zen.revealNote(assetPath)
+          }
+        ]
+      : []
+
+  // A PDF owns its whole chrome: one merged bar instead of this header stacked
+  // above the viewer's own toolbar.
+  if (assetPath && assetUrl && assetKind === 'pdf') {
+    return (
+      <PdfView
+        assetUrl={assetUrl}
+        assetPath={assetPath}
+        tabPath={tabPath}
+        title={title}
+        assetActions={assetActions}
+      />
+    )
+  }
+
   const body = !assetPath || !assetUrl ? (
     <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-ink-400">
       Couldn't resolve asset path.
@@ -3842,11 +3884,6 @@ function AssetTabView({
         <MediaPlayer kind="audio" src={assetUrl} mediaClassName="w-full" />
       </div>
     </div>
-  ) : assetKind === 'pdf' ? (
-    // Custom PDF.js viewer (replacing Chromium's built-in one) so we get
-    // images-preserved dark reading and, in a follow-up, standard portable
-    // highlight annotations. See data/pdf.md.
-    <PdfView assetUrl={assetUrl} assetPath={assetPath} tabPath={tabPath} title={title} />
   ) : assetKind === 'html' ? (
     // HTML is the one executable asset kind, so it renders inside a
     // sandbox — allow-scripts/allow-forms only, deliberately WITHOUT

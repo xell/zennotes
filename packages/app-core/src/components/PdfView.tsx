@@ -20,6 +20,19 @@ import 'pdfjs-dist/web/pdf_viewer.css'
 // off the main thread. `vite/client` (app-core tsconfig `types`) provides
 // the `*?url` module declaration.
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import {
+  DocumentIcon,
+  FileDownIcon,
+  FitPageIcon,
+  RevertIcon,
+  FitWidthIcon,
+  HighlighterIcon,
+  ListTreeIcon,
+  MoreIcon,
+  SearchIcon
+} from './icons'
+import { PdfBarMenu, PdfMenuItem, PdfMenuRow } from './PdfBarMenu'
+import { confirmApp } from '../lib/confirm-requests'
 import { registerPdfBuffer } from '../lib/pdf-buffers'
 import { registerPdfOutline, type PdfOutlineItem } from '../lib/pdf-outline'
 import {
@@ -96,6 +109,15 @@ const FIT_PRESETS = new Set(['auto', 'page-actual', 'page-fit', 'page-width'])
 // These are PDF.js's own default highlight colours.
 const HIGHLIGHT_COLORS = 'yellow=#FFFF98,green=#53FFBC,blue=#80EBFF,pink=#FFCBE6,red=#FF4F5F'
 
+/** The same palette as a list, so the colour picker and the editor can never
+ *  drift apart: both are derived from the string above. */
+const HIGHLIGHT_PALETTE: { name: string; label: string; hex: string }[] = HIGHLIGHT_COLORS.split(
+  ','
+).map((entry) => {
+  const [name, hex] = entry.split('=')
+  return { name, label: name.charAt(0).toUpperCase() + name.slice(1), hex: hex.toUpperCase() }
+})
+
 function applyViewMode(viewer: PDFViewer, viewMode: PdfViewMode): void {
   if (viewMode === 'single') {
     viewer.scrollMode = ScrollMode.PAGE
@@ -109,11 +131,22 @@ function applyViewMode(viewer: PDFViewer, viewMode: PdfViewMode): void {
   }
 }
 
+/** An asset-level action contributed by the host tab (reference, locate,
+ *  reveal). Passed as data rather than rendered nodes so the PDF bar can lay
+ *  them out inside its own menu. */
+export interface PdfAssetAction {
+  id: string
+  label: string
+  icon: JSX.Element
+  onClick: () => void
+}
+
 export function PdfView({
   assetUrl,
   assetPath,
   tabPath,
-  title
+  title,
+  assetActions = []
 }: {
   assetUrl: string
   /** Vault-relative path of the PDF, used to save bytes back to the file. */
@@ -121,6 +154,9 @@ export function PdfView({
   /** The tab's path — the key the close guard looks this buffer up under. */
   tabPath: string
   title: string
+  /** Host-provided actions (reference / locate / reveal) folded into this
+   *  view's own menu, so a PDF shows one bar rather than two. */
+  assetActions?: PdfAssetAction[]
 }): JSX.Element {
   // The scrollable, absolutely-positioned host PDFViewer requires.
   const containerRef = useRef<HTMLDivElement>(null)
@@ -132,11 +168,15 @@ export function PdfView({
   const linkServiceRef = useRef<PDFLinkService | null>(null)
 
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null)
+  // Bumped to force a re-fetch of the bytes on disk (Revert).
+  const [reloadKey, setReloadKey] = useState(0)
   const [mode, setMode] = useState<PdfReadingMode>('light')
   const [highlightOn, setHighlightOn] = useState(false)
   // Read by the mode-restore listener, which must not re-subscribe per toggle.
   const highlightOnRef = useRef(false)
   highlightOnRef.current = highlightOn
+  // Read inside the highlight-creation callback without re-creating it.
+  const highlightColorRef = useRef('')
   // Last non-collapsed selection made inside this viewer. Opening the Command
   // Palette moves focus and drops the live selection, so the palette entry
   // would otherwise always find nothing to highlight; this lets it (and a
@@ -162,9 +202,11 @@ export function PdfView({
 
   // Read synchronously by the close guard, so it stays a ref (not just state).
   const dirtyRef = useRef(false)
-  // Annotation-storage size at the last save (or load) — the clean baseline
-  // the current size is compared against to derive dirtiness.
-  const savedSizeRef = useRef(0)
+  // True while a clean document is entering an editing mode, so the deferred
+  // re-baseline knows the dirtiness it is clearing is mode bookkeeping.
+  const enteringModeCleanRef = useRef(false)
+  // Page to return to after a Revert reload (null = leave at page 1).
+  const restorePageRef = useRef<number | null>(null)
   const pdfDocRef = useRef<PDFDocumentProxy | null>(null)
   // Latest view mode, read inside the (rebuild-on-dark-toggle) viewer effect
   // without making it a dependency.
@@ -245,7 +287,7 @@ export function PdfView({
         }
         pdfDocRef.current = doc
         restoreScaleRef.current = null // a new document opens at the default zoom
-        savedSizeRef.current = doc.annotationStorage.size
+        doc.annotationStorage.resetModified()
         markDirty(false)
         setNumPages(doc.numPages)
         setPdfDoc(doc)
@@ -260,7 +302,7 @@ export function PdfView({
     return () => {
       cancelled = true
     }
-  }, [assetUrl])
+  }, [assetUrl, reloadKey])
 
   // Destroy the document when it is replaced or the view unmounts.
   useEffect(() => {
@@ -334,6 +376,11 @@ export function PdfView({
       // First open uses the configured default zoom; a rebuild (dark toggle)
       // restores whatever zoom the user was at.
       viewer.currentScaleValue = restoreScaleRef.current ?? defaultZoomRef.current
+      // Revert reloads the document; put the reader back where they were.
+      if (restorePageRef.current != null) {
+        viewer.currentPageNumber = restorePageRef.current
+        restorePageRef.current = null
+      }
       container.scrollTop = prevTop
       container.scrollLeft = prevLeft
       setStatus('ready')
@@ -363,19 +410,21 @@ export function PdfView({
       setCurrentPage(evt.pageNumber)
       setPageInput(String(evt.pageNumber))
     }
-    // Highlights add/remove entries in the document's annotationStorage. Any
-    // editor-state change recomputes dirtiness against the last-saved size.
-    const onEditorStateChanged = (): void => {
-      const size = pdfDoc.annotationStorage.size
-      markDirty(size !== savedSizeRef.current)
-    }
+    // Dirtiness comes from the storage's own modified flag, not from counting
+    // its entries. Entry counts lie: entering highlight mode registers the
+    // document's existing annotations as editor objects, so `size` grows
+    // without the user having changed anything, and Save would light up on a
+    // document that needs no saving.
+    const storage = pdfDoc.annotationStorage
+    storage.onSetModified = () => markDirty(true)
+    storage.onResetModified = () => markDirty(false)
     const onFindMatches = (evt: { matchesCount?: { current: number; total: number } }): void => {
       setFindMatch({ current: evt.matchesCount?.current ?? 0, total: evt.matchesCount?.total ?? 0 })
     }
     eventBus.on('pagesinit', onPagesInit)
     eventBus.on('scalechanging', onScaleChanging)
     eventBus.on('pagechanging', onPageChanging)
-    eventBus.on('annotationeditorstateschanged', onEditorStateChanged)
+
     eventBus.on('updatefindmatchescount', onFindMatches)
     eventBus.on('updatefindcontrolstate', onFindMatches)
 
@@ -392,7 +441,7 @@ export function PdfView({
       eventBus.off('pagesinit', onPagesInit)
       eventBus.off('scalechanging', onScaleChanging)
       eventBus.off('pagechanging', onPageChanging)
-      eventBus.off('annotationeditorstateschanged', onEditorStateChanged)
+
       eventBus.off('updatefindmatchescount', onFindMatches)
       eventBus.off('updatefindcontrolstate', onFindMatches)
       try {
@@ -417,6 +466,69 @@ export function PdfView({
       console.error('PdfView: failed to set annotation editor mode', err)
     }
   }, [highlightOn, status])
+
+  // Entering an editing mode is not an edit.
+  //
+  // Switching into HIGHLIGHT makes PDF.js register the document's existing
+  // annotations as editor objects, which writes them into annotationStorage
+  // and trips its modified flag — so arming the tool and doing nothing would
+  // offer to "save" a document nobody changed. Re-baseline once the mode has
+  // settled, but ONLY when the document was clean beforehand: doing it
+  // unconditionally would silently discard the dirty state of edits made
+  // before the tool was armed.
+  useEffect(() => {
+    const bus = eventBusRef.current
+    if (!bus || status !== 'ready') return
+    const onModeChanged = ({ mode: nextMode }: { mode: number }): void => {
+      if (nextMode === pdfjs.AnnotationEditorType.NONE) return
+      if (dirtyRef.current) return
+      // Deferred: the registration happens as the layers build, after this
+      // event fires.
+      setTimeout(() => {
+        if (dirtyRef.current && !enteringModeCleanRef.current) return
+        pdfDocRef.current?.annotationStorage.resetModified()
+        markDirty(false)
+        enteringModeCleanRef.current = false
+      }, 0)
+      enteringModeCleanRef.current = true
+    }
+    bus.on('annotationeditormodechanged', onModeChanged)
+    return () => bus.off('annotationeditormodechanged', onModeChanged)
+  }, [status, markDirty])
+
+  // Colour used for new highlights.
+  //
+  // `HIGHLIGHT_DEFAULT_COLOR` is applied to the editor *classes*
+  // (updateDefaultParams), not to a selected editor, so it settles the colour
+  // of every highlight made afterwards — floating button, shortcut or tool —
+  // without needing anything selected or any mode borrowing. Chosen up front
+  // rather than recoloured afterwards for exactly that reason: the post-hoc
+  // picker needs a live editing layer, which is the trap documented in
+  // data/pdf.md.
+  const highlightColor = useStore((s) => s.pdfHighlightColor)
+  highlightColorRef.current = highlightColor
+  const setHighlightColor = useStore((s) => s.setPdfHighlightColor)
+  const applyHighlightColor = useCallback((hex: string): void => {
+    const bus = eventBusRef.current
+    if (!bus) return
+    try {
+      bus.dispatch('switchannotationeditorparams', {
+        source: bus,
+        type: pdfjs.AnnotationEditorParamsType.HIGHLIGHT_DEFAULT_COLOR,
+        value: hex
+      })
+    } catch (err) {
+      console.error('PdfView: failed to set the highlight colour', err)
+    }
+  }, [])
+
+  // Re-applied on every viewer build as well as on change: a rebuild (dark or
+  // sepia toggle) constructs a fresh UI manager that knows nothing of the
+  // colour chosen earlier.
+  useEffect(() => {
+    if (status !== 'ready') return
+    applyHighlightColor(highlightColor)
+  }, [status, highlightColor, applyHighlightColor, buildKey])
 
   // Highlight the current selection without leaving normal reading mode.
   //
@@ -483,6 +595,7 @@ export function PdfView({
       : pdfjs.AnnotationEditorType.NONE
 
     const createHighlight = (): void => {
+      applyHighlightColor(highlightColorRef.current)
       try {
         bus.dispatch('editingaction', { source: bus, name: 'highlightSelection' })
       } catch (err) {
@@ -958,7 +1071,7 @@ export function PdfView({
       const bytes = await doc.saveDocument()
       const ok = await window.zen.savePdf(assetPath, bytes)
       if (ok) {
-        savedSizeRef.current = doc.annotationStorage.size
+        doc.annotationStorage.resetModified()
         markDirty(false)
       }
       return ok
@@ -969,6 +1082,33 @@ export function PdfView({
       setSaving(false)
     }
   }, [assetPath, markDirty])
+
+  // Throw away every unsaved edit by reloading the file from disk.
+  //
+  // A reload rather than unwinding the editor's undo stack: the file is the
+  // definition of "the previous state", so re-reading it cannot drift, whereas
+  // replaying undos depends on PDF.js's stack being complete and symmetric.
+  // Page and zoom are restored afterwards so reverting does not also lose the
+  // reader's place.
+  const revertNow = useCallback(async (): Promise<void> => {
+    const ok = await confirmApp({
+      title: 'Discard unsaved highlights?',
+      description:
+        'The PDF will be reloaded from disk. Highlights you have not saved will be lost. This cannot be undone.',
+      confirmLabel: 'Discard',
+      cancelLabel: 'Keep editing',
+      danger: true
+    })
+    if (!ok) return
+    const viewer = viewerRef.current
+    if (viewer) {
+      restoreScaleRef.current = viewer.currentScaleValue
+      restorePageRef.current = viewer.currentPageNumber
+    }
+    setHighlightOn(false)
+    markDirty(false)
+    setReloadKey((n) => n + 1)
+  }, [markDirty])
 
   // Expose dirty state + save to the store's close guard, keyed by tab path.
   useEffect(() => {
@@ -987,138 +1127,274 @@ export function PdfView({
 
   return (
     <div className="zen-pdf flex min-h-0 min-w-0 flex-1 flex-col bg-paper-100/40">
-      <div className="zen-pdf-toolbar flex min-h-9 shrink-0 flex-wrap items-center gap-1.5 border-b border-paper-300/70 px-3 py-1 text-xs text-ink-700">
-        {/* Page navigation */}
-        <div className="zen-pdf-group flex items-center gap-1">
-          <button
-            type="button"
-            className="zen-pdf-btn"
-            onClick={prevPage}
-            disabled={currentPage <= 1}
-            title="Previous page"
-          >
-            ‹
-          </button>
-          <input
-            className="zen-pdf-input tabular-nums"
-            value={pageInput}
-            onChange={(e) => setPageInput(e.target.value)}
-            onBlur={commitPageInput}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                commitPageInput()
-                ;(e.target as HTMLInputElement).blur()
-              }
-            }}
-            aria-label="Page number"
-          />
-          <span className="zen-pdf-pagecount tabular-nums text-ink-500">/ {numPages || '–'}</span>
-          <button
-            type="button"
-            className="zen-pdf-btn"
-            onClick={nextPage}
-            disabled={numPages > 0 && currentPage >= numPages}
-            title="Next page"
-          >
-            ›
-          </button>
+      {/* One bar, not two: the host tab's title row and the viewer's controls
+          are merged here, so a PDF no longer stacks a ZenNotes header above a
+          PDF.js toolbar. What is used constantly (page, highlight, save) stays
+          visible; everything else collapses into two menus. */}
+      <header className="zen-pdf-bar glass-header flex h-12 shrink-0 items-center gap-2 border-b border-paper-300/70 px-3 text-xs text-ink-700">
+        <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-ink-900">
+          <DocumentIcon width={15} height={15} className="shrink-0 text-accent" />
+          <span className="truncate">{title}</span>
         </div>
 
-        <span className="zen-pdf-divider" />
-
-        {/* Zoom */}
-        <div className="zen-pdf-group flex items-center gap-1">
-          <button type="button" className="zen-pdf-btn" onClick={zoomOut} title="Zoom out">
-            −
-          </button>
-          <select
-            className="zen-pdf-select tabular-nums"
-            value={scaleSelect}
-            onChange={(e) => setScaleValue(e.target.value)}
-            title="Zoom"
-          >
-            <option value="auto">Automatic</option>
-            <option value="page-actual">Actual Size</option>
-            <option value="page-fit">Fit Page</option>
-            <option value="page-width">Fit Width</option>
-            <option value="0.5">50%</option>
-            <option value="0.75">75%</option>
-            <option value="1">100%</option>
-            <option value="1.25">125%</option>
-            <option value="1.5">150%</option>
-            <option value="2">200%</option>
-            <option value="3">300%</option>
-            <option value="4">400%</option>
-            {customScale && <option value="custom">{scalePct}%</option>}
-          </select>
-          <button type="button" className="zen-pdf-btn" onClick={zoomIn} title="Zoom in">
-            +
-          </button>
-        </div>
-
-        <span className="zen-pdf-divider" />
-
-        {/* View mode */}
-        <select
-          className="zen-pdf-select"
-          value={viewMode}
-          onChange={(e) => changeViewMode(e.target.value as PdfViewMode)}
-          title="Page layout"
-        >
-          <option value="single">Single Page</option>
-          <option value="continuous">Continuous</option>
-          <option value="two-page">Two Pages</option>
-        </select>
-
-        <span className="zen-pdf-divider" />
-
-        {/* Find */}
-        <button
-          type="button"
-          className={`zen-pdf-btn ${findOpen ? 'zen-pdf-btn-active' : ''}`}
-          aria-pressed={findOpen}
-          onClick={() => (findOpen ? closeFind() : setFindOpen(true))}
-          title="Find in document"
-        >
-          Find
-        </button>
-
-        {/* Reading modes + annotate (right-aligned) */}
-        <div className="zen-pdf-group ml-auto flex items-center gap-1">
-          {(['light', 'sepia', 'dark', 'invert'] as const).map((m) => (
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          <div className="zen-pdf-group flex items-center gap-1">
             <button
-              key={m}
               type="button"
-              className={`zen-pdf-btn ${mode === m ? 'zen-pdf-btn-active' : ''}`}
-              aria-pressed={mode === m}
-              onClick={() => setMode(m)}
-              title={`${modeLabel[m]} reading mode`}
+              className="zen-pdf-btn zen-pdf-btn-icon"
+              onClick={prevPage}
+              disabled={currentPage <= 1}
+              title="Previous page"
             >
-              {modeLabel[m]}
+              ‹
             </button>
-          ))}
+            <input
+              className="zen-pdf-input tabular-nums"
+              value={pageInput}
+              onChange={(e) => setPageInput(e.target.value)}
+              onBlur={commitPageInput}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  commitPageInput()
+                }
+              }}
+              aria-label="Page number"
+            />
+            <span className="zen-pdf-pagecount tabular-nums text-ink-500">/ {numPages || '–'}</span>
+            <button
+              type="button"
+              className="zen-pdf-btn zen-pdf-btn-icon"
+              onClick={nextPage}
+              disabled={numPages > 0 && currentPage >= numPages}
+              title="Next page"
+            >
+              ›
+            </button>
+          </div>
+
           <span className="zen-pdf-divider" />
+
+          {/* Colour for new highlights, sitting left of the tool it applies
+              to. The button is the swatch, so the current choice is readable
+              without opening anything. */}
+          <PdfBarMenu
+            title={`Highlight colour: ${
+              HIGHLIGHT_PALETTE.find((c) => c.hex === highlightColor)?.label ?? 'custom'
+            }`}
+            label={
+              <span
+                aria-hidden
+                className="h-3.5 w-3.5 rounded-[3px] ring-1 ring-inset ring-black/20"
+                style={{ backgroundColor: highlightColor }}
+              />
+            }
+          >
+            {(close) => (
+              <>
+                {HIGHLIGHT_PALETTE.map((colour) => (
+                  <PdfMenuItem
+                    key={colour.hex}
+                    active={colour.hex === highlightColor}
+                    icon={
+                      <span
+                        aria-hidden
+                        className="h-3.5 w-3.5 rounded-[3px] ring-1 ring-inset ring-black/20"
+                        style={{ backgroundColor: colour.hex }}
+                      />
+                    }
+                    label={colour.label}
+                    onClick={() => {
+                      close()
+                      setHighlightColor(colour.hex)
+                    }}
+                  />
+                ))}
+              </>
+            )}
+          </PdfBarMenu>
+
           <button
             type="button"
-            className={`zen-pdf-btn ${highlightOn ? 'zen-pdf-btn-active' : ''}`}
+            className={`zen-pdf-btn zen-pdf-btn-icon ${highlightOn ? 'zen-pdf-btn-active' : ''}`}
             aria-pressed={highlightOn}
             onClick={() => setHighlightOn((v) => !v)}
-            title="Highlight text (select to highlight)"
+            title="Highlight tool — drag to highlight (works on scanned pages too)"
           >
-            Highlight
+            <HighlighterIcon width={14} height={14} />
           </button>
-          <button
-            type="button"
-            className={`zen-pdf-btn ${dirty ? 'zen-pdf-btn-active' : ''}`}
-            onClick={() => void saveNow()}
-            disabled={!dirty || saving}
-            title={dirty ? 'Save highlights to the PDF' : 'No unsaved changes'}
+
+          {/* Save and Discard appear only when there is something to act on.
+              A permanently visible, greyed-out Save is noise, and worse, it
+              implies the document might need saving when it does not. */}
+          {dirty && (
+            <>
+              <button
+                type="button"
+                className="zen-pdf-btn zen-pdf-btn-icon zen-pdf-btn-active"
+                onClick={() => void saveNow()}
+                disabled={saving}
+                title={saving ? 'Saving…' : 'Save highlights into the PDF'}
+                aria-label="Save highlights into the PDF"
+              >
+                <FileDownIcon width={14} height={14} />
+              </button>
+              <button
+                type="button"
+                className="zen-pdf-btn zen-pdf-btn-icon"
+                onClick={() => void revertNow()}
+                disabled={saving}
+                title="Discard unsaved highlights and reload from disk"
+                aria-label="Discard unsaved highlights"
+              >
+                <RevertIcon width={14} height={14} />
+              </button>
+            </>
+          )}
+
+          {/* Actions: the host tab's own actions, plus find and the outline
+              panel, which otherwise had no home once the toolbar merged. */}
+          <PdfBarMenu label={<MoreIcon width={15} height={15} />} title="Actions">
+            {(close) => (
+              <>
+                {assetActions.map((action) => (
+                  <PdfMenuItem
+                    key={action.id}
+                    icon={action.icon}
+                    label={action.label}
+                    onClick={() => {
+                      close()
+                      action.onClick()
+                    }}
+                  />
+                ))}
+                <PdfMenuItem
+                  icon={<SearchIcon width={14} height={14} />}
+                  label="Find in document"
+                  active={findOpen}
+                  onClick={() => {
+                    close()
+                    if (findOpen) closeFind()
+                    else setFindOpen(true)
+                  }}
+                />
+                <PdfMenuItem
+                  icon={<ListTreeIcon width={14} height={14} />}
+                  label="Contents & annotations"
+                  onClick={() => {
+                    close()
+                    window.dispatchEvent(new Event('zen:toggle-outline'))
+                  }}
+                />
+              </>
+            )}
+          </PdfBarMenu>
+
+          {/* Appearance: zoom, page layout, reading mode. `Aa` is the
+              convention Apple Books uses for exactly this grouping. */}
+          <PdfBarMenu
+            label={<span className="font-medium">Aa</span>}
+            title="Zoom, layout & reading mode"
+            wide
           >
-            {saving ? 'Saving…' : dirty ? 'Save' : 'Saved'}
-          </button>
+            {() => (
+              <>
+                <PdfMenuRow label="Zoom">
+                  {/* Presets first, then the stepless controls (− select +)
+                      grouped together. Symbols keep the row compact; the labels
+                      move into tooltips and aria-labels rather than vanishing. */}
+                  <button
+                    type="button"
+                    className={`zen-pdf-btn ${!customScale && scaleSelect === 'page-fit' ? 'zen-pdf-btn-active' : ''}`}
+                    onClick={() => setScaleValue('page-fit')}
+                    title="Fit Page"
+                    aria-label="Fit Page"
+                    aria-pressed={!customScale && scaleSelect === 'page-fit'}
+                  >
+                    <FitPageIcon width={14} height={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className={`zen-pdf-btn ${!customScale && scaleSelect === 'page-width' ? 'zen-pdf-btn-active' : ''}`}
+                    onClick={() => setScaleValue('page-width')}
+                    title="Fit Width"
+                    aria-label="Fit Width"
+                    aria-pressed={!customScale && scaleSelect === 'page-width'}
+                  >
+                    <FitWidthIcon width={14} height={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className={`zen-pdf-btn ${!customScale && scaleSelect === 'page-actual' ? 'zen-pdf-btn-active' : ''}`}
+                    onClick={() => setScaleValue('page-actual')}
+                    title="Actual size (100%)"
+                    aria-label="Actual size (100%)"
+                    aria-pressed={!customScale && scaleSelect === 'page-actual'}
+                  >
+                    <span className="font-medium tabular-nums">1:1</span>
+                  </button>
+                  <button type="button" className="zen-pdf-btn" onClick={zoomOut} title="Zoom out">
+                    −
+                  </button>
+                  <select
+                    className="zen-pdf-select tabular-nums"
+                    value={customScale ? 'custom' : scaleSelect}
+                    onChange={(e) => setScaleValue(e.target.value)}
+                    aria-label="Zoom level"
+                  >
+                    {customScale && <option value="custom">{scalePct}%</option>}
+                    <option value="auto">Automatic</option>
+                    <option value="0.5">50%</option>
+                    <option value="0.75">75%</option>
+                    <option value="1.25">125%</option>
+                    <option value="1.5">150%</option>
+                    <option value="2">200%</option>
+                    <option value="3">300%</option>
+                  </select>
+                  <button type="button" className="zen-pdf-btn" onClick={zoomIn} title="Zoom in">
+                    +
+                  </button>
+                </PdfMenuRow>
+
+                <PdfMenuRow label="Layout">
+                  {(
+                    [
+                      ['single', 'Single'],
+                      ['continuous', 'Continuous'],
+                      ['two-page', 'Two page']
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={`zen-pdf-btn ${viewMode === value ? 'zen-pdf-btn-active' : ''}`}
+                      aria-pressed={viewMode === value}
+                      onClick={() => changeViewMode(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </PdfMenuRow>
+
+                <PdfMenuRow label="Reading">
+                  {(['light', 'sepia', 'dark', 'invert'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      className={`zen-pdf-btn ${mode === m ? 'zen-pdf-btn-active' : ''}`}
+                      aria-pressed={mode === m}
+                      onClick={() => setMode(m)}
+                      title={`${modeLabel[m]} reading mode`}
+                    >
+                      {modeLabel[m]}
+                    </button>
+                  ))}
+                </PdfMenuRow>
+              </>
+            )}
+          </PdfBarMenu>
         </div>
-      </div>
+      </header>
 
       {findOpen && (
         <div className="zen-pdf-findbar flex shrink-0 items-center gap-2 border-b border-paper-300/70 px-3 py-1.5 text-xs">

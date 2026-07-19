@@ -356,6 +356,38 @@ export const ListTreeIcon = (p: IconProps): JSX.Element => (
   </I>
 )
 
+/* PDF zoom presets. FitPage and FitWidth are deliberately the same page
+   outline differing only in the arrow's axis, so the pair reads as one set:
+   "fit this way" vs "fit that way". Actual size stays a `1:1` text label
+   rather than a third glyph — digits do not survive a 14px stroke icon, and
+   the bar already uses text-as-symbol for `Aa`. */
+export const FitPageIcon = (p: IconProps): JSX.Element => (
+  <I {...p}>
+    <rect x="4" y="3" width="16" height="18" rx="2" />
+    <path d="M12 7v10" />
+    <path d="m9.5 9.5 2.5-2.5 2.5 2.5" />
+    <path d="m9.5 14.5 2.5 2.5 2.5-2.5" />
+  </I>
+)
+
+export const FitWidthIcon = (p: IconProps): JSX.Element => (
+  <I {...p}>
+    <rect x="4" y="3" width="16" height="18" rx="2" />
+    <path d="M7 12h10" />
+    <path d="m9.5 9.5-2.5 2.5 2.5 2.5" />
+    <path d="m14.5 9.5 2.5 2.5-2.5 2.5" />
+  </I>
+)
+
+/* Discard / revert: counter-clockwise arrow, distinct from a plain back arrow
+   so it does not read as navigation. */
+export const RevertIcon = (p: IconProps): JSX.Element => (
+  <I {...p}>
+    <path d="M3 2v6h6" />
+    <path d="M3 13a9 9 0 1 0 3-7.7L3 8" />
+  </I>
+)
+
 export const PinIcon = (p: IconProps): JSX.Element => (
   <I {...p}>
     <path d="M12 17v5" />

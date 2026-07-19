@@ -82,6 +82,7 @@ export const PORTABLE_PREF_KEYS = [
   'pdfPinchTuning',
   'pdfSepiaTone',
   'pdfSidePanelTab',
+  'pdfHighlightColor',
   // appearance
   'themeId',
   'themeFamily',
@@ -195,6 +196,7 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   pdfPinchTuning: { stickiness: 15, resetMs: 160 },
   pdfSepiaTone: 55,
   pdfSidePanelTab: 'contents',
+  pdfHighlightColor: '#FFFF98',
   themeId: 'dark-hard',
   themeFamily: 'gruvbox',
   themeMode: 'dark',
