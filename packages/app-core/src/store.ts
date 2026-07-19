@@ -420,6 +420,13 @@ function normalizePdfPinchTuning(value: unknown): PdfPinchTuning {
   }
 }
 
+/** Tabs of the PDF outline panel. `thumbnails` is reserved for the next round. */
+export type PdfSidePanelTab = 'contents' | 'annotations'
+
+function normalizePdfSidePanelTab(value: unknown): PdfSidePanelTab {
+  return value === 'annotations' ? 'annotations' : 'contents'
+}
+
 /** Clamp the sepia warmth from the (user-editable) config into 0-100. */
 function clampPdfSepiaTone(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return 55
@@ -555,6 +562,8 @@ interface Prefs {
   pdfPinchTuning: PdfPinchTuning
   /** Sepia reading-mode warmth, 0 (barely tinted) to 100 (deep sepia). */
   pdfSepiaTone: number
+  /** Last-used tab of the PDF outline panel; seeds newly opened panels. */
+  pdfSidePanelTab: PdfSidePanelTab
   /** What the pinned reference points at — a markdown note (loaded
    *  into the editor) or a non-text asset like a PDF (loaded into an
    *  iframe). Defaults to 'note'. */
@@ -829,6 +838,7 @@ export const DEFAULT_PREFS: Prefs = {
   pdfDefaultZoom: 'page-width',
   pdfPinchTuning: { stickiness: 15, resetMs: 160 },
   pdfSepiaTone: 55,
+  pdfSidePanelTab: 'contents',
   pinnedRefKind: 'note',
   noteRefs: {},
   contentAlign: 'center',
@@ -1076,6 +1086,7 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
         : DEFAULT_PREFS.pdfDefaultZoom,
     pdfPinchTuning: normalizePdfPinchTuning(p.pdfPinchTuning),
     pdfSepiaTone: clampPdfSepiaTone(p.pdfSepiaTone),
+    pdfSidePanelTab: normalizePdfSidePanelTab(p.pdfSidePanelTab),
     pinnedRefKind:
       p.pinnedRefKind === 'asset' || p.pinnedRefKind === 'note'
         ? p.pinnedRefKind
@@ -1892,6 +1903,7 @@ function collectPrefs(s: {
   pdfPinchTuning: PdfPinchTuning
   /** Sepia reading-mode warmth, 0 (barely tinted) to 100 (deep sepia). */
   pdfSepiaTone: number
+  pdfSidePanelTab: PdfSidePanelTab
   pinnedRefKind: 'note' | 'asset'
   noteRefs: Record<string, { path: string; kind: 'note' | 'asset' }>
   contentAlign: 'center' | 'left'
@@ -1975,6 +1987,7 @@ function collectPrefs(s: {
     pdfDefaultZoom: s.pdfDefaultZoom,
     pdfPinchTuning: s.pdfPinchTuning,
     pdfSepiaTone: s.pdfSepiaTone,
+    pdfSidePanelTab: s.pdfSidePanelTab,
     pinnedRefKind: s.pinnedRefKind,
     noteRefs: s.noteRefs,
     contentAlign: s.contentAlign,
@@ -2472,6 +2485,7 @@ interface Store {
   pdfPinchTuning: PdfPinchTuning
   /** Sepia reading-mode warmth, 0 (barely tinted) to 100 (deep sepia). */
   pdfSepiaTone: number
+  pdfSidePanelTab: PdfSidePanelTab
 
   /** Whether the pinned reference is a markdown note (default) or
    *  some other asset (PDF, audio, etc.) shown via iframe. */
@@ -3004,6 +3018,7 @@ interface Store {
   setPdfDefaultZoom: (mode: PdfDefaultZoom) => void
   setPdfPinchTuning: (patch: Partial<PdfPinchTuning>) => void
   setPdfSepiaTone: (tone: number) => void
+  setPdfSidePanelTab: (tab: PdfSidePanelTab) => void
   setContentAlign: (align: 'center' | 'left') => void
   setTagsCollapsed: (collapsed: boolean) => void
   setAutoCalendarPanel: (enabled: boolean) => void
@@ -4158,6 +4173,7 @@ export const useStore = create<Store>((set, get) => {
   pdfDefaultZoom: loadPrefs().pdfDefaultZoom,
   pdfPinchTuning: loadPrefs().pdfPinchTuning,
   pdfSepiaTone: loadPrefs().pdfSepiaTone,
+  pdfSidePanelTab: loadPrefs().pdfSidePanelTab,
   pinnedRefKind: loadPrefs().pinnedRefKind,
   noteRefs: loadPrefs().noteRefs,
   contentAlign: loadPrefs().contentAlign,
@@ -7110,6 +7126,11 @@ export const useStore = create<Store>((set, get) => {
 
   setPdfSepiaTone: (tone) => {
     set({ pdfSepiaTone: clampPdfSepiaTone(tone) })
+    savePrefs(collectPrefs(get()))
+  },
+
+  setPdfSidePanelTab: (tab) => {
+    set({ pdfSidePanelTab: normalizePdfSidePanelTab(tab) })
     savePrefs(collectPrefs(get()))
   },
 

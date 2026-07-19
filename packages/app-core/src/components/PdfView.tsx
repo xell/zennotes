@@ -22,6 +22,17 @@ import 'pdfjs-dist/web/pdf_viewer.css'
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { registerPdfBuffer } from '../lib/pdf-buffers'
 import { registerPdfOutline, type PdfOutlineItem } from '../lib/pdf-outline'
+import {
+  isListedSubtype,
+  isTextMarkupSubtype,
+  normalizeQuadPoints,
+  pdfColorToCss,
+  quadsBounds,
+  registerPdfAnnotations,
+  textInQuads,
+  type PdfAnnotationEntry,
+  type TextBox
+} from '../lib/pdf-annotations'
 import { useStore } from '../store'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
@@ -580,6 +591,158 @@ export function PdfView({
       unregister?.()
     }
   }, [pdfDoc, tabPath])
+
+  // Assemble the annotation list for the annotations tab.
+  //
+  // Rebuilt whenever the editor reports a change (`dirty` flips as highlights
+  // are added or removed) as well as on load. Page text is fetched lazily and
+  // cached, since only pages carrying a highlight need it — scanning every page
+  // of a long PDF up front would be wasted work for a document with three
+  // highlights in it.
+  useEffect(() => {
+    if (!pdfDoc) return
+    let cancelled = false
+    let unregister: (() => void) | null = null
+    const textCache = new Map<number, TextBox[]>()
+
+    const pageText = async (pageNumber: number): Promise<TextBox[]> => {
+      const cached = textCache.get(pageNumber)
+      if (cached) return cached
+      const page = await pdfDoc.getPage(pageNumber)
+      const content = await page.getTextContent()
+      const boxes: TextBox[] = []
+      for (const item of content.items) {
+        const it = item as { str?: unknown; transform?: unknown; width?: unknown; height?: unknown }
+        if (typeof it.str !== 'string' || !Array.isArray(it.transform)) continue
+        boxes.push({
+          str: it.str,
+          x: Number(it.transform[4]) || 0,
+          y: Number(it.transform[5]) || 0,
+          width: Number(it.width) || 0,
+          height: Number(it.height) || 0
+        })
+      }
+      textCache.set(pageNumber, boxes)
+      return boxes
+    }
+
+    void (async () => {
+      const entries: PdfAnnotationEntry[] = []
+      try {
+        // Deleting an embedded annotation leaves a tombstone in the storage
+        // rather than removing it from the parsed document, so collect those
+        // ids first and skip them below.
+        const storage = pdfDoc.annotationStorage.getAll() ?? {}
+        const deletedIds = new Set<string>()
+        for (const value of Object.values(storage)) {
+          const v = value as { deleted?: unknown; id?: unknown }
+          if (v?.deleted === true && typeof v.id === 'string') deletedIds.add(v.id)
+        }
+
+        for (let pageNumber = 1; pageNumber <= pdfDoc.numPages; pageNumber++) {
+          if (cancelled) return
+          const page = await pdfDoc.getPage(pageNumber)
+          const annotations = await page.getAnnotations({ intent: 'display' })
+          for (const raw of annotations) {
+            const a = raw as {
+              subtype?: unknown
+              id?: unknown
+              quadPoints?: unknown
+              color?: unknown
+              rect?: unknown
+              contents?: unknown
+            }
+            // Every markup type a person can leave on a page, not just
+            // highlights: Preview and Acrobat also produce Underline,
+            // StrikeOut, Square, Ink, sticky notes and so on. PDF.js parses
+            // all of them (it simply cannot author them).
+            if (!isListedSubtype(a.subtype)) continue
+            if (typeof a.id === 'string' && deletedIds.has(a.id)) continue
+            const subtype = a.subtype
+            const quads = normalizeQuadPoints(a.quadPoints)
+            const bounds = quads.length
+              ? quadsBounds(quads)
+              : ((Array.isArray(a.rect) ? a.rect : [0, 0, 0, 0]) as [
+                  number,
+                  number,
+                  number,
+                  number
+                ])
+            // Text markup gets the words it covers; a sticky note or FreeText
+            // carries the author's own text in `contents`; shapes have neither.
+            const contents = typeof a.contents === 'string' ? a.contents.trim() : ''
+            const text =
+              isTextMarkupSubtype(subtype) && quads.length
+                ? textInQuads(await pageText(pageNumber), quads)
+                : contents
+            entries.push({
+              key: typeof a.id === 'string' ? `embedded:${a.id}` : `embedded:${pageNumber}:${entries.length}`,
+              pageNumber,
+              subtype,
+              color: pdfColorToCss(a.color),
+              text,
+              rect: bounds
+            })
+          }
+        }
+
+        // Highlights made this session. Saving writes bytes without reloading,
+        // so these never appear in getAnnotations() above and cannot duplicate.
+        for (const [id, value] of Object.entries(storage)) {
+          if (cancelled) return
+          const v = value as {
+            annotationType?: unknown
+            deleted?: unknown
+            pageIndex?: unknown
+            color?: unknown
+            quadPoints?: unknown
+            rect?: unknown
+          }
+          if (v?.annotationType !== pdfjs.AnnotationEditorType.HIGHLIGHT) continue
+          if (v.deleted === true) continue
+          const pageNumber = typeof v.pageIndex === 'number' ? v.pageIndex + 1 : 1
+          const quads = normalizeQuadPoints(v.quadPoints)
+          const bounds = quads.length
+            ? quadsBounds(quads)
+            : ((Array.isArray(v.rect) ? v.rect : [0, 0, 0, 0]) as [number, number, number, number])
+          entries.push({
+            key: `session:${id}`,
+            pageNumber,
+            subtype: 'Highlight',
+            color: pdfColorToCss(v.color),
+            text: quads.length ? textInQuads(await pageText(pageNumber), quads) : '',
+            rect: bounds
+          })
+        }
+      } catch (err) {
+        console.error('PdfView: failed to collect annotations', err)
+      }
+      if (cancelled) return
+      entries.sort((a, b) => a.pageNumber - b.pageNumber || b.rect[3] - a.rect[3])
+      unregister = registerPdfAnnotations(tabPath, {
+        entries,
+        goTo: (highlight) => {
+          const viewer = viewerRef.current
+          if (!viewer) return
+          try {
+            // XYZ destination: left/top of the highlight, null zoom to keep the
+            // user's current scale rather than yanking it.
+            viewer.scrollPageIntoView({
+              pageNumber: highlight.pageNumber,
+              destArray: [null, { name: 'XYZ' }, highlight.rect[0], highlight.rect[3], null]
+            })
+          } catch (err) {
+            console.error('PdfView: failed to scroll to highlight', err)
+          }
+        }
+      })
+    })()
+
+    return () => {
+      cancelled = true
+      unregister?.()
+    }
+  }, [pdfDoc, tabPath, dirty])
 
   // Command Palette / keyboard shortcut path.
   useEffect(() => {

@@ -184,6 +184,11 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
     tomlKey: 'pdf_sepia_tone',
     comment: 'PDF Sepia reading-mode paper warmth, 0 (barely tinted) to 100 (deep aged paper)'
   },
+  pdfSidePanelTab: {
+    section: 'editor',
+    tomlKey: 'pdf_side_panel_tab',
+    comment: 'contents | annotations — tab the PDF outline panel opens on'
+  },
   // appearance
   pdfExportUseTheme: {
     section: 'appearance',

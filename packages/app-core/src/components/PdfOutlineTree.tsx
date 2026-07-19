@@ -1,24 +1,10 @@
 /**
- * Table-of-contents panel for a PDF tab — the counterpart to `OutlinePanel`,
- * which reads markdown headings from a note body. Both sit in the same slot in
- * EditorPane and share the panel chrome (width, resize handle), so `Cmd+3`
- * means "show me this document's structure" whichever kind of tab is open.
- *
- * The tree comes from `pdfDocument.getOutline()` (published by the open PdfView
- * via the pdf-outline registry) rather than from any PDF.js UI: its
- * `PDFOutlineViewer` lives in the full viewer application, which `pdfjs-dist`
- * does not ship.
+ * Contents tab of the PDF side panel: the document's embedded outline.
+ * Chrome (width, resize, tab strip) belongs to `PdfSidePanel`; this renders
+ * only the tree so each tab stays a plain content component.
  */
 import { useMemo, useState } from 'react'
-import { usePdfOutline, type PdfOutlineItem } from '../lib/pdf-outline'
-import { useStore } from '../store'
-import { usePanelResize } from '../lib/use-panel-resize'
-import { PanelResizeHandle } from './PanelResizeHandle'
-
-interface Props {
-  /** Tab path of the PDF whose outline to show. */
-  tabPath: string
-}
+import type { PdfOutlineHandle, PdfOutlineItem } from '../lib/pdf-outline'
 
 interface FlatRow {
   item: PdfOutlineItem
@@ -56,13 +42,9 @@ function flattenAll(items: PdfOutlineItem[], depth = 0, prefix = ''): FlatRow[] 
   return rows
 }
 
-export function PdfOutlinePanel({ tabPath }: Props): JSX.Element {
-  const outline = usePdfOutline(tabPath)
+export function PdfOutlineTree({ outline }: { outline?: PdfOutlineHandle }): JSX.Element {
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
-  const width = useStore((s) => s.panelWidths.outline)
-  const setPanelWidth = useStore((s) => s.setPanelWidth)
-  const { startResize } = usePanelResize(width, (px) => setPanelWidth('outline', px))
 
   const items = outline?.items ?? []
   const trimmed = query.trim().toLowerCase()
@@ -82,12 +64,7 @@ export function PdfOutlinePanel({ tabPath }: Props): JSX.Element {
   }
 
   return (
-    <section
-      aria-label="PDF outline"
-      style={{ width }}
-      className="zen-pdf-outline relative flex shrink-0 flex-col border-l border-paper-300/70 bg-paper-50/18"
-    >
-      <PanelResizeHandle onStart={startResize} />
+    <>
       <div className="shrink-0 border-b border-paper-300/70 px-3 py-2">
         <input
           value={query}
@@ -148,6 +125,6 @@ export function PdfOutlinePanel({ tabPath }: Props): JSX.Element {
           </ul>
         )}
       </div>
-    </section>
+    </>
   )
 }

@@ -99,7 +99,7 @@ import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
 import { LazyDiagramTabView, LazyPreview as Preview } from './LazyPreview'
 import { ConnectionsPanel } from './ConnectionsPanel'
 import { OutlinePanel } from './OutlinePanel'
-import { PdfOutlinePanel } from './PdfOutlinePanel'
+import { PdfSidePanel } from './PdfSidePanel'
 import { CalendarPanel } from './CalendarPanel'
 import { CommentsPanel, type CommentDraft } from './CommentsPanel'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
@@ -3657,7 +3657,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
           // PDFs only. Any other asset (image, video, audio) has no outline to
           // publish, so the panel would sit on "Loading…" forever.
           classifyLocalAssetHref(assetPathFromTab(activeTab) ?? '') === 'pdf' && (
-            <PdfOutlinePanel tabPath={activeTab} />
+            <PdfSidePanel tabPath={activeTab} />
           )}
         {content && calendarOpen && calendarAvailable && !zenMode && (
           <CalendarPanel note={content} />

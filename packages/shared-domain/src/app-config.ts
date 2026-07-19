@@ -81,6 +81,7 @@ export const PORTABLE_PREF_KEYS = [
   'pdfDefaultZoom',
   'pdfPinchTuning',
   'pdfSepiaTone',
+  'pdfSidePanelTab',
   // appearance
   'themeId',
   'themeFamily',
@@ -193,6 +194,7 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   pdfDefaultZoom: 'page-width',
   pdfPinchTuning: { stickiness: 15, resetMs: 160 },
   pdfSepiaTone: 55,
+  pdfSidePanelTab: 'contents',
   themeId: 'dark-hard',
   themeFamily: 'gruvbox',
   themeMode: 'dark',
