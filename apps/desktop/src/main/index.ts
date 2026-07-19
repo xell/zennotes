@@ -591,17 +591,24 @@ function loadWindowSpacesNative(): WindowSpacesNative | null {
   }
 }
 const windowSpacesNative = loadWindowSpacesNative()
-// TEMP diagnostic: always on while we validate the CGS capture/restore. Flip
-// back to env-gated once it works.
-const DEBUG_WINDOW_SPACES = true
-if (windowSpacesNative) {
-  try {
-    console.error('[window spaces] addon loaded; all spaces:', JSON.stringify(windowSpacesNative.getAllSpaceIds()))
-  } catch (err) {
-    console.error('[window spaces] getAllSpaceIds threw at load', err)
+// Per-window Space capture/restore is chatty and entirely diagnostic once it
+// works, so it is behind an env var: `DEBUG_WINDOW_SPACES=1`. Note main-process
+// logs only surface when the app is launched from a terminal
+// (/Applications/ZenNotes.app/Contents/MacOS/ZenNotes) — there is no log file.
+const DEBUG_WINDOW_SPACES = !!process.env.DEBUG_WINDOW_SPACES
+if (DEBUG_WINDOW_SPACES) {
+  if (windowSpacesNative) {
+    try {
+      console.error(
+        '[window spaces] addon loaded; all spaces:',
+        JSON.stringify(windowSpacesNative.getAllSpaceIds())
+      )
+    } catch (err) {
+      console.error('[window spaces] getAllSpaceIds threw at load', err)
+    }
+  } else {
+    console.error('[window spaces] addon NOT loaded (windowSpacesNative is null)')
   }
-} else {
-  console.error('[window spaces] addon NOT loaded (windowSpacesNative is null)')
 }
 
 // The UUID of the Space `win` is currently on, or null when the addon is
