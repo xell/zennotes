@@ -80,8 +80,23 @@ export function OutlinePalette(): JSX.Element {
   }
 
   return (
-    <Modal size="md" layer="palette" onClose={close} closeOnEsc={false}>
-      <div className="border-b border-paper-300/70 px-4 py-3">
+    // Height follows the content (search box + list + footer) so a short
+    // outline shows in full with no scrolling; past the cap the list is the
+    // part that shrinks and scrolls.
+    //
+    // The cap is 84vh rather than the full window because the panel keeps the
+    // standard 14vh palette anchor: 14 + 84 leaves a 2vh bottom margin. Going
+    // taller would mean starting the panel higher up, and staying top-anchored
+    // (instead of centred) is what keeps the search box from sliding around as
+    // filtering changes the panel's height.
+    <Modal
+      size="md"
+      layer="palette"
+      className="flex max-h-[84vh] flex-col"
+      onClose={close}
+      closeOnEsc={false}
+    >
+      <div className="shrink-0 border-b border-paper-300/70 px-4 py-3">
           <input
             ref={inputRef}
             value={query}
@@ -111,7 +126,10 @@ export function OutlinePalette(): JSX.Element {
             className="w-full bg-transparent text-base text-ink-900 outline-none placeholder:text-ink-400"
           />
         </div>
-        <div ref={listRef} className="max-h-[50vh] overflow-x-hidden overflow-y-auto py-1">
+        {/* No max-height of its own: the panel's 95vh cap bounds it, and
+            min-h-0 lets this flex child shrink (and scroll) instead of forcing
+            the panel taller than the cap. */}
+        <div ref={listRef} className="min-h-0 overflow-x-hidden overflow-y-auto py-1">
           {results.length === 0 ? (
             <div className="px-4 py-6 text-center text-sm text-ink-400">
               {items.length === 0
@@ -128,7 +146,10 @@ export function OutlinePalette(): JSX.Element {
                 onClick={() => jump(item)}
                 onMouseMove={() => setActive(i)}
                 className={[
-                  'flex w-full min-w-0 items-center gap-3 px-4 py-2 text-left',
+                  // Compact rows: py-0.5 + leading-tight gives ~21px against
+                  // the previous ~36px (py-2 + the default 20px line box), so
+                  // roughly 70% more headings fit in the same space.
+                  'flex w-full min-w-0 items-center gap-3 px-4 py-0.5 text-left leading-tight',
                   i === active ? 'bg-paper-200' : 'hover:bg-paper-200/70'
                 ].join(' ')}
                 style={{ paddingLeft: `${16 + (item.level - 1) * 14}px` }}
@@ -137,12 +158,16 @@ export function OutlinePalette(): JSX.Element {
                   H{item.level}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-sm text-ink-900">{item.text}</span>
-                <span className="shrink-0 text-xs text-ink-400">L{item.line}</span>
+                {/* Monospaced + tabular figures so the line numbers form a
+                    straight right-aligned column down the list. */}
+                <span className="shrink-0 font-mono text-xs tabular-nums text-ink-400">
+                  {item.line}
+                </span>
               </button>
             ))
           )}
         </div>
-        <div className="flex items-center justify-end gap-4 border-t border-paper-300/70 bg-paper-100 px-4 py-2 text-xs text-ink-500">
+        <div className="flex shrink-0 items-center justify-end gap-4 border-t border-paper-300/70 bg-paper-100 px-4 py-2 text-xs text-ink-500">
           <span>
             <kbd className="rounded bg-paper-200 px-1">↑↓</kbd>{' '}
             <kbd className="rounded bg-paper-200 px-1">Ctrl+N/P</kbd> move
