@@ -50,6 +50,12 @@ const SEPIA_PAPER_MAX = [232, 217, 181] as const
 // sheet rather than blending into the background.
 const SEPIA_DESK_SHADE = 0.88
 
+// The getter returns the current mode number (`this.#s`), but pdfjs-dist types
+// the property with the *setter's* object shape, so reading needs a widen.
+function readEditorMode(viewer: PDFViewer): number {
+  return viewer.annotationEditorMode as unknown as number
+}
+
 function mixChannel(from: number, to: number, t: number): number {
   return Math.round(from + (to - from) * t)
 }
@@ -114,6 +120,14 @@ export function PdfView({
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null)
   const [mode, setMode] = useState<PdfReadingMode>('light')
   const [highlightOn, setHighlightOn] = useState(false)
+  // Read by the mode-restore listener, which must not re-subscribe per toggle.
+  const highlightOnRef = useRef(false)
+  highlightOnRef.current = highlightOn
+  // Last non-collapsed selection made inside this viewer. Opening the Command
+  // Palette moves focus and drops the live selection, so the palette entry
+  // would otherwise always find nothing to highlight; this lets it (and a
+  // shortcut pressed after focus moved) act on what was last selected.
+  const lastSelectionRef = useRef<Range | null>(null)
   const [numPages, setNumPages] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
   const [pageInput, setPageInput] = useState('1')
@@ -266,6 +280,12 @@ export function PdfView({
         // so the highlight tool can be switched on later.
         annotationEditorMode: pdfjs.AnnotationEditorType.NONE,
         annotationEditorHighlightColors: HIGHLIGHT_COLORS,
+        // Pops a small highlight button beside any text selection (the same
+        // affordance Preview and PDF Expert have), so highlighting no longer
+        // requires arming the drag-to-highlight tool first. The tool toggle
+        // stays for consecutive marking and for scanned pages, where there is
+        // no text layer to select and free-form highlighting is the only way.
+        enableHighlightFloatingButton: true,
         // Fit Width sizes a page to `container.clientWidth - 40`, that 40 being
         // a hardcoded allowance for a classic overlay scrollbar, which left a
         // 20px dead strip down each side. This option is the only lever on it
@@ -273,7 +293,10 @@ export function PdfView({
         // container's transparent border instead (see .zen-pdf-container).
         removePageBorders: true,
         ...(pageColors ? { pageColors } : {})
-      })
+        // `enableHighlightFloatingButton` is missing from pdfjs-dist's
+        // PDFViewerOptions typings even though the shipped viewer reads it
+        // (verified in the bundle), so the literal needs widening.
+      } as ConstructorParameters<typeof PDFViewer>[0])
     } catch (err) {
       console.error('PdfView: PDFViewer construction failed', err)
       setErrorMessage('Viewer failed to initialise.')
@@ -380,6 +403,162 @@ export function PdfView({
     }
   }, [highlightOn, status])
 
+  // Highlight the current selection without leaving normal reading mode.
+  //
+  // Order matters here, and it is the whole trick. PDF.js's `highlightSelection`
+  // resolves the editor layer it will draw into *before* it asks for a mode
+  // change:
+  //
+  //     const layer = this.#getLayerForTextLayer(textLayerDiv)   // captured now
+  //     if (isNoneMode) { this.switchToMode(HIGHLIGHT, m); return }
+  //     // ...m() eventually calls  layer?.createAndAddNewEditor(...)
+  //
+  // Those layers only exist while an editing mode is active: returning to NONE
+  // runs `toggleEditingMode(false)` on every page and tears them down. So an
+  // "highlight, then restore NONE" sequence works exactly once — on a freshly
+  // opened document the layers still exist from the initial render, and after
+  // the first restore `layer` is null forever after, `layer?.` silently
+  // swallows the call, and highlighting appears dead until the tab is reopened
+  // (while the mode still dutifully cycles NONE→HIGHLIGHT→NONE, which is what
+  // made this look like a mode bug rather than a lifetime bug).
+  //
+  // Therefore: arm HIGHLIGHT first, wait for the mode to actually land so the
+  // layers exist, only then highlight, and restore afterwards.
+  useEffect(() => {
+    const onSelectionChange = (): void => {
+      const container = containerRef.current
+      const selection = document.getSelection()
+      if (!container || !selection || selection.isCollapsed || selection.rangeCount === 0) return
+      const range = selection.getRangeAt(0)
+      if (!container.contains(range.commonAncestorContainer)) return
+      lastSelectionRef.current = range.cloneRange()
+    }
+    document.addEventListener('selectionchange', onSelectionChange)
+    return () => document.removeEventListener('selectionchange', onSelectionChange)
+  }, [])
+
+  const highlightCurrentSelection = useCallback((): void => {
+    const viewer = viewerRef.current
+    const bus = eventBusRef.current
+    const container = containerRef.current
+    if (!viewer || !bus || !container) return
+    let selection = document.getSelection()
+    // Focus may have moved (Command Palette) and taken the selection with it.
+    // Put the remembered one back so PDF.js, which reads the live DOM
+    // selection, sees what the user actually meant.
+    if (!selection || selection.isCollapsed) {
+      const saved = lastSelectionRef.current
+      if (!saved || !saved.commonAncestorContainer.isConnected) return
+      if (!container.contains(saved.commonAncestorContainer)) return
+      try {
+        selection = document.getSelection()
+        selection?.removeAllRanges()
+        selection?.addRange(saved)
+      } catch {
+        return
+      }
+    }
+    if (!selection || selection.isCollapsed) return
+    // Consumed: without this, pressing the shortcut again would re-highlight
+    // the same text (the live selection is cleared by PDF.js as it works).
+    lastSelectionRef.current = null
+
+    const restoreTo = highlightOnRef.current
+      ? pdfjs.AnnotationEditorType.HIGHLIGHT
+      : pdfjs.AnnotationEditorType.NONE
+
+    const createHighlight = (): void => {
+      try {
+        bus.dispatch('editingaction', { source: bus, name: 'highlightSelection' })
+      } catch (err) {
+        console.error('PdfView: failed to highlight selection', err)
+      }
+      if (restoreTo === pdfjs.AnnotationEditorType.HIGHLIGHT) return
+      // Restore immediately (deferred one tick so the editor commits to
+      // annotationStorage first). This is why normal mode shows no colour
+      // picker: PDF.js only renders an editor's toolbar for a *selected* editor
+      // inside a *live* editing layer, and returning to NONE tears that layer
+      // down. Keeping the layer alive to show the picker was tried and
+      // abandoned — it means sitting in HIGHLIGHT mode with its cursor and
+      // drag-to-highlight behaviour, and no reliable signal exists for when to
+      // hand the mode back (see git history). Colour is chosen up front
+      // instead, via the toolbar's highlight tool.
+      setTimeout(() => {
+        const v = viewerRef.current
+        if (!v) return
+        try {
+          v.annotationEditorMode = { mode: restoreTo }
+        } catch {
+          /* viewer torn down mid-restore */
+        }
+      }, 0)
+    }
+
+    if (readEditorMode(viewer) === pdfjs.AnnotationEditorType.HIGHLIGHT) {
+      createHighlight()
+      return
+    }
+
+    const onceArmed = ({ mode }: { mode: number }): void => {
+      if (mode !== pdfjs.AnnotationEditorType.HIGHLIGHT) return
+      bus.off('annotationeditormodechanged', onceArmed)
+      createHighlight()
+    }
+    bus.on('annotationeditormodechanged', onceArmed)
+    try {
+      viewer.annotationEditorMode = { mode: pdfjs.AnnotationEditorType.HIGHLIGHT }
+    } catch (err) {
+      bus.off('annotationeditormodechanged', onceArmed)
+      console.error('PdfView: failed to arm the highlight editor', err)
+    }
+  }, [])
+
+  // Command Palette / keyboard shortcut path.
+  useEffect(() => {
+    if (status !== 'ready') return
+    const onRequest = (): void => highlightCurrentSelection()
+    window.addEventListener('zen:pdf-highlight-selection', onRequest)
+    return () => window.removeEventListener('zen:pdf-highlight-selection', onRequest)
+  }, [status, highlightCurrentSelection])
+
+  // PDF.js's own floating button beside a selection calls `highlightSelection`
+  // directly, which hits the stale-layer trap above and cannot be pre-armed
+  // from outside. Intercept its click during capture — which stops the event
+  // before it reaches PDF.js's own handler on the button — and run the armed
+  // path instead. The button (and its positioning/styling/l10n) stays PDF.js's.
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container || status !== 'ready') return
+    const onCaptureClick = (event: MouseEvent): void => {
+      const target = event.target as HTMLElement | null
+      if (!target?.closest('.highlightButton')) return
+      event.preventDefault()
+      event.stopPropagation()
+      highlightCurrentSelection()
+    }
+    container.addEventListener('click', onCaptureClick, true)
+    return () => container.removeEventListener('click', onCaptureClick, true)
+  }, [status, highlightCurrentSelection])
+
+
+  // Answer PDF.js's request to change editor mode. Nothing listens for this in
+  // the viewer-components layer (Mozilla's full viewer answers it in app.js),
+  // so without this any internal `switchToMode` would stall forever.
+  useEffect(() => {
+    const bus = eventBusRef.current
+    if (!bus || status !== 'ready') return
+    const onShowEditorUi = ({ mode }: { mode: number }): void => {
+      const viewer = viewerRef.current
+      if (!viewer) return
+      try {
+        viewer.annotationEditorMode = { mode }
+      } catch (err) {
+        console.error('PdfView: failed to apply requested editor mode', err)
+      }
+    }
+    bus.on('showannotationeditorui', onShowEditorUi)
+    return () => bus.off('showannotationeditorui', onShowEditorUi)
+  }, [status])
   // Fit modes (Fit Width / Fit Page / Automatic) depend on the pane size, so
   // recompute them whenever the container resizes (window resize AND split-
   // pane drags, which a window listener would miss).

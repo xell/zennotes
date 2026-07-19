@@ -23,6 +23,7 @@ export type KeymapId =
   | "global.toggleTerminalPanel"
   | "global.focusTerminal"
   | "global.addComment"
+  | "global.pdfHighlightSelection"
   | "global.focusPaneLeft"
   | "global.focusPaneRight"
   | "global.focusPaneUp"
@@ -264,6 +265,16 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Toggle outline panel",
     description: "Toggle the outline panel in the active pane.",
     defaultBinding: "Mod+3",
+  },
+  {
+    id: "global.pdfHighlightSelection",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Highlight PDF selection",
+    description:
+      "Create a highlight from the text selected in the PDF viewer, without leaving normal selection mode.",
+    defaultBinding: "Shift+Mod+H",
   },
   {
     id: "global.toggleCommentsPanel",

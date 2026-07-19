@@ -634,6 +634,20 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       run: () => getState().setOutlinePaletteOpen(true)
     },
     {
+      id: 'pdf.highlight-selection',
+      title: 'Highlight Selection (PDF)',
+      category: 'PDF',
+      shortcut: shortcut('global.pdfHighlightSelection'),
+      keywords: 'pdf highlight annotate selection markup',
+      // The PDF viewer owns the annotation editor, so this is a broadcast the
+      // focused PdfView picks up (same pattern as zen:toggle-outline). It is a
+      // no-op when nothing is selected, so no `when` gate is needed beyond the
+      // viewer simply not being open.
+      run: () => {
+        window.dispatchEvent(new Event('zen:pdf-highlight-selection'))
+      }
+    },
+    {
       id: 'view.outline-panel',
       title: 'Toggle Outline Panel',
       category: 'View',

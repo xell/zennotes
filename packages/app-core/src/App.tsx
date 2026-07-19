@@ -868,6 +868,12 @@ function App(): JSX.Element {
         window.dispatchEvent(new Event('zen:toggle-outline'))
         return
       }
+      // ⇧⌘H — highlight the current selection in the PDF viewer
+      if (matchesShortcut(e, overrides, 'global.pdfHighlightSelection')) {
+        e.preventDefault()
+        window.dispatchEvent(new Event('zen:pdf-highlight-selection'))
+        return
+      }
       // ⇧⌘C — toggle the comments panel in the active pane
       if (matchesShortcut(e, overrides, 'global.toggleCommentsPanel')) {
         e.preventDefault()

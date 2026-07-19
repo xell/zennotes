@@ -39,6 +39,7 @@ export const KEYMAP_CATALOG: KeymapCatalogEntry[] = [
   { id: "view.quicklook", group: "global", defaultBinding: "Alt+Mod+U", title: "Toggle Quicklook" },
   { id: "global.toggleConnections", group: "global", defaultBinding: "Mod+2", title: "Toggle connections panel" },
   { id: "global.toggleOutlinePanel", group: "global", defaultBinding: "Mod+3", title: "Toggle outline panel" },
+  { id: "global.pdfHighlightSelection", group: "global", defaultBinding: "Shift+Mod+H", title: "Highlight PDF selection" },
   { id: "global.toggleCommentsPanel", group: "global", defaultBinding: "Shift+Mod+C", title: "Toggle comments panel" },
   { id: "global.toggleTerminalPanel", group: "global", defaultBinding: "", title: "Toggle terminal panel" },
   { id: "global.addComment", group: "global", defaultBinding: "Alt+Mod+M", title: "Add comment to selection" },
