@@ -69,6 +69,7 @@ import {
 } from "@shared/ipc";
 import {
   assetFolderSubpath,
+  assetPathWithinFolder,
   classifyDateNote,
   dateNoteFolderMayBelongToDatePattern,
   dateNoteDirectoryDisplayLabel,
@@ -109,10 +110,11 @@ import {
   type DropResolution,
 } from "../lib/sidebar-drop-resolver";
 import { resolveSystemFolderLabels } from "../lib/system-folder-labels";
-import { assetTabPath } from "../lib/asset-tabs";
+import { assetPathFromTab, assetTabPath } from "../lib/asset-tabs";
 import { findAssetReferenceHrefs } from "../lib/local-assets";
 import {
   csvPathForFormDir,
+  csvPathFromDatabaseTab,
   FORM_DIR_SUFFIX,
   formTitleFromDir,
   isFormDirName,
@@ -1872,9 +1874,11 @@ export function Sidebar(): JSX.Element {
         : folderForVaultRelativePath(target.path, s.vaultSettings);
       const subpath = noteMeta
         ? noteFolderSubpath(noteMeta, s.vaultSettings)
-        : assetMeta
-          ? assetFolderSubpath(assetMeta, s.vaultSettings)
-          : "";
+        : // assetFolderSubpath only needs the path, so fall back to deriving it
+          // rather than giving up on "": a leaf we have no metadata row for yet
+          // (an asset still being indexed, say) would otherwise expand only its
+          // top-level section and leave the row buried in collapsed folders.
+          assetFolderSubpath(assetMeta ?? { path: target.path }, s.vaultSettings);
       ancestors = [`${folder}:`];
       let acc = "";
       for (const seg of subpath ? subpath.split("/") : []) {
@@ -2156,16 +2160,38 @@ export function Sidebar(): JSX.Element {
   const expandAll = (): void => expandAllFoldersAction();
 
   /**
-   * Auto-reveal: whenever the active note changes, expand every
-   * ancestor folder so the note is visible in the sidebar tree.
-   * Only runs when the `autoReveal` preference is on.
+   * Auto-reveal: whenever the active tab changes, expand its ancestor folders,
+   * put the sidebar cursor on its row and scroll it into view. Only runs when
+   * the `autoReveal` preference is on.
    *
-   * We also scroll the active note into view. Without that, the toggle
-   * can feel inert unless the note happens to live inside a currently
-   * collapsed folder.
+   * This delegates to the same `sidebarRevealRequest` machinery the filter-exit
+   * reveal uses, rather than expanding folders itself. The hand-rolled version
+   * that used to live here derived a note's section by reading `path.split("/")[0]`,
+   * which is wrong whenever notes live at the vault root: there is no section
+   * prefix on the path then, so a nested note like `Test/pdf/note.md` produced
+   * the collapse-keys `Test:`/`Test:pdf` instead of `inbox:`/`inbox:Test`, matched
+   * nothing, and silently expanded nothing (same bug class as 4ecea7c). Going
+   * through the shared path also gets the retry-until-the-row-renders behaviour,
+   * which the old single-shot `querySelector` lacked.
    */
-  const activePath =
-    selectedPath && !selectedPath.startsWith("zen://") ? selectedPath : null;
+  const activePath = useMemo(() => {
+    if (!selectedPath) return null;
+    // Assets (PDFs, images, HTML) open under a `zen://asset/` tab path, but their
+    // sidebar row is keyed by the real vault-relative path.
+    const assetPath = assetPathFromTab(selectedPath);
+    if (assetPath) return assetPath;
+    // A database tab points at the CSV *inside* a `<Name>.base` folder; the row
+    // in the tree is that folder, so aim at its directory.
+    const csvPath = csvPathFromDatabaseTab(selectedPath);
+    if (csvPath) {
+      const dir = csvPath.split("/").slice(0, -1).join("/");
+      return dir || null;
+    }
+    // Everything else virtual (tags, tasks, trash, help, …) has no single row to
+    // reveal; the sidebar-focus effect already handles those views.
+    if (selectedPath.startsWith("zen://")) return null;
+    return selectedPath;
+  }, [selectedPath]);
   // Tracks the last path this effect actually revealed, so a selectedPath
   // that merely bounces null-then-back-to-the-same-note (e.g. setView()
   // nulling it while browsing a folder, then something restoring it because
@@ -2173,73 +2199,44 @@ export function Sidebar(): JSX.Element {
   // the expand+scroll — only a genuine change to a *different* note does.
   const lastRevealedPathRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!autoReveal || !activePath) return;
+    // Forget the last reveal while the preference is off, so switching it back
+    // on always reveals whatever is open *now*. Without this, the guard below
+    // still held the path revealed during the previous on-period, and toggling
+    // off then on without changing tabs looked like the button did nothing —
+    // you had to switch tabs once to "wake it up".
+    if (!autoReveal) {
+      lastRevealedPathRef.current = null;
+      return;
+    }
+    if (!activePath) return;
     if (activePath === lastRevealedPathRef.current) return;
     lastRevealedPathRef.current = activePath;
     const startedAt = performance.now();
-    const parts = activePath.split("/");
-    const folder = parts[0] as NoteFolder;
-    // Collect every ancestor key we need to make sure is expanded.
-    const ancestors: string[] = [`${folder}:`];
-    let acc = "";
-    for (let i = 1; i < parts.length - 1; i++) {
-      acc = acc ? `${acc}/${parts[i]}` : parts[i];
-      ancestors.push(`${folder}:${acc}`);
-    }
-    const prev = new Set(useStore.getState().collapsedFolders);
-    let changed = false;
-    for (const key of ancestors) {
-      if (prev.has(key)) {
-        prev.delete(key);
-        changed = true;
-      }
-    }
-    if (changed) setCollapsedFoldersAction([...prev]);
-
-    let raf1 = 0;
-    let raf2 = 0;
-    const reveal = (): void => {
-      const noteEl = document.querySelector(
-        `[data-sidebar-path="${escapeForAttr(activePath)}"]`,
-      ) as HTMLElement | null;
-      if (noteEl) {
-        noteEl.scrollIntoView({ block: "nearest" });
-        recordRendererPerf("sidebar.auto-reveal", performance.now() - startedAt, {
-          path: activePath,
-          revealed: "note",
-        });
-        return;
-      }
-
-      const parts = activePath.split("/");
-      const folder = parts[0] as NoteFolder;
-      for (let i = parts.length - 1; i >= 1; i--) {
-        const subpath = parts.slice(1, i).join("/");
-        const folderEl = document.querySelector(
-          `[data-sidebar-type="folder"][data-sidebar-folder="${folder}"][data-sidebar-subpath="${escapeForAttr(subpath)}"]`,
-        ) as HTMLElement | null;
-        if (folderEl) {
-          folderEl.scrollIntoView({ block: "nearest" });
-          recordRendererPerf("sidebar.auto-reveal", performance.now() - startedAt, {
-            path: activePath,
-            revealed: "folder",
-          });
-          return;
-        }
-      }
-      recordRendererPerf("sidebar.auto-reveal", performance.now() - startedAt, {
-        path: activePath,
-        revealed: "miss",
+    // A database resolves to its `.base` folder row; everything else is a leaf
+    // (note or asset) that the reveal effect looks up by metadata.
+    const isDatabase = !!csvPathFromDatabaseTab(selectedPath);
+    if (isDatabase) {
+      const section = folderForVaultRelativePath(activePath, vaultSettings);
+      if (!section) return;
+      requestSidebarReveal({
+        kind: "folder",
+        folder: section,
+        subpath: assetPathWithinFolder(activePath, section, vaultSettings),
       });
-    };
-    raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(reveal);
+    } else {
+      requestSidebarReveal({ kind: "leaf", path: activePath });
+    }
+    recordRendererPerf("sidebar.auto-reveal", performance.now() - startedAt, {
+      path: activePath,
+      revealed: isDatabase ? "database" : "leaf",
     });
-    return () => {
-      cancelAnimationFrame(raf1);
-      cancelAnimationFrame(raf2);
-    };
-  }, [autoReveal, activePath, selectedPath, setCollapsedFoldersAction]);
+  }, [
+    autoReveal,
+    activePath,
+    selectedPath,
+    vaultSettings,
+    requestSidebarReveal,
+  ]);
 
   const [activeBodyTagSnapshot, setActiveBodyTagSnapshot] = useState<{
     path: string;
@@ -5223,6 +5220,7 @@ function WindowedLeafEntries({
               onOpen={() => onOpenAsset(entry.asset.path)}
               onContextMenu={(e) => onAssetContextMenu(e, entry.asset)}
               sidebarFocused={sidebarFocused}
+              active={selectedPath === assetTabPath(entry.asset.path)}
               sidebarIdx={idx}
               vimHighlight={vimCursor === idx}
             />
@@ -5916,6 +5914,7 @@ function FolderTreeContents({
               onOpen={() => onOpenAsset(entry.asset.path)}
               onContextMenu={(e) => onAssetContextMenu(e, entry.asset)}
               sidebarFocused={sidebarFocused}
+              active={selectedPath === assetTabPath(entry.asset.path)}
               sidebarIdx={assetIdx}
               vimHighlight={vimCursor === assetIdx}
             />
@@ -6378,6 +6377,7 @@ function SubTree({
                   onOpen={() => onOpenAsset(entry.asset.path)}
                   onContextMenu={(e) => onAssetContextMenu(e, entry.asset)}
                   sidebarFocused={sidebarFocused}
+                  active={selectedPath === assetTabPath(entry.asset.path)}
                   sidebarIdx={assetIdx}
                   vimHighlight={vimCursor === assetIdx}
                 />
@@ -6639,6 +6639,7 @@ function AssetLeaf({
   onOpen,
   onContextMenu,
   sidebarFocused,
+  active,
   sidebarIdx,
   vimHighlight,
 }: {
@@ -6649,9 +6650,13 @@ function AssetLeaf({
   onOpen: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
   sidebarFocused: boolean;
+  /** This asset is the active pane's open tab. Mirrors NoteLeaf's `active`, so
+   *  an open PDF/image reads the same as an open note in the tree. */
+  active?: boolean;
   sidebarIdx?: number;
   vimHighlight?: boolean;
 }): JSX.Element {
+  const strongActive = !!active && (!sidebarFocused || !!vimHighlight);
   const extension = asset.name.includes(".")
     ? asset.name.split(".").pop()?.toUpperCase() ?? ""
     : "";
@@ -6672,7 +6677,17 @@ function AssetLeaf({
       onDragStart={handleDragStart}
       className={[
         "group flex h-[var(--z-sidebar-row-h)] w-full items-center gap-1.5 rounded-lg px-1 text-left text-sm outline-none transition-colors focus:outline-none",
-        vimHighlight ? "vim-cursor" : "text-ink-700 hover:bg-paper-200/70",
+        // Mirrors NoteLeaf's active/vim/hover ladder minus the branches assets
+        // don't have (no folder colour, no multi-select).
+        active
+          ? vimHighlight
+            ? "vim-cursor-on-active bg-paper-300/70 text-ink-900 font-medium"
+            : sidebarFocused
+              ? "text-accent"
+              : "bg-paper-300/70 text-ink-900 font-medium"
+          : vimHighlight
+            ? "vim-cursor"
+            : "text-ink-700 hover:bg-paper-200/70",
       ].join(" ")}
       style={{ paddingLeft: 4 + depth * 14 }}
       {...(sidebarIdx != null
@@ -6683,7 +6698,7 @@ function AssetLeaf({
           }
         : {})}
     >
-      <SidebarGlyph active={false} rowActive={false}>
+      <SidebarGlyph active={strongActive} rowActive={!!active}>
         <svg
           width="14"
           height="14"
@@ -6698,7 +6713,9 @@ function AssetLeaf({
           <path d="M14 3v6h6" />
         </svg>
       </SidebarGlyph>
-      <span className="flex-1 truncate text-ink-700">{asset.name}</span>
+      {/* Inherit the row's colour (like NoteLeaf's title) so the active state
+          isn't overridden by a hardcoded ink shade. */}
+      <span className="flex-1 truncate">{asset.name}</span>
       {extension && (
         <span
           className={[
