@@ -12,6 +12,8 @@ import { promptApp } from './prompt-requests'
 import { buildMoveNotePrompt, parseMoveNoteTarget } from './move-note'
 import { focusLastActivePane, focusPaneInDirection } from './pane-nav'
 import { findLeaf } from './pane-layout'
+import { assetPathFromTab, isAssetTabPath } from './asset-tabs'
+import { classifyLocalAssetHref } from './local-assets'
 import { requestPaneMode } from './pane-mode'
 import { resolveQuickNoteTitle } from './quick-note-title'
 import { selectedInboxFolderForIsolation, goUpIsolationWithConfirm } from './sidebar-isolation'
@@ -652,8 +654,16 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       title: 'Toggle Outline Panel',
       category: 'View',
       shortcut: shortcut('global.toggleOutlinePanel'),
-      keywords: 'outline panel sidebar right headings',
-      when: () => !!getState().activeNote,
+      keywords: 'outline panel sidebar right headings contents toc',
+      // Also available on a PDF tab, which has no `activeNote` but does have an
+      // embedded table of contents to show in the same panel.
+      when: () => {
+        const s = getState()
+        if (s.activeNote) return true
+        // PDFs only: other asset kinds have no outline to show.
+        if (!isAssetTabPath(s.selectedPath)) return false
+        return classifyLocalAssetHref(assetPathFromTab(s.selectedPath) ?? '') === 'pdf'
+      },
       run: () => {
         window.dispatchEvent(new Event('zen:toggle-outline'))
       }

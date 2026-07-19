@@ -99,6 +99,7 @@ import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
 import { LazyDiagramTabView, LazyPreview as Preview } from './LazyPreview'
 import { ConnectionsPanel } from './ConnectionsPanel'
 import { OutlinePanel } from './OutlinePanel'
+import { PdfOutlinePanel } from './PdfOutlinePanel'
 import { CalendarPanel } from './CalendarPanel'
 import { CommentsPanel, type CommentDraft } from './CommentsPanel'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
@@ -3644,6 +3645,20 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
             onJump={jumpToOutlineLine}
           />
         )}
+        {/* A PDF tab has no `content` (that is note-only), so the outline
+            toggle would otherwise do nothing on one. Same slot, same width,
+            same Cmd+3 — the panel just reads the document's embedded table of
+            contents instead of markdown headings. */}
+        {!content &&
+          outlineOpen &&
+          !zenMode &&
+          activeTab &&
+          isAssetTabPath(activeTab) &&
+          // PDFs only. Any other asset (image, video, audio) has no outline to
+          // publish, so the panel would sit on "Loading…" forever.
+          classifyLocalAssetHref(assetPathFromTab(activeTab) ?? '') === 'pdf' && (
+            <PdfOutlinePanel tabPath={activeTab} />
+          )}
         {content && calendarOpen && calendarAvailable && !zenMode && (
           <CalendarPanel note={content} />
         )}

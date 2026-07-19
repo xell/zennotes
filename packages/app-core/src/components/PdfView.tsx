@@ -21,6 +21,7 @@ import 'pdfjs-dist/web/pdf_viewer.css'
 // the `*?url` module declaration.
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { registerPdfBuffer } from '../lib/pdf-buffers'
+import { registerPdfOutline, type PdfOutlineItem } from '../lib/pdf-outline'
 import { useStore } from '../store'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
@@ -116,6 +117,8 @@ export function PdfView({
   const viewerElRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<PDFViewer | null>(null)
   const eventBusRef = useRef<EventBus | null>(null)
+  // Resolves outline destinations; owned by the viewer-build effect.
+  const linkServiceRef = useRef<PDFLinkService | null>(null)
 
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null)
   const [mode, setMode] = useState<PdfReadingMode>('light')
@@ -304,6 +307,7 @@ export function PdfView({
       return
     }
     linkService.setViewer(viewer)
+    linkServiceRef.current = linkService
     viewerRef.current = viewer
     eventBusRef.current = eventBus
 
@@ -512,6 +516,70 @@ export function PdfView({
       console.error('PdfView: failed to arm the highlight editor', err)
     }
   }, [])
+
+  // Publish the document's table of contents for the outline panel.
+  //
+  // PDF outlines are an arbitrarily deep tree whose entries point at either a
+  // destination inside the document or an external URL; both are normalised
+  // here so the panel never has to know PDF.js's shapes. `goToDestination`
+  // handles named destinations and explicit dest arrays alike, which is the
+  // genuinely awkward part and the main reason not to hand-roll navigation.
+  useEffect(() => {
+    if (!pdfDoc) return
+    let cancelled = false
+    let unregister: (() => void) | null = null
+
+    const normalise = (raw: unknown[]): PdfOutlineItem[] =>
+      raw.map((entry) => {
+        const e = entry as {
+          title?: unknown
+          bold?: unknown
+          italic?: unknown
+          dest?: unknown
+          url?: unknown
+          items?: unknown
+        }
+        return {
+          title: typeof e.title === 'string' ? e.title : '',
+          bold: e.bold === true,
+          italic: e.italic === true,
+          dest: e.dest ?? null,
+          url: typeof e.url === 'string' ? e.url : null,
+          items: Array.isArray(e.items) ? normalise(e.items) : []
+        }
+      })
+
+    void (async () => {
+      let items: PdfOutlineItem[] = []
+      try {
+        const raw = await pdfDoc.getOutline()
+        items = Array.isArray(raw) ? normalise(raw) : []
+      } catch (err) {
+        console.error('PdfView: failed to read the document outline', err)
+      }
+      if (cancelled) return
+      unregister = registerPdfOutline(tabPath, {
+        items,
+        goTo: (item) => {
+          if (item.url) {
+            window.open(item.url, '_blank', 'noopener,noreferrer')
+            return
+          }
+          if (item.dest == null) return
+          try {
+            linkServiceRef.current?.goToDestination(item.dest as string | unknown[])
+          } catch (err) {
+            console.error('PdfView: failed to navigate to outline destination', err)
+          }
+        }
+      })
+    })()
+
+    return () => {
+      cancelled = true
+      unregister?.()
+    }
+  }, [pdfDoc, tabPath])
 
   // Command Palette / keyboard shortcut path.
   useEffect(() => {
