@@ -25,6 +25,7 @@ import type {
   WorkspaceMode
 } from '@shared/ipc'
 import type { VaultTask } from '@shared/tasks'
+import { DEFAULT_PDF_HIGHLIGHT_COLOR, normalizePdfHighlightColor } from '@shared/pdf'
 import { isExcalidrawPath, isObsidianExcalidrawPath } from '@shared/excalidraw'
 import { TASKS_TAB_PATH, isTasksTabPath, parseTasksFromBody } from '@shared/tasks'
 import type { DatabaseDoc, DatabaseSidecar } from '@shared/databases'
@@ -422,16 +423,6 @@ function normalizePdfPinchTuning(value: unknown): PdfPinchTuning {
 
 /** Tabs of the PDF outline panel. `thumbnails` is reserved for the next round. */
 export type PdfSidePanelTab = 'contents' | 'annotations'
-
-/** Only the palette PDF.js is configured with; anything else is ignored so a
- *  hand-edited config cannot produce highlights in an unpickable colour. */
-const PDF_HIGHLIGHT_COLORS = ['#FFFF98', '#53FFBC', '#80EBFF', '#FFCBE6', '#FF4F5F']
-
-function normalizePdfHighlightColor(value: unknown): string {
-  if (typeof value !== 'string') return PDF_HIGHLIGHT_COLORS[0]
-  const upper = value.toUpperCase()
-  return PDF_HIGHLIGHT_COLORS.includes(upper) ? upper : PDF_HIGHLIGHT_COLORS[0]
-}
 
 function normalizePdfSidePanelTab(value: unknown): PdfSidePanelTab {
   return value === 'annotations' ? 'annotations' : 'contents'
@@ -851,7 +842,7 @@ export const DEFAULT_PREFS: Prefs = {
   pdfPinchTuning: { stickiness: 15, resetMs: 160 },
   pdfSepiaTone: 55,
   pdfSidePanelTab: 'contents',
-  pdfHighlightColor: '#FFFF98',
+  pdfHighlightColor: DEFAULT_PDF_HIGHLIGHT_COLOR,
   pinnedRefKind: 'note',
   noteRefs: {},
   contentAlign: 'center',

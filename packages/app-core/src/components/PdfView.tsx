@@ -47,6 +47,7 @@ import {
   type TextBox
 } from '../lib/pdf-annotations'
 import { useStore } from '../store'
+import { PDF_HIGHLIGHT_COLORS_OPTION, PDF_HIGHLIGHT_PALETTE } from '@shared/pdf'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
@@ -103,20 +104,10 @@ const MAX_SCALE = 5
 // Fit presets accepted by `currentScaleValue`; anything else is a numeric zoom.
 const FIT_PRESETS = new Set(['auto', 'page-actual', 'page-fit', 'page-width'])
 
-// The highlight editor's colour palette. This MUST be provided: without it the
-// UI manager's `highlightColorNames` map is null, and rebuilding a saved
-// highlight on reopen throws in the telemetry getter (highlightColorNames.get).
-// These are PDF.js's own default highlight colours.
-const HIGHLIGHT_COLORS = 'yellow=#FFFF98,green=#53FFBC,blue=#80EBFF,pink=#FFCBE6,red=#FF4F5F'
-
-/** The same palette as a list, so the colour picker and the editor can never
- *  drift apart: both are derived from the string above. */
-const HIGHLIGHT_PALETTE: { name: string; label: string; hex: string }[] = HIGHLIGHT_COLORS.split(
-  ','
-).map((entry) => {
-  const [name, hex] = entry.split('=')
-  return { name, label: name.charAt(0).toUpperCase() + name.slice(1), hex: hex.toUpperCase() }
-})
+// The palette lives in @shared/pdf so the viewer option, the picker and the
+// preference validator cannot drift apart. Passing it is mandatory: without it
+// the UI manager's `highlightColorNames` map is null and rebuilding a saved
+// highlight on reopen throws in the telemetry getter.
 
 function applyViewMode(viewer: PDFViewer, viewMode: PdfViewMode): void {
   if (viewMode === 'single') {
@@ -335,7 +326,7 @@ export function PdfView({
         // NONE (not DISABLE) initialises the annotation editor infrastructure
         // so the highlight tool can be switched on later.
         annotationEditorMode: pdfjs.AnnotationEditorType.NONE,
-        annotationEditorHighlightColors: HIGHLIGHT_COLORS,
+        annotationEditorHighlightColors: PDF_HIGHLIGHT_COLORS_OPTION,
         // Pops a small highlight button beside any text selection (the same
         // affordance Preview and PDF Expert have), so highlighting no longer
         // requires arming the drag-to-highlight tool first. The tool toggle
@@ -1180,7 +1171,7 @@ export function PdfView({
               without opening anything. */}
           <PdfBarMenu
             title={`Highlight colour: ${
-              HIGHLIGHT_PALETTE.find((c) => c.hex === highlightColor)?.label ?? 'custom'
+              PDF_HIGHLIGHT_PALETTE.find((c) => c.hex === highlightColor)?.label ?? 'custom'
             }`}
             label={
               <span
@@ -1192,7 +1183,7 @@ export function PdfView({
           >
             {(close) => (
               <>
-                {HIGHLIGHT_PALETTE.map((colour) => (
+                {PDF_HIGHLIGHT_PALETTE.map((colour) => (
                   <PdfMenuItem
                     key={colour.hex}
                     active={colour.hex === highlightColor}

@@ -19,6 +19,7 @@ import {
   type AppConfigPortable,
   type PortablePrefKey
 } from '@shared/app-config'
+import { PDF_HIGHLIGHT_PALETTE } from '@shared/pdf'
 import {
   KEYMAP_CATALOG,
   KEYMAP_GROUP_ORDER,
@@ -192,7 +193,9 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
   pdfHighlightColor: {
     section: 'editor',
     tomlKey: 'pdf_highlight_color',
-    comment: 'colour new PDF highlights use: #FFFF98 | #53FFBC | #80EBFF | #FFCBE6 | #FF4F5F'
+    // Derived, so the self-documenting config cannot advertise a palette the
+    // app no longer accepts.
+    comment: `colour new PDF highlights use: ${PDF_HIGHLIGHT_PALETTE.map((c) => c.hex).join(' | ')}`
   },
   // appearance
   pdfExportUseTheme: {

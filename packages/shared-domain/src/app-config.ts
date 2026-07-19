@@ -10,6 +10,8 @@
 // dotfile doesn't churn on every drag and never carries machine-specific
 // layout state.
 
+import { DEFAULT_PDF_HIGHLIGHT_COLOR } from './pdf'
+
 /** Bumped when the on-disk config layout changes in a way that needs a
  *  migration. Written as `config_version` at the top of the file. */
 export const CONFIG_VERSION = 1
@@ -196,7 +198,7 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   pdfPinchTuning: { stickiness: 15, resetMs: 160 },
   pdfSepiaTone: 55,
   pdfSidePanelTab: 'contents',
-  pdfHighlightColor: '#FFFF98',
+  pdfHighlightColor: DEFAULT_PDF_HIGHLIGHT_COLOR,
   themeId: 'dark-hard',
   themeFamily: 'gruvbox',
   themeMode: 'dark',
