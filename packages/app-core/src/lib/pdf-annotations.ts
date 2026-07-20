@@ -212,18 +212,27 @@ export function textInQuads(items: TextBox[], quads: Quad[]): string {
   return lines.join(' ').replace(/\s+/g, ' ').trim()
 }
 
-/** PDF colour (0-255 triple, or an array-like) to a CSS colour. */
-export function pdfColorToCss(raw: unknown, fallback = '#ffd400'): string {
-  if (!raw) return fallback
+/**
+ * PDF colour (0-255 triple, or an array-like) as a bare `r g b` triple, or null
+ * when there is nothing usable. Separate from the CSS form because callers that
+ * need to vary the alpha in CSS want the channels without a wrapper.
+ */
+export function pdfColorToRgbTriple(raw: unknown): string | null {
+  if (!raw) return null
   const values = ArrayBuffer.isView(raw)
     ? Array.from(raw as unknown as ArrayLike<number>)
     : Array.isArray(raw)
       ? raw.filter((v): v is number => typeof v === 'number')
       : []
-  if (values.length < 3) return fallback
-  const [r, g, b] = values
+  if (values.length < 3) return null
   const clamp = (n: number): number => Math.max(0, Math.min(255, Math.round(n)))
-  return `rgb(${clamp(r)} ${clamp(g)} ${clamp(b)})`
+  return `${clamp(values[0])} ${clamp(values[1])} ${clamp(values[2])}`
+}
+
+/** PDF colour (0-255 triple, or an array-like) to a CSS colour. */
+export function pdfColorToCss(raw: unknown, fallback = '#ffd400'): string {
+  const triple = pdfColorToRgbTriple(raw)
+  return triple ? `rgb(${triple})` : fallback
 }
 
 // --- registry -------------------------------------------------------------

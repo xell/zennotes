@@ -53,11 +53,13 @@ import { dateShortcutSource } from '../lib/cm-date-shortcuts'
 import { wikilinkSource, wikilinkHeadingSource } from '../lib/cm-wikilinks'
 import { completionNavKeymap } from '../lib/cm-completion-nav'
 import { classifyLocalAssetHref, type LocalAssetKind } from '../lib/local-assets'
+import { assetPathFromTab, isAssetTabPath } from '../lib/asset-tabs'
 import { focusEditorNormalMode } from '../lib/editor-focus'
 import { LazyPreview as Preview } from './LazyPreview'
 import { MediaPlayer } from './MediaPlayer'
+import { PdfView } from './PdfView'
 import { TerminalPanel } from './TerminalPanel'
-import { DocumentTextIcon, ListIcon, PinIcon, TerminalIcon } from './icons'
+import { DocumentIcon, DocumentTextIcon, ListIcon, PinIcon, TerminalIcon } from './icons'
 import { ModeDropdown } from './ModeDropdown'
 import type { NoteMeta } from '@shared/ipc'
 import { allLeaves } from '../lib/pane-layout'
@@ -441,7 +443,11 @@ export function PinnedReferencePane(): JSX.Element | null {
   // here); keep it grouped with 'file' so a pinned .txt reference doesn't
   // silently stop rendering now that classifyLocalAssetHref gives it its own
   // kind. The nicer, font-matched read-only view is EditorPane-tab-specific.
-  const useAssetIframe = assetKind === 'pdf' || assetKind === 'file' || assetKind === 'text'
+  // PDFs no longer go through the iframe (Chromium's viewer): they render in
+  // our own PdfView, so a pinned PDF gets the same dark/sepia reading, zoom,
+  // find and page navigation as one opened in a tab.
+  const useAssetIframe = assetKind === 'file' || assetKind === 'text'
+  const isPinnedPdf = assetKind === 'pdf'
 
   // Track every asset URL the user has pinned this session. One iframe
   // per unique URL stays mounted for the life of the app — show/hide
@@ -449,6 +455,21 @@ export function PinnedReferencePane(): JSX.Element | null {
   // (or unpinning and re-pinning) preserves each PDF viewer's page,
   // scroll, and zoom. 16-entry LRU cap keeps memory bounded if the
   // user cycles through many PDFs.
+  // Same keep-alive idea as the iframe stack, but a much tighter cap: each
+  // entry holds a parsed PDF document and its rendered page canvases, which is
+  // far heavier than an idle iframe.
+  const [seenPdfs, setSeenPdfs] = useState<{ url: string; path: string }[]>([])
+  useEffect(() => {
+    if (!assetUrl || !isPinnedPdf || !pinnedRefPath) return
+    setSeenPdfs((prev) => {
+      if (prev[prev.length - 1]?.url === assetUrl) return prev
+      const without = prev.filter((entry) => entry.url !== assetUrl)
+      const next = [...without, { url: assetUrl, path: pinnedRefPath }]
+      while (next.length > 4) next.shift()
+      return next
+    })
+  }, [assetUrl, pinnedRefPath, isPinnedPdf])
+
   const [seenAssetUrls, setSeenAssetUrls] = useState<string[]>([])
   useEffect(() => {
     if (!assetUrl || !useAssetIframe) return
@@ -544,11 +565,11 @@ export function PinnedReferencePane(): JSX.Element | null {
             </span>
           )}
           <div className="flex shrink-0 items-center gap-1">
-            {!isAsset && rightPaneTab === 'reference' && !!pinnedRefPath && (
+            {rightPaneTab === 'reference' && !!pinnedRefPath && (!isAsset || isPinnedPdf) && (
               <>
                 <button
                   type="button"
-                  title="Change pinned note"
+                  title="Change pinned reference"
                   onClick={() => setShowPicker((v) => !v)}
                   className={[
                     'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
@@ -557,11 +578,13 @@ export function PinnedReferencePane(): JSX.Element | null {
                 >
                   <ListIcon width={13} height={13} />
                 </button>
-                <ModeDropdown
-                  mode={pinnedRefMode}
-                  onChange={handleModeChange}
-                  isGitRepo={isGitRepo}
-                />
+                {!isAsset && (
+                  <ModeDropdown
+                    mode={pinnedRefMode}
+                    onChange={handleModeChange}
+                    isGitRepo={isGitRepo}
+                  />
+                )}
               </>
             )}
               <div className="flex items-center rounded-md bg-paper-200/70 p-0.5">
@@ -704,6 +727,41 @@ export function PinnedReferencePane(): JSX.Element | null {
           />
         )}
 
+        {/* Pinned PDF stack — same keep-alive contract as the iframe stack
+            below (mounted once pinned, hidden rather than unmounted) so page,
+            scroll and zoom survive switching between references. Read-only:
+            the same PDF can also be open in a tab, each view holding its own
+            document, so allowing edits in both would let one save silently
+            clobber the other's unsaved highlights. */}
+        {seenPdfs.length > 0 && (
+          <div
+            className="absolute inset-0"
+            style={{
+              display: isAsset && assetUrl && isPinnedPdf && !showPicker ? 'block' : 'none'
+            }}
+          >
+            {seenPdfs.map((entry) => (
+              <div
+                key={entry.url}
+                className="absolute inset-0 flex min-h-0 min-w-0 flex-col"
+                style={{ display: entry.url === assetUrl ? 'flex' : 'none' }}
+              >
+                <PdfView
+                  assetUrl={entry.url}
+                  assetPath={entry.path}
+                  // Distinct from the editor tab's key so a PDF that is both
+                  // pinned and open registers two independent buffers rather
+                  // than one overwriting the other in the registries.
+                  tabPath={`pinned:${entry.path}`}
+                  title={entry.path.split('/').pop() ?? entry.path}
+                  chrome="compact"
+                  readOnly
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Asset iframe stack — ALWAYS mounted once any PDF/generic asset has been
             pinned this session, regardless of whether one is currently
             pinned or the pane is visible. This is the "preserve PDF
@@ -713,7 +771,7 @@ export function PinnedReferencePane(): JSX.Element | null {
           <div
             className="absolute inset-0"
             style={{
-              display: isAsset && assetUrl && useAssetIframe ? 'block' : 'none'
+              display: isAsset && assetUrl && useAssetIframe && !showPicker ? 'block' : 'none'
             }}
           >
             {seenAssetUrls.map((url) => (
@@ -750,54 +808,92 @@ export function PinnedReferencePane(): JSX.Element | null {
   )
 }
 
+/** One pinnable open buffer: a markdown note, or an open PDF. */
+interface OpenBuffer {
+  key: string
+  title: string
+  folder: string
+  isPdf: boolean
+  pin: () => void
+}
+
 function OpenBuffersList(): JSX.Element {
   const paneLayout = useStore((s) => s.paneLayout)
   const notes = useStore((s) => s.notes)
   const pinReference = useStore((s) => s.pinReference)
+  const pinAssetReference = useStore((s) => s.pinAssetReference)
 
-  const openNotes = useMemo(() => {
+  // Notes and PDFs alike: a PDF is now a first-class reference (it renders in
+  // PdfView here, not an iframe), so the picker lists whatever is open and
+  // pinnable rather than notes only. Other asset kinds are skipped — an image
+  // or video has no "reference" reading behaviour to switch between.
+  const openBuffers = useMemo(() => {
     const byPath = new Map((notes as NoteMeta[]).map((n) => [n.path, n]))
     const seen = new Set<string>()
-    const result: NoteMeta[] = []
+    const result: OpenBuffer[] = []
+    const folderOf = (path: string): string => {
+      const lastSlash = path.lastIndexOf('/')
+      return lastSlash >= 0 ? path.slice(0, lastSlash) : ''
+    }
     for (const leaf of allLeaves(paneLayout)) {
       for (const path of leaf.tabs) {
-        if (!seen.has(path)) {
-          seen.add(path)
-          const note = byPath.get(path)
-          if (note) result.push(note)
+        if (seen.has(path)) continue
+        seen.add(path)
+        const note = byPath.get(path)
+        if (note) {
+          result.push({
+            key: path,
+            title: note.title,
+            folder: folderOf(note.path.replace(/\.[^.]+$/, '')),
+            isPdf: false,
+            pin: () => void pinReference(note.path)
+          })
+          continue
         }
+        if (!isAssetTabPath(path)) continue
+        const assetPath = assetPathFromTab(path)
+        if (!assetPath || classifyLocalAssetHref(assetPath) !== 'pdf') continue
+        result.push({
+          key: path,
+          title: assetPath.split('/').pop() ?? assetPath,
+          folder: folderOf(assetPath),
+          isPdf: true,
+          pin: () => void pinAssetReference(assetPath)
+        })
       }
     }
     return result
-  }, [paneLayout, notes])
+  }, [paneLayout, notes, pinReference, pinAssetReference])
 
-  if (openNotes.length === 0) {
+  if (openBuffers.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-ink-400">
-        No notes open. Open a note and use<br />"Pin Active Note as Reference".
+        Nothing open to pin. Open a note or PDF<br />and use "Pin Active Note as Reference".
       </div>
     )
   }
 
   return (
     <div className="flex flex-1 flex-col overflow-y-auto p-3">
-      <p className="mb-2 px-1 text-xs font-medium text-ink-400">Select a note to pin as reference</p>
-      {openNotes.map((note) => {
-        const pathNoExt = note.path.replace(/\.[^.]+$/, '')
-        const lastSlash = pathNoExt.lastIndexOf('/')
-        const folder = lastSlash >= 0 ? pathNoExt.slice(0, lastSlash) : ''
-        return (
-          <button
-            key={note.path}
-            type="button"
-            onClick={() => { void pinReference(note.path) }}
-            className="flex flex-col rounded-lg px-3 py-2 text-left transition-colors hover:bg-paper-200/70 active:bg-paper-300/70"
-          >
-            <span className="text-sm font-medium text-ink-900">{note.title}</span>
-            {folder && <span className="mt-0.5 text-xs text-ink-400">{folder}</span>}
-          </button>
-        )
-      })}
+      <p className="mb-2 px-1 text-xs font-medium text-ink-400">
+        Select a note or PDF to pin as reference
+      </p>
+      {openBuffers.map((buffer) => (
+        <button
+          key={buffer.key}
+          type="button"
+          onClick={buffer.pin}
+          className="flex flex-col rounded-lg px-3 py-2 text-left transition-colors hover:bg-paper-200/70 active:bg-paper-300/70"
+        >
+          <span className="flex items-center gap-1.5 text-sm font-medium text-ink-900">
+            {buffer.isPdf && (
+              <DocumentIcon width={12} height={12} className="shrink-0 text-accent" />
+            )}
+            <span className="truncate">{buffer.title}</span>
+          </span>
+          {buffer.folder && <span className="mt-0.5 text-xs text-ink-400">{buffer.folder}</span>}
+        </button>
+      ))}
     </div>
   )
 }

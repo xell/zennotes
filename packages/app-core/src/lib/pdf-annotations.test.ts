@@ -6,6 +6,7 @@ import {
   isTextMarkupSubtype,
   normalizeQuadPoints,
   pdfColorToCss,
+  pdfColorToRgbTriple,
   quadsBounds,
   textInQuads,
   type TextBox
@@ -233,5 +234,16 @@ describe('clipItemText', () => {
 
   it('is safe on an empty string', () => {
     expect(clipItemText({ str: '', x: 0, y: 0, width: 50, height: 10 }, 10, 20)).toBe('')
+  })
+})
+
+describe('pdfColorToRgbTriple', () => {
+  it('returns bare channels for CSS to add its own alpha to', () => {
+    expect(pdfColorToRgbTriple([255, 212, 0])).toBe('255 212 0')
+  })
+
+  it('returns null (not a fallback colour) when unusable, so callers can tell', () => {
+    expect(pdfColorToRgbTriple(null)).toBeNull()
+    expect(pdfColorToRgbTriple([1, 2])).toBeNull()
   })
 })

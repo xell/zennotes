@@ -40,6 +40,7 @@ import {
   isTextMarkupSubtype,
   normalizeQuadPoints,
   pdfColorToCss,
+  pdfColorToRgbTriple,
   quadsBounds,
   registerPdfAnnotations,
   textInQuads,
@@ -137,7 +138,9 @@ export function PdfView({
   assetPath,
   tabPath,
   title,
-  assetActions = []
+  assetActions = [],
+  chrome = 'full',
+  readOnly = false
 }: {
   assetUrl: string
   /** Vault-relative path of the PDF, used to save bytes back to the file. */
@@ -148,6 +151,15 @@ export function PdfView({
   /** Host-provided actions (reference / locate / reveal) folded into this
    *  view's own menu, so a PDF shows one bar rather than two. */
   assetActions?: PdfAssetAction[]
+  /** `compact` drops the filename and shrinks the bar, for hosts that already
+   *  show the document's name (the pinned reference pane). */
+  chrome?: 'full' | 'compact'
+  /** Hide every annotation-authoring control. Used by the pinned reference
+   *  pane: the same PDF can be pinned and open in a tab at once, and each
+   *  view holds its own document, so both could hold unsaved highlights and
+   *  the second save would silently clobber the first. A reference is for
+   *  reading alongside, so it reads. */
+  readOnly?: boolean
 }): JSX.Element {
   // The scrollable, absolutely-positioned host PDFViewer requires.
   const containerRef = useRef<HTMLDivElement>(null)
@@ -168,6 +180,9 @@ export function PdfView({
   highlightOnRef.current = highlightOn
   // Read inside the highlight-creation callback without re-creating it.
   const highlightColorRef = useRef('')
+  // Embedded highlight id -> "r g b", used to tint each one correctly in Dark
+  // mode. Filled by the annotation scan below, which already reads these.
+  const embeddedHighlightColorsRef = useRef(new Map<string, string>())
   // Last non-collapsed selection made inside this viewer. Opening the Command
   // Palette moves focus and drops the live selection, so the palette entry
   // would otherwise always find nothing to highlight; this lets it (and a
@@ -696,6 +711,41 @@ export function PdfView({
     }
   }, [pdfDoc, tabPath])
 
+  // Give each embedded highlight its real colour in Dark mode.
+  //
+  // An embedded highlight is painted into the page canvas by its appearance
+  // stream, and `pageColors` renders that near-black on a dark page, so it
+  // disappears. The fix is to tint the annotation layer's own element, which is
+  // transparent but clipped to the exact text quads — previously with one
+  // hardcoded yellow, because the real colour "lives in the canvas and is
+  // unreachable from CSS". Unreachable from CSS, yes; reachable from JS via
+  // getAnnotations(), which the annotation list already calls. Each element is
+  // matched by `data-annotation-id` and given its colour as a custom property
+  // that the stylesheet applies its own alpha to.
+  //
+  // Our own highlights are unaffected: they live in the annotation *editor*
+  // layer, which this rule does not target, so they are not double-tinted.
+  const applyEmbeddedHighlightColors = useCallback((): void => {
+    const root = viewerElRef.current
+    const colors = embeddedHighlightColorsRef.current
+    if (!root || colors.size === 0) return
+    for (const el of root.querySelectorAll<HTMLElement>('.annotationLayer [data-annotation-id]')) {
+      const id = el.dataset.annotationId
+      const triple = id ? colors.get(id) : undefined
+      if (triple) el.style.setProperty('--zen-pdf-hl-rgb', triple)
+    }
+  }, [])
+
+  // Pages render lazily, so re-apply whenever a layer appears; the map itself
+  // is built once per document by the scan below.
+  useEffect(() => {
+    const bus = eventBusRef.current
+    if (!bus || status !== 'ready') return
+    const onLayerRendered = (): void => applyEmbeddedHighlightColors()
+    bus.on('annotationlayerrendered', onLayerRendered)
+    return () => bus.off('annotationlayerrendered', onLayerRendered)
+  }, [status, applyEmbeddedHighlightColors])
+
   // Assemble the annotation list for the annotations tab.
   //
   // Rebuilt whenever the editor reports a change (`dirty` flips as highlights
@@ -732,6 +782,9 @@ export function PdfView({
 
     void (async () => {
       const entries: PdfAnnotationEntry[] = []
+      // Declared out here so a mid-scan failure still publishes the colours
+      // gathered so far rather than losing them with the exception.
+      const colors = new Map<string, string>()
       try {
         // Deleting an embedded annotation leaves a tombstone in the storage
         // rather than removing it from the parsed document, so collect those
@@ -774,6 +827,10 @@ export function PdfView({
                 ])
             // Text markup gets the words it covers; a sticky note or FreeText
             // carries the author's own text in `contents`; shapes have neither.
+            if (subtype === 'Highlight' && typeof a.id === 'string') {
+              const triple = pdfColorToRgbTriple(a.color)
+              if (triple) colors.set(a.id, triple)
+            }
             const contents = typeof a.contents === 'string' ? a.contents.trim() : ''
             const text =
               isTextMarkupSubtype(subtype) && quads.length
@@ -822,6 +879,8 @@ export function PdfView({
         console.error('PdfView: failed to collect annotations', err)
       }
       if (cancelled) return
+      embeddedHighlightColorsRef.current = colors
+      applyEmbeddedHighlightColors()
       entries.sort((a, b) => a.pageNumber - b.pageNumber || b.rect[3] - a.rect[3])
       unregister = registerPdfAnnotations(tabPath, {
         entries,
@@ -846,7 +905,7 @@ export function PdfView({
       cancelled = true
       unregister?.()
     }
-  }, [pdfDoc, tabPath, dirty])
+  }, [pdfDoc, tabPath, dirty, applyEmbeddedHighlightColors])
 
   // Command Palette / keyboard shortcut path.
   useEffect(() => {
@@ -1122,11 +1181,17 @@ export function PdfView({
           are merged here, so a PDF no longer stacks a ZenNotes header above a
           PDF.js toolbar. What is used constantly (page, highlight, save) stays
           visible; everything else collapses into two menus. */}
-      <header className="zen-pdf-bar glass-header flex h-12 shrink-0 items-center gap-2 border-b border-paper-300/70 px-3 text-xs text-ink-700">
-        <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-ink-900">
-          <DocumentIcon width={15} height={15} className="shrink-0 text-accent" />
-          <span className="truncate">{title}</span>
-        </div>
+      <header
+        className={`zen-pdf-bar glass-header flex shrink-0 items-center gap-2 border-b border-paper-300/70 px-3 text-xs text-ink-700 ${
+          chrome === 'compact' ? 'h-9' : 'h-12'
+        }`}
+      >
+        {chrome === 'full' && (
+          <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-ink-900">
+            <DocumentIcon width={15} height={15} className="shrink-0 text-accent" />
+            <span className="truncate">{title}</span>
+          </div>
+        )}
 
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           <div className="zen-pdf-group flex items-center gap-1">
@@ -1169,6 +1234,7 @@ export function PdfView({
           {/* Colour for new highlights, sitting left of the tool it applies
               to. The button is the swatch, so the current choice is readable
               without opening anything. */}
+          {!readOnly && (
           <PdfBarMenu
             title={`Highlight colour: ${
               PDF_HIGHLIGHT_PALETTE.find((c) => c.hex === highlightColor)?.label ?? 'custom'
@@ -1204,7 +1270,9 @@ export function PdfView({
               </>
             )}
           </PdfBarMenu>
+          )}
 
+          {!readOnly && (
           <button
             type="button"
             className={`zen-pdf-btn zen-pdf-btn-icon ${highlightOn ? 'zen-pdf-btn-active' : ''}`}
@@ -1214,11 +1282,12 @@ export function PdfView({
           >
             <HighlighterIcon width={14} height={14} />
           </button>
+          )}
 
           {/* Save and Discard appear only when there is something to act on.
               A permanently visible, greyed-out Save is noise, and worse, it
               implies the document might need saving when it does not. */}
-          {dirty && (
+          {!readOnly && dirty && (
             <>
               <button
                 type="button"
@@ -1269,6 +1338,7 @@ export function PdfView({
                     else setFindOpen(true)
                   }}
                 />
+                {chrome === 'full' && (
                 <PdfMenuItem
                   icon={<ListTreeIcon width={14} height={14} />}
                   label="Contents & annotations"
@@ -1277,6 +1347,7 @@ export function PdfView({
                     window.dispatchEvent(new Event('zen:toggle-outline'))
                   }}
                 />
+                )}
               </>
             )}
           </PdfBarMenu>
@@ -1442,7 +1513,11 @@ export function PdfView({
         <div
           ref={containerRef}
           className={`zen-pdf-container absolute inset-0 overflow-auto ${
-            mode === 'dark' || mode === 'invert' ? 'zen-pdf-scroll-dark' : ''
+            mode === 'dark' || mode === 'invert'
+              ? 'zen-pdf-scroll-dark'
+              : mode === 'sepia'
+                ? 'zen-pdf-scroll-sepia'
+                : ''
           }`}
           // Sepia's desk is derived from the chosen tone rather than a fixed
           // class, so it stays in step as the warmth is adjusted.

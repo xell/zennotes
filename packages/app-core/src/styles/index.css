@@ -4813,8 +4813,23 @@ textarea,
  * unreachable from CSS; per-annotation colour arrives when we own highlight
  * rendering for the persistence phase. */
 .zen-pdf-scroll-dark .annotationLayer .highlightAnnotation {
-  background-color: rgb(250 204 21 / 0.34);
+  /* `--zen-pdf-hl-rgb` is set per element from the annotation's own colour
+   * (see applyEmbeddedHighlightColors); the yellow is only the fallback for a
+   * highlight that declares no colour. */
+  background-color: rgb(var(--zen-pdf-hl-rgb, 250 204 21) / 0.34);
   mix-blend-mode: screen;
+}
+
+/* Sepia has the same problem as Dark, for the same reason: `pageColors` puts
+ * PDF.js into high-contrast mode, whose `addHighlightHCMFilter` remaps an
+ * embedded highlight's colour toward the page palette — against sepia paper it
+ * washes out to nothing. Same remedy (tint the annotation layer's transparent,
+ * quad-clipped element), opposite blend: `screen` lightens, which is what a
+ * dark page needs, whereas light paper needs `multiply` to darken. Colour comes
+ * from the annotation itself via --zen-pdf-hl-rgb. */
+.zen-pdf-scroll-sepia .annotationLayer .highlightAnnotation {
+  background-color: rgb(var(--zen-pdf-hl-rgb, 250 204 21) / 0.42);
+  mix-blend-mode: multiply;
 }
 
 /* Coarse fallback dark mode: negate the whole page layer. hue-rotate keeps
