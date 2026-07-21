@@ -37,12 +37,12 @@ export function FolderGlyphIcon({ open = false }: { open?: boolean }): JSX.Eleme
       width="16"
       height="16"
       viewBox="0 0 24 24"
-      fill={open ? 'currentColor' : 'none'}
+      fill={open ? 'none' : 'currentColor'}
       stroke="currentColor"
       strokeWidth="1.75"
       strokeLinecap="round"
       strokeLinejoin="round"
-      fillOpacity={open ? 0.18 : 0}
+      fillOpacity={open ? 0 : 0.18}
     >
       <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
     </svg>
