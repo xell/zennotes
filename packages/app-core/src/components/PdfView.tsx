@@ -48,9 +48,32 @@ import {
   type TextBox
 } from '../lib/pdf-annotations'
 import { useStore } from '../store'
+import { getCurrentDragPayload } from '../lib/dnd'
 import { PDF_HIGHLIGHT_COLORS_OPTION, PDF_HIGHLIGHT_PALETTE } from '@shared/pdf'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+
+// PDF.js's AnnotationEditorUIManager attaches document-level `dragover`/`drop`
+// listeners (to import an image dropped onto a PDF into a stamp annotation).
+// Its handler iterates an internal set that stays null until an editing mode is
+// entered, so it throws `this.#o is not iterable` on ANY drag anywhere in the
+// app while a PDF is open — flooding the console and, when the pointer is over
+// a region that lets the event bubble to `document`, breaking that drag.
+//
+// We never support dropping onto the PDF, and our own drag-and-drop is handled
+// by React component listeners (delegated at the React root, a descendant of
+// `document`), never by `document` listeners. So for an in-app drag we swallow
+// the event at `document` before PDF.js's listener runs. Registered once at
+// module load — before any PDFViewer is constructed — so it is earliest in the
+// listener list; `stopImmediatePropagation` then prevents PDF.js's handler from
+// firing. Our own handlers already ran (deeper in the tree, earlier in bubble),
+// so this does not affect them. External file drags (no in-app payload) are
+// left alone.
+function suppressPdfjsDocumentDrag(event: DragEvent): void {
+  if (getCurrentDragPayload()) event.stopImmediatePropagation()
+}
+document.addEventListener('dragover', suppressPdfjsDocumentDrag)
+document.addEventListener('drop', suppressPdfjsDocumentDrag)
 
 // `light` is the untouched page. `dark` uses PDF.js's render-time
 // `pageColors`, which recolours the default page background and default

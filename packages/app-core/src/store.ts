@@ -2847,7 +2847,7 @@ interface Store {
     assetPath: string,
     targetDir: string,
     referenceHrefsByNote: ReadonlyMap<string, readonly string[]>
-  ) => Promise<void>
+  ) => Promise<string>
   undoLastAssetAction: () => Promise<boolean>
   updateActiveBody: (body: string) => void
   persistActive: () => Promise<void>
@@ -5459,6 +5459,7 @@ export const useStore = create<Store>((set, get) => {
 
     await get().refreshAssets()
     await get().refreshNotes()
+    return moved.path
   },
 
   undoLastAssetAction: async () => {

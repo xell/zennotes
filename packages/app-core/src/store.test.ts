@@ -5,6 +5,7 @@ import { TASKS_TAB_PATH, type VaultTask } from '@shared/tasks'
 import { databaseTabPath } from '@shared/databases'
 import { assetTabPath } from './lib/asset-tabs'
 import { findLeaf, type PaneLayout, type PaneLeaf } from './lib/pane-layout'
+import type { AssetMeta } from '@shared/ipc'
 
 function makeTask(content: string, taskIndex = 0): VaultTask {
   return {
@@ -1294,5 +1295,68 @@ describe('date-nav expand state (#301)', () => {
     expect(s().dateNavExpanded).toContain('w:2026')
     s().toggleDateNav('w:2026')
     expect(s().dateNavExpanded).not.toContain('w:2026')
+  })
+})
+
+// Manual reorder must treat assets as first-class siblings, not tack them on
+// after notes/folders. These guard the two store-side wiring points that each
+// silently omitted assets during development — the render had a matching bug in
+// the component, which can't be unit-tested, so these are the durable net for
+// the model + store half of that path.
+describe('manual reorder: assets as siblings', () => {
+  const makeAsset = (path: string, siblingOrder: number): AssetMeta => ({
+    path,
+    name: path.split('/').pop() ?? path,
+    kind: 'image',
+    siblingOrder,
+    size: 0,
+    updatedAt: 0
+  })
+
+  async function seedSiblings(manualNoteOrder: Record<string, string[]> = {}) {
+    installZen()
+    const { useStore } = await loadStore()
+    useStore.setState({
+      notes: [
+        { ...makeNote('', 'Proj/a.md'), siblingOrder: 0 },
+        { ...makeNote('', 'Proj/b.md'), siblingOrder: 1 }
+      ],
+      assetFiles: [makeAsset('Proj/x.png', 0), makeAsset('Proj/y.png', 1)],
+      folders: [],
+      manualNoteOrder
+    })
+    return useStore
+  }
+
+  it('interleaves assets: unlisted sort notes then assets, by file order', async () => {
+    const useStore = await seedSiblings()
+    expect(useStore.getState().getOrderedSiblingPaths('Proj')).toEqual([
+      'Proj/a.md',
+      'Proj/b.md',
+      'Proj/x.png',
+      'Proj/y.png'
+    ])
+  })
+
+  it('honours a stored order that mixes a note and an asset, unlisted trailing', async () => {
+    const useStore = await seedSiblings({ Proj: ['Proj/y.png', 'Proj/a.md'] })
+    expect(useStore.getState().getOrderedSiblingPaths('Proj')).toEqual([
+      'Proj/y.png',
+      'Proj/a.md',
+      'Proj/b.md', // unlisted note, before unlisted asset
+      'Proj/x.png'
+    ])
+  })
+
+  it('placeItemManually on an asset stores the FULL sibling list, not a partial one', async () => {
+    // The bug: getOrderedSiblingPaths omitted assets, so placing one built an
+    // order missing every other asset — which scattered them on the next sort.
+    const useStore = await seedSiblings()
+    useStore.getState().placeItemManually('Proj/y.png', 'Proj', 'Proj/a.md')
+    const stored = useStore.getState().manualNoteOrder['Proj']
+    // Every sibling is present (nothing dropped)…
+    expect([...stored].sort()).toEqual(['Proj/a.md', 'Proj/b.md', 'Proj/x.png', 'Proj/y.png'])
+    // …and the dragged asset landed immediately before its target.
+    expect(stored.indexOf('Proj/y.png')).toBe(stored.indexOf('Proj/a.md') - 1)
   })
 })

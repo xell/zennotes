@@ -1324,6 +1324,17 @@ export function Sidebar(): JSX.Element {
         clearDrop();
         return;
       }
+      // Assets never cross a top-level section (inbox/quick/archive/trash),
+      // matching the folder rule. `hovered.section` is the target section (the
+      // resolver only builds rows within it), so refuse outright when it differs
+      // from the dragged asset's own — no line for a drop that won't happen.
+      if (
+        drag?.kind === "asset" &&
+        (folderForVaultRelativePath(draggedPath, vs) ?? "inbox") !== hovered.section
+      ) {
+        clearDrop();
+        return;
+      }
       const rows = all.filter((r) => r.section === hovered.section);
       const hoveredIndex = rows.indexOf(hovered);
       const fracY =
@@ -1360,7 +1371,11 @@ export function Sidebar(): JSX.Element {
           clearSpring();
         }
         event.preventDefault();
-        event.dataTransfer.dropEffect = "move";
+        // Match effectAllowed (assets drag as "copy"); a "move" here over a
+        // "copy" drag makes Chromium reject the target, so the into-folder drop
+        // silently did nothing for assets — unlike the edge path, which was
+        // already matched.
+        event.dataTransfer.dropEffect = drag?.kind === "asset" ? "copy" : "move";
         dropResolutionRef.current = {
           parentDir: hovered.path,
           beforePath: null,
@@ -1406,13 +1421,7 @@ export function Sidebar(): JSX.Element {
         draggedPath,
         draggedIsFolder,
       });
-      // Phase A: assets reorder within their own folder only. A cross-folder
-      // asset drop would be a real file move (with reference rewriting) — that's
-      // Phase B — so refuse the indicator entirely rather than show a line the
-      // drop won't honour.
-      const assetCrossFolder =
-        drag?.kind === "asset" && resolution.parentDir !== parentDirOf(draggedPath);
-      if (!resolution.valid || assetCrossFolder) {
+      if (!resolution.valid) {
         dropResolutionRef.current = null;
         setDropLine(null);
         return;
@@ -1447,10 +1456,48 @@ export function Sidebar(): JSX.Element {
         placeItemManually(draggedPath, targetParentDir, resolution.beforePath);
         return;
       }
-      // Cross-folder reaches here (same-parent returned above). Assets don't do
-      // cross-folder moves in Phase A — the dragover already refuses the
-      // indicator, but guard the drop too so nothing slips through.
-      if (drag.kind === "asset") return;
+      // Cross-folder reaches here (same-parent returned above).
+      if (drag.kind === "asset") {
+        // Section boundary (dragover already refuses the indicator; guard the
+        // drop too so nothing slips through).
+        if (
+          (folderForVaultRelativePath(drag.path, vs) ?? "inbox") !==
+          vaultDirToTarget(targetParentDir, vs).folder
+        )
+          return;
+        // A real file move + reference rewrite, then position at the
+        // destination. `targetParentDir` is already the vault-relative folder
+        // moveAsset expects (same space as the manager's currentDir).
+        const st = useStore.getState();
+        const referenceHrefsByNote = findAssetReferenceHrefs(
+          st.notes,
+          st.vault?.root,
+          drag.path,
+        );
+        // Post-drop confirm (the drag is over), matching the Assets Manager's
+        // threshold so both entry points warn identically before a bulk
+        // reference rewrite.
+        if (referenceHrefsByNote.size > 5) {
+          const ok = await confirmApp({
+            title: `Update references in ${referenceHrefsByNote.size} notes?`,
+            description: `Moving this file will rewrite its reference in ${referenceHrefsByNote.size} notes that use it.`,
+            confirmLabel: "Move and Update",
+          });
+          if (!ok) return;
+        }
+        try {
+          const newPath = await st.moveAssetAndRewriteReferences(
+            drag.path,
+            targetParentDir,
+            referenceHrefsByNote,
+          );
+          if (newPath)
+            placeItemManually(newPath, targetParentDir, resolution.beforePath);
+        } catch (err) {
+          window.alert(err instanceof Error ? err.message : String(err));
+        }
+        return;
+      }
       const target = vaultDirToTarget(targetParentDir, vs);
       if (drag.kind === "folder") {
         if (drag.folder !== target.folder) return; // folders stay in their section
@@ -3928,21 +3975,6 @@ export function Sidebar(): JSX.Element {
         setFocusedPanel("sidebar");
       }}
       onFocusCapture={() => setFocusedPanel("sidebar")}
-      // Stop an in-app drag from bubbling (natively) out of the sidebar to
-      // `document`. PDF.js's AnnotationEditorUIManager attaches document-level
-      // dragover/drop listeners (to import images onto a PDF), and its handler
-      // throws — `this.#o is not iterable` — when no editor mode is active, so
-      // with a PDF open every sidebar drag flooded the console and broke the
-      // reorder. React's synthetic stopPropagation doesn't stop the native
-      // event, hence `nativeEvent`. Fires after our own descendant handlers, so
-      // the resolver is unaffected. Gated to in-app drags so any future
-      // external-file drop handling upstream still sees the event.
-      onDragOver={(e) => {
-        if (getCurrentDragPayload()) e.nativeEvent.stopPropagation();
-      }}
-      onDrop={(e) => {
-        if (getCurrentDragPayload()) e.nativeEvent.stopPropagation();
-      }}
     >
       {/* Vault header + top-right actions */}
       <div className="flex items-center justify-between px-3 pb-3">
