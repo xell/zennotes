@@ -507,3 +507,54 @@ export function enhanceLocalAssetNodes(
     )
   })
 }
+
+/** Which glyph a file's row shows in the sidebar and reference lists, chosen by
+ *  extension. Coarser than `classifyLocalAssetHref` (which drives *viewers*):
+ *  here a PDF and a .docx share one "document" bucket because the list only
+ *  needs to say "this is a document" at a glance. */
+export type AssetFileIcon = 'document' | 'image' | 'attachment'
+
+// Defaults for the two user-editable extension lists. Kept as the same
+// comma-separated string the Settings text field shows, so the preference
+// default and the built-in fallback can never disagree.
+export const DEFAULT_DOCUMENT_EXTS = 'pdf, doc, docx, xls, xlsx, ppt, pptx, key, txt, text'
+export const DEFAULT_IMAGE_EXTS =
+  'png, jpg, jpeg, gif, webp, svg, bmp, tif, tiff, heic, heif, avif, ico, psd, af'
+
+// Parsing the same string yields the same Set instance, so callers can compare
+// by reference and skip re-parsing an unchanged preference.
+const extSetCache = new Map<string, Set<string>>()
+
+/** A comma/space-separated extension list to a lower-cased set, tolerant of
+ *  leading dots and stray whitespace (`.PNG`, ` jpg `, `psd`). */
+export function parseExtSet(list: string): Set<string> {
+  const cached = extSetCache.get(list)
+  if (cached) return cached
+  const set = new Set(
+    list
+      .split(/[\s,]+/)
+      .map((e) => e.replace(/^\.+/, '').toLowerCase())
+      .filter(Boolean)
+  )
+  extSetCache.set(list, set)
+  return set
+}
+
+const DEFAULT_DOCUMENT_SET = parseExtSet(DEFAULT_DOCUMENT_EXTS)
+const DEFAULT_IMAGE_SET = parseExtSet(DEFAULT_IMAGE_EXTS)
+
+/** The icon bucket for a file path or bare filename. The two extension sets
+ *  default to the built-ins; the sidebar passes the user-configured ones.
+ *  Anything in neither set is an attachment (paperclip). */
+export function assetFileIcon(
+  pathOrName: string,
+  documentExts: Set<string> = DEFAULT_DOCUMENT_SET,
+  imageExts: Set<string> = DEFAULT_IMAGE_SET
+): AssetFileIcon {
+  const base = pathOrName.split(/[\\/]/).pop() ?? pathOrName
+  const dot = base.lastIndexOf('.')
+  const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : ''
+  if (documentExts.has(ext)) return 'document'
+  if (imageExts.has(ext)) return 'image'
+  return 'attachment'
+}

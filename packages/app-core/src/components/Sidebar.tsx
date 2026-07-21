@@ -39,10 +39,12 @@ import {
   CloseIcon,
   DatabaseIcon,
   DocumentIcon,
+  DocumentTextIcon,
   ExcalidrawIcon,
   ExpandAllIcon,
   FilterIcon,
   GitBranchIcon,
+  ImageIcon,
   IsolateIcon,
   QuicklookIcon,
   PaperclipIcon,
@@ -111,7 +113,7 @@ import {
 } from "../lib/sidebar-drop-resolver";
 import { resolveSystemFolderLabels } from "../lib/system-folder-labels";
 import { assetPathFromTab, assetTabPath } from "../lib/asset-tabs";
-import { findAssetReferenceHrefs } from "../lib/local-assets";
+import { assetFileIcon, findAssetReferenceHrefs, parseExtSet } from "../lib/local-assets";
 import {
   csvPathForFormDir,
   csvPathFromDatabaseTab,
@@ -6632,6 +6634,20 @@ function areNoteLeafPropsEqual(prev: NoteLeafProps, next: NoteLeafProps): boolea
   );
 }
 
+/** Row glyph for an asset file, picked by extension: a document, an image, or
+ *  a generic attachment. Extension lists are user-configurable (Settings ›
+ *  Appearance); parseExtSet caches by string, so this stays cheap across the
+ *  many rows and updates live when the preference changes. 14px to match the
+ *  note/folder row glyphs. */
+function AssetFileGlyph({ name }: { name: string }): JSX.Element {
+  const documentExts = useStore((s) => s.assetDocumentExts);
+  const imageExts = useStore((s) => s.assetImageExts);
+  const kind = assetFileIcon(name, parseExtSet(documentExts), parseExtSet(imageExts));
+  const Icon =
+    kind === "document" ? DocumentTextIcon : kind === "image" ? ImageIcon : PaperclipIcon;
+  return <Icon width={14} height={14} />;
+}
+
 function AssetLeaf({
   asset,
   vaultRoot,
@@ -6699,19 +6715,7 @@ function AssetLeaf({
         : {})}
     >
       <SidebarGlyph active={strongActive} rowActive={!!active}>
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.75"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9Z" />
-          <path d="M14 3v6h6" />
-        </svg>
+        <AssetFileGlyph name={asset.name} />
       </SidebarGlyph>
       {/* Inherit the row's colour (like NoteLeaf's title) so the active state
           isn't overridden by a hardcoded ink shade. */}

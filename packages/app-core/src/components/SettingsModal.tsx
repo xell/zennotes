@@ -640,6 +640,10 @@ export function SettingsModal(): JSX.Element {
   const setSystemFolderLabel = useStore((s) => s.setSystemFolderLabel);
   const darkSidebar = useStore((s) => s.darkSidebar);
   const setDarkSidebar = useStore((s) => s.setDarkSidebar);
+  const assetDocumentExts = useStore((s) => s.assetDocumentExts);
+  const setAssetDocumentExts = useStore((s) => s.setAssetDocumentExts);
+  const assetImageExts = useStore((s) => s.assetImageExts);
+  const setAssetImageExts = useStore((s) => s.setAssetImageExts);
   const showSidebarChevrons = useStore((s) => s.showSidebarChevrons);
   const setShowSidebarChevrons = useStore((s) => s.setShowSidebarChevrons);
   const pdfExportUseTheme = useStore((s) => s.pdfExportUseTheme);
@@ -1274,6 +1278,13 @@ export function SettingsModal(): JSX.Element {
             "Show disclosure arrows for collapsible folders and sidebar sections.",
           keywords: ["chevrons", "disclosure"],
         },
+        {
+          id: "asset-file-icons",
+          title: "File-list icons",
+          description:
+            "Which file extensions show the document or image icon in the sidebar.",
+          keywords: ["extension", "icon", "pdf", "image", "attachment", "file type"],
+        },
       ],
       content: (
         <div className="space-y-6">
@@ -1692,6 +1703,28 @@ export function SettingsModal(): JSX.Element {
               value={pdfExportUseTheme}
               settingId="pdf-export-use-theme"
               onChange={setPdfExportUseTheme}
+            />
+          </Section>
+
+          <Section
+            title="File-list icons"
+            description="Which file types show the document or image icon in the sidebar's file list. Anything not listed here gets the generic attachment icon. Comma-separated; changes apply immediately."
+          >
+            <TextInputRow
+              label="Document file types"
+              description="Shown with the document icon, e.g. pdf, doc, docx, xlsx, pptx, txt."
+              value={assetDocumentExts}
+              placeholder="pdf, doc, docx, txt"
+              settingId="asset-document-extensions"
+              onChange={(v) => setAssetDocumentExts(v ?? "")}
+            />
+            <TextInputRow
+              label="Image file types"
+              description="Shown with the image icon, e.g. png, jpg, svg, psd."
+              value={assetImageExts}
+              placeholder="png, jpg, jpeg, svg"
+              settingId="asset-image-extensions"
+              onChange={(v) => setAssetImageExts(v ?? "")}
             />
           </Section>
         </div>

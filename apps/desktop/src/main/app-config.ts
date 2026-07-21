@@ -280,6 +280,16 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
     tomlKey: 'quick_note_title_prefix',
     comment: 'prefix for new quick-note titles; empty = bare timestamp'
   },
+  assetDocumentExts: {
+    section: 'appearance',
+    tomlKey: 'asset_document_extensions',
+    comment: 'file extensions shown with the document icon in the sidebar (comma-separated)'
+  },
+  assetImageExts: {
+    section: 'appearance',
+    tomlKey: 'asset_image_extensions',
+    comment: 'file extensions shown with the image icon in the sidebar (comma-separated)'
+  },
   autoCalendarPanel: {
     section: 'view',
     tomlKey: 'auto_calendar_panel',

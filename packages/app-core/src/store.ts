@@ -26,6 +26,7 @@ import type {
 } from '@shared/ipc'
 import type { VaultTask } from '@shared/tasks'
 import { DEFAULT_PDF_HIGHLIGHT_COLOR, normalizePdfHighlightColor } from '@shared/pdf'
+import { DEFAULT_DOCUMENT_EXTS, DEFAULT_IMAGE_EXTS } from './lib/local-assets'
 import { isExcalidrawPath, isObsidianExcalidrawPath } from '@shared/excalidraw'
 import { TASKS_TAB_PATH, isTasksTabPath, parseTasksFromBody } from '@shared/tasks'
 import type { DatabaseDoc, DatabaseSidecar } from '@shared/databases'
@@ -536,6 +537,10 @@ interface Prefs {
   /** Optional prefix used for new Quick Note titles. Blank falls back
    *  to a bare timestamp/date. */
   quickNoteTitlePrefix: string | null
+  /** Comma-separated file extensions shown with the document / image glyph in
+   *  the sidebar file list; everything else gets the attachment glyph. */
+  assetDocumentExts: string
+  assetImageExts: string
   /** When true, long lines wrap inside the editor. When false they
    *  scroll horizontally — same as a coding editor's "Word Wrap". */
   wordWrap: boolean
@@ -832,6 +837,8 @@ export const DEFAULT_PREFS: Prefs = {
   pinnedRefMode: 'edit',
   quickNoteDateTitle: false,
   quickNoteTitlePrefix: 'Quick Note',
+  assetDocumentExts: DEFAULT_DOCUMENT_EXTS,
+  assetImageExts: DEFAULT_IMAGE_EXTS,
   wordWrap: true,
   diffInlineDiffs: true,
   cursorBlink: true,
@@ -1061,6 +1068,10 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
       typeof p.quickNoteTitlePrefix === 'string' || p.quickNoteTitlePrefix === null
         ? (p.quickNoteTitlePrefix as string | null)
         : DEFAULT_PREFS.quickNoteTitlePrefix,
+    assetDocumentExts:
+      typeof p.assetDocumentExts === 'string' ? p.assetDocumentExts : DEFAULT_PREFS.assetDocumentExts,
+    assetImageExts:
+      typeof p.assetImageExts === 'string' ? p.assetImageExts : DEFAULT_PREFS.assetImageExts,
     wordWrap:
       typeof p.wordWrap === 'boolean' ? p.wordWrap : DEFAULT_PREFS.wordWrap,
     diffInlineDiffs:
@@ -1898,6 +1909,8 @@ function collectPrefs(s: {
   pinnedRefMode: PaneMode
   quickNoteDateTitle: boolean
   quickNoteTitlePrefix: string | null
+  assetDocumentExts: string
+  assetImageExts: string
   wordWrap: boolean
   diffInlineDiffs: boolean
   cursorBlink: boolean
@@ -1984,6 +1997,8 @@ function collectPrefs(s: {
     pinnedRefMode: s.pinnedRefMode,
     quickNoteDateTitle: s.quickNoteDateTitle,
     quickNoteTitlePrefix: s.quickNoteTitlePrefix,
+    assetDocumentExts: s.assetDocumentExts,
+    assetImageExts: s.assetImageExts,
     wordWrap: s.wordWrap,
     diffInlineDiffs: s.diffInlineDiffs,
     cursorBlink: s.cursorBlink,
@@ -2460,6 +2475,8 @@ interface Store {
   quickNoteDateTitle: boolean
   /** Prefix used when generating new Quick Note titles. */
   quickNoteTitlePrefix: string | null
+  assetDocumentExts: string
+  assetImageExts: string
 
   /** Whether long lines wrap or scroll horizontally in the editor. */
   wordWrap: boolean
@@ -2979,6 +2996,8 @@ interface Store {
 
   setQuickNoteDateTitle: (on: boolean) => void
   setQuickNoteTitlePrefix: (prefix: string | null) => void
+  setAssetDocumentExts: (value: string) => void
+  setAssetImageExts: (value: string) => void
   openTodayDailyNote: () => Promise<void>
   openThisWeekWeeklyNote: () => Promise<void>
   openThisMonthMonthlyNote: () => Promise<void>
@@ -4173,6 +4192,8 @@ export const useStore = create<Store>((set, get) => {
   rightPaneTab: 'terminal' as const,
   quickNoteDateTitle: loadPrefs().quickNoteDateTitle,
   quickNoteTitlePrefix: loadPrefs().quickNoteTitlePrefix,
+  assetDocumentExts: loadPrefs().assetDocumentExts,
+  assetImageExts: loadPrefs().assetImageExts,
   wordWrap: loadPrefs().wordWrap,
   diffInlineDiffs: loadPrefs().diffInlineDiffs,
   cursorBlink: loadPrefs().cursorBlink,
@@ -6690,6 +6711,14 @@ export const useStore = create<Store>((set, get) => {
     savePrefs(collectPrefs(get()))
   },
 
+  setAssetDocumentExts: (value) => {
+    set({ assetDocumentExts: value })
+    savePrefs(collectPrefs(get()))
+  },
+  setAssetImageExts: (value) => {
+    set({ assetImageExts: value })
+    savePrefs(collectPrefs(get()))
+  },
   setQuickNoteTitlePrefix: (prefix) => {
     set({ quickNoteTitlePrefix: prefix?.trim() ? prefix.trim() : null })
     savePrefs(collectPrefs(get()))

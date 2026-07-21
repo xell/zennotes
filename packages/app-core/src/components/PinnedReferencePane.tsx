@@ -59,7 +59,7 @@ import { LazyPreview as Preview } from './LazyPreview'
 import { MediaPlayer } from './MediaPlayer'
 import { PdfView } from './PdfView'
 import { TerminalPanel } from './TerminalPanel'
-import { DocumentIcon, DocumentTextIcon, ListIcon, PinIcon, TerminalIcon } from './icons'
+import { DocumentTextIcon, ListIcon, PinIcon, TerminalIcon } from './icons'
 import { ModeDropdown } from './ModeDropdown'
 import type { NoteMeta } from '@shared/ipc'
 import { allLeaves } from '../lib/pane-layout'
@@ -887,7 +887,7 @@ function OpenBuffersList(): JSX.Element {
         >
           <span className="flex items-center gap-1.5 text-sm font-medium text-ink-900">
             {buffer.isPdf && (
-              <DocumentIcon width={12} height={12} className="shrink-0 text-accent" />
+              <DocumentTextIcon width={12} height={12} className="shrink-0 text-accent" />
             )}
             <span className="truncate">{buffer.title}</span>
           </span>
