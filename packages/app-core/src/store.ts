@@ -5339,6 +5339,20 @@ export const useStore = create<Store>((set, get) => {
   renameAssetAndRewriteReferences: async (assetPath, nextName, referenceHrefsByNote) => {
     const renamed = await window.zen.renameAsset(assetPath, nextName)
 
+    // Keep the asset's manual-order position across the rename (its identity is
+    // its path). Without this, a manually-placed asset silently drops back to
+    // file order. `false` = not a folder (an asset has no descendants to re-key).
+    if (renamed.path !== assetPath) {
+      const nextManualOrder = remapManualOrderForMove(
+        get().manualNoteOrder,
+        assetPath,
+        renamed.path,
+        false
+      )
+      writeManualOrder(get().vault?.root ?? '', nextManualOrder)
+      set({ manualNoteOrder: nextManualOrder })
+    }
+
     // Keep the pinned-reference pane pointed at the renamed asset — otherwise
     // a pinned PDF (or any pinned asset) silently points at a path that no
     // longer exists once renamed.
@@ -5388,6 +5402,20 @@ export const useStore = create<Store>((set, get) => {
 
   moveAssetAndRewriteReferences: async (assetPath, targetDir, referenceHrefsByNote) => {
     const moved = await window.zen.moveAsset(assetPath, targetDir)
+
+    // Drop the asset from its old folder's manual order (it lives elsewhere
+    // now). A future positional move (Phase B) would re-insert it at the
+    // destination; today this just keeps the map from orphaning the old path.
+    if (moved.path !== assetPath) {
+      const nextManualOrder = remapManualOrderForMove(
+        get().manualNoteOrder,
+        assetPath,
+        moved.path,
+        false
+      )
+      writeManualOrder(get().vault?.root ?? '', nextManualOrder)
+      set({ manualNoteOrder: nextManualOrder })
+    }
 
     // Keep the pinned-reference pane pointed at the moved asset — same
     // staleness risk as rename.
@@ -6445,6 +6473,14 @@ export const useStore = create<Store>((set, get) => {
           name: f.subpath.split('/').pop() ?? f.subpath,
           siblingOrder: f.siblingOrder
         })
+      }
+    }
+    // Assets are reorder siblings too (Phase A). Omitting them here was the
+    // twin of omitting them from the render: placing an asset built an order
+    // list without the other assets, so they scattered on the next sort.
+    for (const a of s.assetFiles) {
+      if (parentDirOf(a.path) === parentDir) {
+        siblings.push({ path: a.path, kind: 'asset', name: a.name, siblingOrder: a.siblingOrder })
       }
     }
     return siblings

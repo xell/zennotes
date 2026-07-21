@@ -7,14 +7,20 @@
  */
 import { naturalCompare } from './natural-sort'
 
-/** A note or folder participating in a folder's manual order. `path` is its
- *  vault-relative identity (note path, or `vaultRelativeFolderPath`). */
+/** A note, folder, or asset participating in a folder's manual order. `path` is
+ *  its vault-relative identity (note/asset path, or `vaultRelativeFolderPath`). */
 export interface ManualOrderItem {
   path: string
-  kind: 'folder' | 'note'
+  kind: 'folder' | 'note' | 'asset'
   /** Folder display name, used to keep unlisted folders in natural order. */
   name: string
   siblingOrder: number
+}
+
+/** Precedence for *unlisted* items (those the user hasn't manually placed):
+ *  folders first, then notes, then assets — containers, content, attachments. */
+function manualKindRank(kind: ManualOrderItem['kind']): number {
+  return kind === 'folder' ? 0 : kind === 'note' ? 1 : 2
 }
 
 /** The directory portion of a vault-relative note path (`''` for the root). */
@@ -128,8 +134,8 @@ export function manualOrderCompare(
 /**
  * Compare two sibling items (notes or folders) for a folder's manual order.
  * Listed items sort first by their index in `order`. Unlisted items keep the
- * pre-manual look: folders before notes, folders in natural name order, notes in
- * file order. A total order, so `Array.sort` is stable.
+ * pre-manual look: folders, then notes, then assets; folders in natural name
+ * order, notes and assets in file order. A total order, so `Array.sort` is stable.
  */
 export function manualItemCompare(
   order: readonly string[] | undefined,
@@ -141,7 +147,8 @@ export function manualItemCompare(
   if (ia !== -1 && ib !== -1) return ia - ib
   if (ia !== -1) return -1
   if (ib !== -1) return 1
-  if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1
+  if (a.kind !== b.kind) return manualKindRank(a.kind) - manualKindRank(b.kind)
   if (a.kind === 'folder') return naturalCompare(a.name, b.name)
+  // Notes and assets both fall back to file order within their kind.
   return a.siblingOrder - b.siblingOrder
 }

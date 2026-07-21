@@ -87,6 +87,7 @@ import {
 } from "../lib/vault-layout";
 import {
   getCurrentDragPayload,
+  hasZenAssetItem,
   hasZenItem,
   readDragPayload,
   setDragPayload,
@@ -1279,7 +1280,12 @@ export function Sidebar(): JSX.Element {
         clearDrop();
         return;
       }
-      if (useStore.getState().noteSortOrder !== "manual" || !hasZenItem(event))
+      // Assets carry a different DnD MIME than notes/folders, so accept either —
+      // the resolver reads the live payload, not the transfer types.
+      if (
+        useStore.getState().noteSortOrder !== "manual" ||
+        (!hasZenItem(event) && !hasZenAssetItem(event))
+      )
         return;
       const container = sidebarScrollRef.current;
       if (!container) {
@@ -1304,8 +1310,9 @@ export function Sidebar(): JSX.Element {
         return;
       }
       const all = scrapeSidebarRows(container, vs);
+      const hoveredType = rowEl.getAttribute("data-sidebar-type");
       const hoveredPath =
-        rowEl.getAttribute("data-sidebar-type") === "note"
+        hoveredType === "note" || hoveredType === "asset"
           ? rowEl.getAttribute("data-sidebar-path")
           : vaultRelativeFolderPath(
               (rowEl.getAttribute("data-sidebar-folder") ?? "inbox") as NoteFolder,
@@ -1399,13 +1406,22 @@ export function Sidebar(): JSX.Element {
         draggedPath,
         draggedIsFolder,
       });
-      if (!resolution.valid) {
+      // Phase A: assets reorder within their own folder only. A cross-folder
+      // asset drop would be a real file move (with reference rewriting) — that's
+      // Phase B — so refuse the indicator entirely rather than show a line the
+      // drop won't honour.
+      const assetCrossFolder =
+        drag?.kind === "asset" && resolution.parentDir !== parentDirOf(draggedPath);
+      if (!resolution.valid || assetCrossFolder) {
         dropResolutionRef.current = null;
         setDropLine(null);
         return;
       }
       event.preventDefault();
-      event.dataTransfer.dropEffect = "move";
+      // Match effectAllowed set at dragstart: assets use "copy", notes/folders
+      // "move". A mismatch (e.g. dropEffect "move" over an effectAllowed "copy"
+      // drag) makes Chromium treat the target as invalid and drop the drop.
+      event.dataTransfer.dropEffect = drag?.kind === "asset" ? "copy" : "move";
       dropResolutionRef.current = resolution;
       const gapY = belowHalf ? hovered.rect.bottom : hovered.rect.top;
       const left =
@@ -1431,6 +1447,10 @@ export function Sidebar(): JSX.Element {
         placeItemManually(draggedPath, targetParentDir, resolution.beforePath);
         return;
       }
+      // Cross-folder reaches here (same-parent returned above). Assets don't do
+      // cross-folder moves in Phase A — the dragover already refuses the
+      // indicator, but guard the drop too so nothing slips through.
+      if (drag.kind === "asset") return;
       const target = vaultDirToTarget(targetParentDir, vs);
       if (drag.kind === "folder") {
         if (drag.folder !== target.folder) return; // folders stay in their section
@@ -3908,6 +3928,21 @@ export function Sidebar(): JSX.Element {
         setFocusedPanel("sidebar");
       }}
       onFocusCapture={() => setFocusedPanel("sidebar")}
+      // Stop an in-app drag from bubbling (natively) out of the sidebar to
+      // `document`. PDF.js's AnnotationEditorUIManager attaches document-level
+      // dragover/drop listeners (to import images onto a PDF), and its handler
+      // throws — `this.#o is not iterable` — when no editor mode is active, so
+      // with a PDF open every sidebar drag flooded the console and broke the
+      // reorder. React's synthetic stopPropagation doesn't stop the native
+      // event, hence `nativeEvent`. Fires after our own descendant handlers, so
+      // the resolver is unaffected. Gated to in-app drags so any future
+      // external-file drop handling upstream still sees the event.
+      onDragOver={(e) => {
+        if (getCurrentDragPayload()) e.nativeEvent.stopPropagation();
+      }}
+      onDrop={(e) => {
+        if (getCurrentDragPayload()) e.nativeEvent.stopPropagation();
+      }}
     >
       {/* Vault header + top-right actions */}
       <div className="flex items-center justify-between px-3 pb-3">
@@ -5447,7 +5482,7 @@ function draggedItemPath(
   vaultSettings: ReturnType<typeof useStore.getState>["vaultSettings"],
 ): string | null {
   if (!drag) return null;
-  if (drag.kind === "note") return drag.path;
+  if (drag.kind === "note" || drag.kind === "asset") return drag.path;
   if (drag.kind === "folder")
     return vaultRelativeFolderPath(drag.folder, drag.subpath, vaultSettings);
   return null;
@@ -5475,7 +5510,9 @@ function scrapeSidebarRows(
       Math.round((padLeft - SIDEBAR_INDENT_BASE_PX) / SIDEBAR_INDENT_PX),
     );
     const rect = el.getBoundingClientRect();
-    if (type === "note") {
+    if (type === "note" || type === "asset") {
+      // Assets resolve exactly like notes here: a leaf row keyed by its path,
+      // never a drop container.
       const path = el.getAttribute("data-sidebar-path");
       if (!path) return;
       out.push({
@@ -5603,8 +5640,9 @@ function getTreeRenderEntries(
     return sortedChildren.map((child) => ({ type: "folder", node: child }));
   }
 
-  // Manual sort: folders and notes share one user-ordered list per parent
-  // (Phase 1 of #224 follow-up). Assets trail in file order.
+  // Manual sort: folders, notes AND assets share one user-ordered list per
+  // parent. Unlisted items keep the pre-manual look (folders, then notes, then
+  // assets in file order), so nothing reshuffles until you drag.
   if (manual) {
     const items: Array<{ entry: TreeRenderEntry; item: ManualOrderItem }> = [
       ...node.children.map((child) => ({
@@ -5625,15 +5663,18 @@ function getTreeRenderEntries(
           siblingOrder: note.siblingOrder,
         },
       })),
+      ...node.assets.map((asset) => ({
+        entry: { type: "asset" as const, asset },
+        item: {
+          path: asset.path,
+          kind: "asset" as const,
+          name: asset.name,
+          siblingOrder: asset.siblingOrder,
+        },
+      })),
     ];
     items.sort((a, b) => manualItemCompare(manual.order, a.item, b.item));
-    return [
-      ...items.map((x) => x.entry),
-      ...node.assets
-        .slice()
-        .sort((a, b) => a.siblingOrder - b.siblingOrder)
-        .map((asset) => ({ type: "asset" as const, asset }) as const),
-    ];
+    return items.map((x) => x.entry);
   }
 
   if (sortComparator || groupByKind) {

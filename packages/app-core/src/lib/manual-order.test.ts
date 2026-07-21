@@ -22,6 +22,12 @@ const nItem = (path: string, s = 0): ManualOrderItem => ({
   name: '',
   siblingOrder: s
 })
+const aItem = (path: string, s = 0): ManualOrderItem => ({
+  path,
+  kind: 'asset',
+  name: '',
+  siblingOrder: s
+})
 
 describe('parentDirOf / sameFolder', () => {
   it('returns the directory, or "" at the root', () => {
@@ -146,6 +152,22 @@ describe('manualItemCompare (notes + folders)', () => {
 
   it('orders unlisted notes by file order', () => {
     expect(manualItemCompare(undefined, nItem('a.md', 1), nItem('b.md', 4))).toBe(-3)
+  })
+
+  it('ranks unlisted kinds folder < note < asset', () => {
+    expect(manualItemCompare(undefined, fItem('F', 'F'), aItem('x.png'))).toBe(-2)
+    expect(manualItemCompare(undefined, nItem('n.md'), aItem('x.png'))).toBe(-1)
+    expect(manualItemCompare(undefined, aItem('x.png'), nItem('n.md'))).toBe(1)
+  })
+
+  it('orders a listed asset by its index, ahead of unlisted items of any kind', () => {
+    const order = ['pic.png']
+    expect(manualItemCompare(order, aItem('pic.png'), fItem('F', 'F'))).toBe(-1)
+    expect(manualItemCompare(order, aItem('pic.png'), nItem('n.md'))).toBe(-1)
+  })
+
+  it('orders unlisted assets by file order within their kind', () => {
+    expect(manualItemCompare(undefined, aItem('a.png', 2), aItem('b.png', 5))).toBe(-3)
   })
 
   it('produces the pre-manual look (folders first) with no stored order', () => {
