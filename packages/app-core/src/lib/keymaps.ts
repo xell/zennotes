@@ -84,6 +84,9 @@ export type KeymapId =
   | "vim.tabNext"
   | "vim.hintMode"
   | "vim.goToDefinition"
+  | "vim.lookUpDefinition"
+  | "vim.gotoNextLink"
+  | "vim.gotoPrevLink"
   | "vim.foldCurrent"
   | "vim.unfoldCurrent"
   | "vim.foldAll"
@@ -921,7 +924,41 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     group: "vim",
     title: "Follow link at cursor",
     description: "Open the note, URL, or asset under the cursor.",
+    defaultBinding: "g x",
+    vimOnly: true,
+    maxTokens: 2,
+  },
+  {
+    id: "vim.lookUpDefinition",
+    kind: "sequence",
+    scope: "vim-editor",
+    group: "vim",
+    title: "Look up word at cursor",
+    description:
+      "Open the native macOS dictionary Look Up panel for the word under the cursor. macOS only.",
     defaultBinding: "g d",
+    vimOnly: true,
+    maxTokens: 2,
+  },
+  {
+    id: "vim.gotoNextLink",
+    kind: "sequence",
+    scope: "vim-editor",
+    group: "vim",
+    title: "Go to next link",
+    description: "Jump the cursor to the next wikilink, Markdown link, or URL.",
+    defaultBinding: "g ]",
+    vimOnly: true,
+    maxTokens: 2,
+  },
+  {
+    id: "vim.gotoPrevLink",
+    kind: "sequence",
+    scope: "vim-editor",
+    group: "vim",
+    title: "Go to previous link",
+    description: "Jump the cursor to the previous wikilink, Markdown link, or URL.",
+    defaultBinding: "g [",
     vimOnly: true,
     maxTokens: 2,
   },

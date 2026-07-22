@@ -171,6 +171,8 @@ const api: ZenBridge = {
   getAppInfo: (): ZenAppInfo => DESKTOP_APP_INFO,
   platform: (): Promise<NodeJS.Platform> => ipcRenderer.invoke(IPC.APP_PLATFORM),
   platformSync: (): NodeJS.Platform => process.platform,
+  showDefinitionForSelection: (): Promise<void> =>
+    ipcRenderer.invoke(IPC.APP_SHOW_DEFINITION_FOR_SELECTION),
   listSystemFonts: (): Promise<string[]> => ipcRenderer.invoke(IPC.APP_LIST_FONTS),
   getAppIconDataUrl: (): Promise<string | null> => ipcRenderer.invoke(IPC.APP_ICON_DATA_URL),
   zoomInApp: (): Promise<number> => ipcRenderer.invoke(IPC.APP_ZOOM_IN),

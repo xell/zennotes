@@ -1462,6 +1462,8 @@ export const httpBridge: ZenBridge = {
   getAppInfo: (): ZenAppInfo => WEB_APP_INFO,
   platform,
   platformSync,
+  // Native macOS Look Up is a desktop-only capability; no-op in the browser.
+  showDefinitionForSelection: (): Promise<void> => Promise.resolve(),
   listSystemFonts,
   getAppIconDataUrl,
   zoomInApp,

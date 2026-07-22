@@ -22,6 +22,8 @@ import { getKeymapDisplay, type KeymapId } from './keymaps'
 import { dispatchKeyboardContextMenu, findTabContextMenuTarget } from './keyboard-context-menu'
 import { resolveSystemFolderLabels } from './system-folder-labels'
 import { foldAllHeadings } from './cm-heading-fold'
+import { lookUpDefinitionInView } from './look-up-definition'
+import { moveCursorToLink } from './link-navigation'
 import { normalizeVaultSettings } from './vault-layout'
 import { DEMO_TOUR_START_PATH } from '@shared/demo-tour'
 
@@ -902,6 +904,46 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       keywords: 'expand unfold all every reset',
       when: () => !!getState().editorViewRef && !!getState().activeNote,
       run: () => runFoldCommand('unfoldAll')
+    },
+    {
+      // macOS-only: native dictionary Look Up for the word at the cursor.
+      id: 'editor.lookUpDefinition',
+      title: 'Look Up Word at Cursor',
+      category: 'Editor',
+      shortcut: shortcut('vim.lookUpDefinition'),
+      keywords: 'dictionary definition look up define meaning word macos',
+      when: () =>
+        window.zen.platformSync() === 'darwin' &&
+        !!getState().editorViewRef &&
+        !!getState().activeNote,
+      run: () => {
+        const view = getState().editorViewRef
+        if (view) lookUpDefinitionInView(view)
+      }
+    },
+    {
+      id: 'editor.gotoNextLink',
+      title: 'Go to Next Link',
+      category: 'Editor',
+      shortcut: shortcut('vim.gotoNextLink'),
+      keywords: 'next link jump wikilink url anchor navigate forward',
+      when: () => !!getState().editorViewRef && !!getState().activeNote,
+      run: () => {
+        const view = getState().editorViewRef
+        if (view) moveCursorToLink(view, false)
+      }
+    },
+    {
+      id: 'editor.gotoPrevLink',
+      title: 'Go to Previous Link',
+      category: 'Editor',
+      shortcut: shortcut('vim.gotoPrevLink'),
+      keywords: 'previous prev link jump wikilink url anchor navigate back',
+      when: () => !!getState().editorViewRef && !!getState().activeNote,
+      run: () => {
+        const view = getState().editorViewRef
+        if (view) moveCursorToLink(view, true)
+      }
     },
     {
       id: 'task.forward',

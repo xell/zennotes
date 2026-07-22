@@ -125,7 +125,10 @@ function resolveShortcutKeys(
 }
 
 function resolveVimCommandLabel(command: string, overrides: KeymapOverrides): string {
-  if (command === 'gd') return shortcut(overrides, 'vim.goToDefinition')
+  if (command === 'gx') return shortcut(overrides, 'vim.goToDefinition')
+  if (command === 'gd') return shortcut(overrides, 'vim.lookUpDefinition')
+  if (command === 'g]') return shortcut(overrides, 'vim.gotoNextLink')
+  if (command === 'g[') return shortcut(overrides, 'vim.gotoPrevLink')
   if (command === '<Space> l f') {
     return `${leaderShortcut(overrides, 'vim.leaderNoteActions')} ${shortcut(overrides, 'vim.leaderFormatNote')}`
   }

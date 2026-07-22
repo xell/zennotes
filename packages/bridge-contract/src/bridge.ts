@@ -81,6 +81,9 @@ export interface ZenBridge {
 
   platform(): Promise<NodeJS.Platform>
   platformSync(): NodeJS.Platform
+  /** Show the native macOS "Look Up" dictionary panel for the current text
+   *  selection in this window. No-op off macOS. */
+  showDefinitionForSelection(): Promise<void>
   listSystemFonts(): Promise<string[]>
   getAppIconDataUrl(): Promise<string | null>
   zoomInApp(): Promise<number>

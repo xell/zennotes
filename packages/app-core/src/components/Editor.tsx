@@ -48,6 +48,8 @@ import { navigateActiveBuffer } from '../lib/buffer-navigation'
 import { applyVimInsertEscape } from '../lib/vim-insert-escape'
 import { applyVimKeymap } from '../lib/vim-keymap'
 import { listContinuationPrefix } from '../lib/list-continuation'
+import { lookUpDefinitionInView } from '../lib/look-up-definition'
+import { moveCursorToLink } from '../lib/link-navigation'
 import { focusEditorNormalMode } from '../lib/editor-focus'
 
 let vimCommandsRegistered = false
@@ -175,11 +177,44 @@ function editorHalfPage(view: EditorView | undefined, forward: boolean): void {
 }
 
 function syncVimKeymaps(overrides: KeymapOverrides): void {
-  const mappings: Array<{ id: KeymapId; action: string; bindings: string[] }> = [
+  const mappings: Array<{
+    id: KeymapId
+    action: string
+    bindings: string[]
+    contexts?: Array<'normal' | 'visual'>
+  }> = [
     {
       id: 'vim.goToDefinition',
       action: 'goToDefinition',
       bindings: [toVimSequence(getKeymapBinding(overrides, 'vim.goToDefinition'))].filter(
+        (binding): binding is string => !!binding
+      )
+    },
+    {
+      // macOS-only: the native dictionary Look Up panel. Off macOS the binding is
+      // dropped so `gd` (its default) stays free for other mappings. Bound in
+      // visual mode too so a highlighted phrase can be looked up, not just a word.
+      id: 'vim.lookUpDefinition',
+      action: 'lookUpDefinition',
+      contexts: ['normal', 'visual'],
+      bindings:
+        window.zen.platformSync() === 'darwin'
+          ? [toVimSequence(getKeymapBinding(overrides, 'vim.lookUpDefinition'))].filter(
+              (binding): binding is string => !!binding
+            )
+          : []
+    },
+    {
+      id: 'vim.gotoNextLink',
+      action: 'gotoNextLink',
+      bindings: [toVimSequence(getKeymapBinding(overrides, 'vim.gotoNextLink'))].filter(
+        (binding): binding is string => !!binding
+      )
+    },
+    {
+      id: 'vim.gotoPrevLink',
+      action: 'gotoPrevLink',
+      bindings: [toVimSequence(getKeymapBinding(overrides, 'vim.gotoPrevLink'))].filter(
         (binding): binding is string => !!binding
       )
     },
@@ -276,15 +311,20 @@ function syncVimKeymaps(overrides: KeymapOverrides): void {
   ]
 
   for (const mapping of mappings) {
+    const contexts = mapping.contexts ?? ['normal']
     for (const binding of syncedVimBindings[mapping.id] ?? []) {
-      try {
-        Vim.unmap(binding, 'normal')
-      } catch {
-        /* ignore */
+      for (const context of contexts) {
+        try {
+          Vim.unmap(binding, context)
+        } catch {
+          /* ignore */
+        }
       }
     }
     for (const binding of mapping.bindings) {
-      Vim.mapCommand(binding, 'action', mapping.action, {}, { context: 'normal' })
+      for (const context of contexts) {
+        Vim.mapCommand(binding, 'action', mapping.action, {}, { context })
+      }
     }
     syncedVimBindings[mapping.id] = mapping.bindings
   }
@@ -636,6 +676,26 @@ function registerVimCommands(): void {
 
     // Dead link — confirm, then create the note (shared with the cmd-click path).
     void offerCreateNoteFromLink(target)
+  })
+
+  // `gd` — "go to definition", read literally: open the native macOS dictionary
+  // Look Up panel (the force-click / Ctrl+Cmd+D popover) for the word under the
+  // cursor. The panel reads the current selection, so we briefly select the word,
+  // fire the lookup, then restore the caret so vim normal-mode state is untouched.
+  Vim.defineAction('lookUpDefinition', (cm: ReturnType<typeof getCM>) => {
+    const view = (cm as unknown as { cm6?: EditorView }).cm6
+    if (view) lookUpDefinitionInView(view)
+  })
+
+  // `g]` / `g[` — jump to the next / previous link in the note (the same links
+  // `gx` can follow). Bare `]` / `[` cannot be overridden, hence the `g` prefix.
+  Vim.defineAction('gotoNextLink', (cm: ReturnType<typeof getCM>) => {
+    const view = (cm as unknown as { cm6?: EditorView }).cm6
+    if (view) moveCursorToLink(view, false)
+  })
+  Vim.defineAction('gotoPrevLink', (cm: ReturnType<typeof getCM>) => {
+    const view = (cm as unknown as { cm6?: EditorView }).cm6
+    if (view) moveCursorToLink(view, true)
   })
 
   // Vim-style pane navigation actions are registered here, but their

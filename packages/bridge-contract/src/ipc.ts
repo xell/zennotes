@@ -118,6 +118,7 @@ export const IPC = {
   TERMINAL_DATA: 'terminal:data',
   TERMINAL_EXIT: 'terminal:exit',
   APP_PLATFORM: 'app:platform',
+  APP_SHOW_DEFINITION_FOR_SELECTION: 'app:show-definition-for-selection',
   APP_GET_QUICK_CAPTURE_HOTKEY: 'app:get-quick-capture-hotkey',
   APP_SET_QUICK_CAPTURE_HOTKEY: 'app:set-quick-capture-hotkey',
   APP_GET_QUICK_CAPTURE_PINNED: 'app:get-quick-capture-pinned',

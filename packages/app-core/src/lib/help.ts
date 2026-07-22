@@ -638,9 +638,19 @@ export const HELP_VIM_COMMANDS: HelpExCommand[] = [
     detail: 'Every command-palette tab action is also registered on the `:` line. Use these aliases to open the active tab menu itself, close sibling tabs in the current pane, or close tabs to the right without touching the tab strip.'
   },
   {
-    command: 'gd',
+    command: 'gx',
     summary: 'Follow the link under the cursor',
     detail: 'Open wikilinks, open external links, create missing notes, or pin PDFs into the reference pane.'
+  },
+  {
+    command: 'gd',
+    summary: 'Look up the word under the cursor (macOS)',
+    detail: 'Open the native macOS dictionary Look Up panel for the word at the cursor, the same popover you get from a force-click or Ctrl+Cmd+D. macOS only.'
+  },
+  {
+    command: 'g]',
+    summary: 'Jump to the next / previous link',
+    detail: 'Move the cursor to the next (`g]`) or previous (`g[`) wikilink, Markdown link, or bare URL, wrapping around the ends of the note. Land on one and press `gx` to follow it.'
   },
   {
     command: 'o / O',

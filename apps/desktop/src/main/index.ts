@@ -2839,6 +2839,13 @@ function registerIpc(): void {
 
   handle(IPC.APP_PLATFORM, () => process.platform)
 
+  // The native macOS "Look Up" dictionary popover for the current selection.
+  // `showDefinitionForSelection` only exists on macOS; elsewhere this is a no-op.
+  handle(IPC.APP_SHOW_DEFINITION_FOR_SELECTION, (event) => {
+    if (process.platform !== 'darwin') return
+    event.sender.showDefinitionForSelection()
+  })
+
   handle(IPC.APP_LIST_FONTS, async () => {
     return await listFontFamilies()
   })
