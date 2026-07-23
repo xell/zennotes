@@ -279,6 +279,11 @@ export interface PersistedWindowSession {
    *  `id:<managed-id>` token — not every desktop has a UUID. Null/absent means
    *  we never captured one. */
   spaceId?: string | null
+  /** The tmux pane (a stable `%id`) this window's terminal was viewing when
+   *  last persisted, so a relaunch can re-attach the terminal to it. The tmux
+   *  server keeps the session alive across an app quit; we only replay the
+   *  attach. Null/absent means the terminal was not inside tmux. */
+  tmuxTarget?: string | null
 }
 
 export interface PersistedRemoteWorkspaceConfig {
@@ -457,7 +462,8 @@ function normalizePersistedConfig(value: unknown): PersistedConfig {
     if (!windowId || !root || !windowState) return null
     const tabGroupId = typeof v.tabGroupId === 'string' && v.tabGroupId.trim() ? v.tabGroupId.trim() : null
     const spaceId = typeof v.spaceId === 'string' && v.spaceId.trim() ? v.spaceId.trim() : null
-    return { windowId, root, windowState, tabGroupId, spaceId }
+    const tmuxTarget = typeof v.tmuxTarget === 'string' && v.tmuxTarget.trim() ? v.tmuxTarget.trim() : null
+    return { windowId, root, windowState, tabGroupId, spaceId, tmuxTarget }
   }
   const openWindows = Array.isArray(candidate.openWindows)
     ? candidate.openWindows

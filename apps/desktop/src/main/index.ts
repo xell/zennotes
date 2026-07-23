@@ -165,6 +165,7 @@ import type { DatabaseSidecar, DbRow } from '@shared/databases'
 import { VaultWatcher } from './watcher'
 import { WindowVaultRegistry } from './window-vaults'
 import { renderTikz } from './tikz'
+import { resolveCommandViaLoginShell } from './login-shell-path'
 import { RemoteServerClient } from './remote/server-client'
 import {
   getMcpClientStatuses,
@@ -918,7 +919,160 @@ function killPtySessionsForWebContents(wcId: number): void {
     if (session.webContentsId !== wcId) continue
     try { session.pty.kill() } catch { /* already dead */ }
     ptySessions.delete(id)
+    ptyTty.delete(id)
   }
+}
+
+// ─── tmux target persistence ────────────────────────────────────────────────
+// A window's terminal may host a tmux client. We remember which tmux pane (by
+// its stable `%id`) each window was viewing so a relaunch can re-attach it,
+// keyed by the window's persistent UUID. tmux keeps the sessions alive across
+// an app quit, so we only replay the attach — no session state is saved here.
+// See PersistedWindowSession.tmuxTarget.
+
+// pty session id -> the pty's controlling tty (e.g. "ttys004"), resolved once.
+const ptyTty = new Map<string, string>()
+
+function windowUuidForWebContents(wcId: number): string | undefined {
+  const wc = webContents.fromId(wcId)
+  const win = wc ? BrowserWindow.fromWebContents(wc) : null
+  return win ? windowUuids.get(win.id) : undefined
+}
+
+// Resolve tmux to an absolute path, memoized. A GUI app inherits only a minimal
+// PATH, and shell-based resolution is unreliable there (a login shell does not
+// source ~/.zshrc where Homebrew's shellenv usually lives), so try the shared
+// login-shell resolver first and then probe the well-known install locations.
+const TMUX_KNOWN_PATHS = [
+  '/opt/homebrew/bin/tmux',
+  '/usr/local/bin/tmux',
+  '/usr/bin/tmux',
+  '/opt/local/bin/tmux'
+]
+let tmuxBinCache: { at: number; value: string | null } | null = null
+async function resolveTmuxBin(): Promise<string | null> {
+  if (tmuxBinCache && Date.now() - tmuxBinCache.at < 60_000) return tmuxBinCache.value
+  let value = await resolveCommandViaLoginShell('tmux')
+  if (!value) {
+    for (const p of TMUX_KNOWN_PATHS) {
+      try {
+        await fsp.access(p)
+        value = p
+        break
+      } catch {
+        /* not installed here — try the next */
+      }
+    }
+  }
+  tmuxBinCache = { at: Date.now(), value }
+  return value
+}
+
+async function ttyForPid(pid: number): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync('/bin/ps', ['-o', 'tty=', '-p', String(pid)], { timeout: 2000 })
+    const tty = stdout.trim()
+    return tty && tty !== '??' ? tty : ''
+  } catch {
+    return ''
+  }
+}
+
+// Snapshot every terminal's current tmux pane and persist the changed ones onto
+// their window's session entry. If tmux is missing or its server is gone the
+// query throws and we leave saved targets untouched, so a transient hiccup (or
+// simply not using tmux) never wipes a good target.
+async function captureTmuxTargets(): Promise<void> {
+  if (ptySessions.size === 0) return
+  // A GUI app inherits only a minimal PATH, so resolve tmux via the login shell.
+  const tmuxBin = await resolveTmuxBin()
+  if (!tmuxBin) return
+  let stdout: string
+  try {
+    ;({ stdout } = await execFileAsync(
+      tmuxBin,
+      ['list-clients', '-F', '#{client_tty}\t#{pane_id}'],
+      { timeout: 2000 }
+    ))
+  } catch {
+    return
+  }
+  const clients = new Map<string, string>() // tty -> pane id (%N)
+  for (const line of stdout.split('\n')) {
+    // tmux does not separate the two fields with the tab we asked for (it emits
+    // an underscore), so pull each out by shape instead of splitting on a
+    // separator. A tty device path is only letters/digits/slashes; a pane id is
+    // `%<n>`. Bounding the tty to those chars stops it before the separator.
+    const tty = line.match(/\/dev\/([a-zA-Z0-9/]+)/)?.[1]
+    const pane = line.match(/%\d+/)?.[0]
+    if (tty && pane) clients.set(tty, pane)
+  }
+
+  const byUuid = new Map<string, string | null>()
+  for (const [sid, session] of ptySessions) {
+    let tty = ptyTty.get(sid)
+    if (!tty) {
+      tty = await ttyForPid(session.pty.pid)
+      if (tty) ptyTty.set(sid, tty)
+    }
+    if (!tty) continue
+    const uuid = windowUuidForWebContents(session.webContentsId)
+    if (!uuid) continue
+    // A terminal with no matching client is genuinely detached from tmux.
+    byUuid.set(uuid, clients.get(tty) ?? null)
+  }
+  if (byUuid.size === 0) return
+
+  await updateConfig((cfg) => {
+    const sessions = cfg.openWindows ?? []
+    let changed = false
+    const next = sessions.map((s) => {
+      if (!byUuid.has(s.windowId)) return s
+      const target = byUuid.get(s.windowId) ?? null
+      if ((s.tmuxTarget ?? null) === target) return s
+      changed = true
+      return { ...s, tmuxTarget: target }
+    })
+    return changed ? { ...cfg, openWindows: next } : cfg
+  })
+}
+
+let tmuxPollTimer: NodeJS.Timeout | null = null
+function ensureTmuxTargetPoll(): void {
+  if (tmuxPollTimer) return
+  // A few seconds is plenty: the target only has to be current by the next quit.
+  tmuxPollTimer = setInterval(() => { void captureTmuxTargets() }, 5000)
+  tmuxPollTimer.unref?.()
+}
+
+// After a terminal spawns, if its window was viewing a tmux pane last run and
+// that pane still exists, replay the attach into the fresh shell.
+async function restoreTmuxTarget(id: string, wcId: number): Promise<void> {
+  const uuid = windowUuidForWebContents(wcId)
+  if (!uuid) return
+  const cfg = await loadConfig()
+  const target = (cfg.openWindows ?? []).find((s) => s.windowId === uuid)?.tmuxTarget
+  // Validate the shape before interpolating it into a shell command.
+  if (!target || !/^%\d+$/.test(target)) return
+  const tmuxBin = await resolveTmuxBin()
+  if (!tmuxBin) return
+  try {
+    // Only attach if the pane is still alive in the running tmux server.
+    await execFileAsync(tmuxBin, ['list-panes', '-t', target], { timeout: 2000 })
+  } catch {
+    return
+  }
+  // Let the shell finish loading its rc files before we "type" the attach. The
+  // `\;` reach tmux as its own command separators, so this attaches to the
+  // pane's session and restores the exact window and pane it was showing.
+  setTimeout(() => {
+    const session = ptySessions.get(id)
+    if (!session) return
+    const cmd =
+      `tmux attach -t "$(tmux display -pt ${target} -p '#{session_id}')" ` +
+      `\\; select-window -t ${target} \\; select-pane -t ${target}\n`
+    try { session.pty.write(cmd) } catch { /* pty already gone */ }
+  }, 500)
 }
 
 function isWorkspaceWindow(win: BrowserWindow): boolean {
@@ -1542,7 +1696,9 @@ async function persistWindowState(win: BrowserWindow): Promise<void> {
           root: vault.root,
           windowState: state,
           tabGroupId: idx >= 0 ? sessions[idx].tabGroupId ?? null : null,
-          spaceId
+          spaceId,
+          // Owned by the tmux capture poll — preserve it across this geometry persist.
+          tmuxTarget: idx >= 0 ? sessions[idx].tmuxTarget ?? null : null
         }
         updated.openWindows = idx >= 0
           ? sessions.map((s, i) => (i === idx ? entry : s))
@@ -2027,7 +2183,9 @@ async function setVaultForWindow(
         tabGroupId: idx >= 0 ? sessions[idx].tabGroupId ?? null : null,
         // Owned by the geometry/reconcile persist paths; preserve the last
         // captured value rather than re-reading it on a vault switch.
-        spaceId: (idx >= 0 ? sessions[idx].spaceId : null) ?? nativeWindowSpaceId(win)
+        spaceId: (idx >= 0 ? sessions[idx].spaceId : null) ?? nativeWindowSpaceId(win),
+        // Owned by the tmux capture poll — preserve it across this vault switch.
+        tmuxTarget: idx >= 0 ? sessions[idx].tmuxTarget ?? null : null
       }
       newSessions = idx >= 0
         ? sessions.map((s, i) => (i === idx ? entry : s))
@@ -3958,9 +4116,12 @@ function registerIpc(): void {
     })
     pty.onExit(({ exitCode }) => {
       ptySessions.delete(id)
+      ptyTty.delete(id)
       const wc = webContents.fromId(wcId)
       if (wc && !wc.isDestroyed()) wc.send(IPC.TERMINAL_EXIT, id, exitCode)
     })
+    ensureTmuxTargetPoll()
+    void restoreTmuxTarget(id, wcId)
     return id
   })
   ipcMain.on(IPC.TERMINAL_INPUT, (event, id: string, data: string) => {
@@ -3977,6 +4138,7 @@ function registerIpc(): void {
     if (!session) return
     try { session.pty.kill() } catch { /* already dead */ }
     ptySessions.delete(id)
+    ptyTty.delete(id)
   })
 
   handle(IPC.CUSTOM_THEMES_LIST, () => listCustomThemes())
