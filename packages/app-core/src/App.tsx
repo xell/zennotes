@@ -1037,9 +1037,22 @@ function App(): JSX.Element {
   // the user doesn't have to open Settings + Escape to recover. Pairs with the
   // main-process `backgroundThrottling: false`. (#350)
   useEffect(() => {
+    // The terminal is a focus surface that `focusedPanel` doesn't model (it stays
+    // 'editor' while the terminal has focus), so track it separately. A blur that
+    // fires because the whole window lost focus (app switch) must not clear this —
+    // only a focus move to another in-window surface does.
+    const terminalActive = { current: false }
+    const onTerminalFocus = (): void => {
+      terminalActive.current = true
+    }
+    const onTerminalBlur = (): void => {
+      if (document.hasFocus()) terminalActive.current = false
+    }
+    window.addEventListener('zen:terminal-focused', onTerminalFocus)
+    window.addEventListener('zen:terminal-blurred', onTerminalBlur)
+
     const heal = (): void => {
       const state = useStore.getState()
-      if (state.focusedPanel !== 'editor') return
       if (
         state.settingsOpen ||
         state.searchOpen ||
@@ -1052,6 +1065,15 @@ function App(): JSX.Element {
       ) {
         return
       }
+      // If the terminal was the active surface, keep focus there — restoring it
+      // if the OS dropped it — instead of yanking focus over to the editor.
+      if (terminalActive.current) {
+        const active = document.activeElement
+        const terminalHasFocus = active instanceof HTMLElement && !!active.closest('.xterm')
+        if (!terminalHasFocus) window.dispatchEvent(new Event('zen:focus-terminal-input'))
+        return
+      }
+      if (state.focusedPanel !== 'editor') return
       const view = state.editorViewRef
       if (!view) return
       const active = document.activeElement
@@ -1067,6 +1089,8 @@ function App(): JSX.Element {
     window.addEventListener('focus', heal)
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
+      window.removeEventListener('zen:terminal-focused', onTerminalFocus)
+      window.removeEventListener('zen:terminal-blurred', onTerminalBlur)
       window.removeEventListener('focus', heal)
       document.removeEventListener('visibilitychange', onVisibility)
     }
