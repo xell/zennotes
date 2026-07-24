@@ -1620,6 +1620,7 @@ export const httpBridge: ZenBridge = {
     input: () => {},
     resize: () => {},
     dispose: () => {},
+    setFocused: () => {},
     onData: () => () => {},
     onExit: () => () => {}
   },

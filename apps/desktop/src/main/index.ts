@@ -921,6 +921,19 @@ function killPtySessionsForWebContents(wcId: number): void {
     ptySessions.delete(id)
     ptyTty.delete(id)
   }
+  terminalFocusedWcIds.delete(wcId)
+}
+
+// Windows whose embedded terminal currently holds focus (by webContents id),
+// reported from the renderer. Used to intercept a couple of hardcoded shortcuts
+// at before-input-event level (see createWindow).
+const terminalFocusedWcIds = new Set<number>()
+
+function terminalSessionForWebContents(wcId: number): PtySession | undefined {
+  for (const session of ptySessions.values()) {
+    if (session.webContentsId === wcId) return session
+  }
+  return undefined
 }
 
 // ─── tmux target persistence ────────────────────────────────────────────────
@@ -1849,6 +1862,25 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
     recordMainPerf('main.window.did-finish-load', performance.now() - createWindowStartedAt, {
       restored: !!restoredState
     })
+  })
+
+  // Hardcoded: while the embedded terminal holds focus, feed tmux's prev/next
+  // window keys (Ctrl+B p / Ctrl+B n) straight into the PTY. The intent is
+  // Cmd+Shift+[ / Cmd+Shift+], but Leo's system remapper (Karabiner/BTT) rewrites
+  // those into Ctrl+Shift+Tab / Ctrl+Tab before any app sees them, so we match the
+  // remapped form. before-input-event is the lowest interception point available
+  // to us (before the renderer, xterm, and any menu accelerator); a system event
+  // tap that runs above the app cannot be preempted from here.
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    if (input.code !== 'Tab' || !input.control || input.meta || input.alt) return
+    if (!terminalFocusedWcIds.has(win.webContents.id)) return
+    const session = terminalSessionForWebContents(win.webContents.id)
+    if (!session) return
+    event.preventDefault()
+    // Ctrl+Shift+Tab (from Cmd+Shift+[) → previous window; Ctrl+Tab (from
+    // Cmd+Shift+]) → next window. tmux prefix is Ctrl+B (0x02) then p / n.
+    session.pty.write(input.shift ? '\x02p' : '\x02n')
   })
 
   // Focus is the one moment we can be sure this window is on the *visible*
@@ -4139,6 +4171,11 @@ function registerIpc(): void {
     try { session.pty.kill() } catch { /* already dead */ }
     ptySessions.delete(id)
     ptyTty.delete(id)
+  })
+  ipcMain.on(IPC.TERMINAL_FOCUS, (event, focused: boolean) => {
+    if (!isTrustedIpcSender(event.sender)) return
+    if (focused) terminalFocusedWcIds.add(event.sender.id)
+    else terminalFocusedWcIds.delete(event.sender.id)
   })
 
   handle(IPC.CUSTOM_THEMES_LIST, () => listCustomThemes())

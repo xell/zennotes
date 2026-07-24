@@ -588,6 +588,8 @@ const api: ZenBridge = {
       ipcRenderer.send(IPC.TERMINAL_RESIZE, sessionId, cols, rows),
     dispose: (sessionId: string): void =>
       ipcRenderer.send(IPC.TERMINAL_DISPOSE, sessionId),
+    setFocused: (focused: boolean): void =>
+      ipcRenderer.send(IPC.TERMINAL_FOCUS, focused),
     onData: (cb: (sessionId: string, data: string) => void): (() => void) => {
       const listener = (_: unknown, id: string, data: string): void => cb(id, data)
       ipcRenderer.on(IPC.TERMINAL_DATA, listener)

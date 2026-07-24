@@ -325,6 +325,10 @@ export interface ZenBridge {
     resize(sessionId: string, cols: number, rows: number): void
     /** Kill the shell session. */
     dispose(sessionId: string): void
+    /** Tell the main process whether the terminal currently holds focus, so it
+     *  can intercept a few hardcoded shortcuts (Cmd+Shift+[ / ]) at the lowest
+     *  level and feed them to the PTY as tmux prev/next-window keys. */
+    setFocused(focused: boolean): void
     /** Subscribe to output bytes from the shell. Returns an unsubscribe fn. */
     onData(cb: (sessionId: string, data: string) => void): () => void
     /** Subscribe to shell-exit events. Returns an unsubscribe fn. */

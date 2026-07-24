@@ -133,8 +133,16 @@ export function TerminalPanel({ visible }: Props): JSX.Element {
     }
     window.addEventListener('zen:focus-terminal-input', focusHandler)
 
-    const termFocusListener = (): void => { window.dispatchEvent(new Event('zen:terminal-focused')) }
-    const termBlurListener = (): void => { window.dispatchEvent(new Event('zen:terminal-blurred')) }
+    const termFocusListener = (): void => {
+      window.dispatchEvent(new Event('zen:terminal-focused'))
+      // Let main know the terminal has focus so it can intercept the hardcoded
+      // Cmd+Shift+[ / ] tmux shortcuts at before-input-event level.
+      window.zen?.terminal?.setFocused(true)
+    }
+    const termBlurListener = (): void => {
+      window.dispatchEvent(new Event('zen:terminal-blurred'))
+      window.zen?.terminal?.setFocused(false)
+    }
     term.textarea?.addEventListener('focus', termFocusListener)
     term.textarea?.addEventListener('blur', termBlurListener)
 
@@ -160,6 +168,7 @@ export function TerminalPanel({ visible }: Props): JSX.Element {
       window.removeEventListener('zen:focus-terminal-input', focusHandler)
       term.textarea?.removeEventListener('focus', termFocusListener)
       term.textarea?.removeEventListener('blur', termBlurListener)
+      window.zen?.terminal?.setFocused(false)
       unsubData()
       unsubExit()
       if (sessionRef.current) {
