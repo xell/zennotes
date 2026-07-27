@@ -18,7 +18,7 @@ import { requestPaneMode } from './pane-mode'
 import { resolveQuickNoteTitle } from './quick-note-title'
 import { selectedInboxFolderForIsolation, goUpIsolationWithConfirm } from './sidebar-isolation'
 import { forwardTaskWithPicker, taskAtEditorCursor } from './forward-task'
-import { getKeymapDisplay, type KeymapId } from './keymaps'
+import { getKeymapDisplay, isMacPlatform, type KeymapId } from './keymaps'
 import { dispatchKeyboardContextMenu, findTabContextMenuTarget } from './keyboard-context-menu'
 import { resolveSystemFolderLabels } from './system-folder-labels'
 import { foldAllHeadings } from './cm-heading-fold'
@@ -912,10 +912,10 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       category: 'Editor',
       shortcut: shortcut('vim.lookUpDefinition'),
       keywords: 'dictionary definition look up define meaning word macos',
-      when: () =>
-        window.zen.platformSync() === 'darwin' &&
-        !!getState().editorViewRef &&
-        !!getState().activeNote,
+      // isMacPlatform (not window.zen.platformSync directly) so building the
+      // catalogue never depends on the bridge being installed — `when` runs
+      // during any full command-list build, including in tests.
+      when: () => isMacPlatform() && !!getState().editorViewRef && !!getState().activeNote,
       run: () => {
         const view = getState().editorViewRef
         if (view) lookUpDefinitionInView(view)
