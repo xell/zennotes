@@ -242,9 +242,12 @@ export function PdfView({
 
   // Read synchronously by the close guard, so it stays a ref (not just state).
   const dirtyRef = useRef(false)
-  // True while a clean document is entering an editing mode, so the deferred
-  // re-baseline knows the dirtiness it is clearing is mode bookkeeping.
-  const enteringModeCleanRef = useRef(false)
+  // Set just before we arm the highlight tool from the toolbar, and consumed by
+  // the next mode change. It is what tells the re-baseline below that this
+  // particular entry into HIGHLIGHT was a bare arming — the user reaching for
+  // the tool and nothing else — rather than a mode change that exists only to
+  // carry a highlight being created.
+  const armedFromToolbarRef = useRef(false)
   // Page to return to after a Revert reload (null = leave at page 1).
   const restorePageRef = useRef<number | null>(null)
   const pdfDocRef = useRef<PDFDocumentProxy | null>(null)
@@ -560,39 +563,60 @@ export function PdfView({
   useEffect(() => {
     const viewer = viewerRef.current
     if (!viewer || status !== 'ready') return
+    // Flag this as a bare arming so the re-baseline below knows the dirtiness
+    // that follows is only PDF.js registering existing annotations.
+    if (highlightOn) armedFromToolbarRef.current = true
     try {
       viewer.annotationEditorMode = {
         mode: highlightOn ? pdfjs.AnnotationEditorType.HIGHLIGHT : pdfjs.AnnotationEditorType.NONE
       }
     } catch (err) {
+      armedFromToolbarRef.current = false
       console.error('PdfView: failed to set annotation editor mode', err)
     }
   }, [highlightOn, status])
 
-  // Entering an editing mode is not an edit.
+  // Arming an editing mode is not an edit — but creating a highlight is, even
+  // though it enters the same mode on its way.
   //
   // Switching into HIGHLIGHT makes PDF.js register the document's existing
-  // annotations as editor objects, which writes them into annotationStorage
-  // and trips its modified flag — so arming the tool and doing nothing would
-  // offer to "save" a document nobody changed. Re-baseline once the mode has
-  // settled, but ONLY when the document was clean beforehand: doing it
-  // unconditionally would silently discard the dirty state of edits made
-  // before the tool was armed.
+  // annotations as editor objects, which writes them into annotationStorage and
+  // trips its modified flag — so arming the tool and doing nothing would offer
+  // to "save" a document nobody changed. Hence the deferred re-baseline: the
+  // registration lands as the layers build, after this event fires, so the
+  // clear has to wait a tick.
+  //
+  // The catch is that BOTH ways of highlighting also pass through this mode.
+  // PDF.js's floating button (`enableHighlightFloatingButton`) enters HIGHLIGHT
+  // and creates the editor in the same turn, and `highlightCurrentSelection`
+  // below deliberately arms the mode first so the editor layers exist. In both,
+  // the real edit lands inside the same window the re-baseline was waiting out,
+  // and got cleared with it: the highlight appeared, Save stayed disabled, the
+  // close guard saw a clean document, and the highlight died on unmount with no
+  // warning. A dirty check can't separate the two, because registration always
+  // dirties the document inside that window — that is the entire reason the
+  // window exists.
+  //
+  // So scope it by intent instead of by timing: re-baseline only for a mode
+  // change we know was a bare arming, flagged at the toolbar toggle. A
+  // highlight-carrying mode change never sets that flag, so its dirtiness (the
+  // registration's and the new highlight's alike) survives, which is correct —
+  // the document really did change.
   useEffect(() => {
     const bus = eventBusRef.current
     if (!bus || status !== 'ready') return
     const onModeChanged = ({ mode: nextMode }: { mode: number }): void => {
       if (nextMode === pdfjs.AnnotationEditorType.NONE) return
+      const bareArming = armedFromToolbarRef.current
+      armedFromToolbarRef.current = false
+      if (!bareArming) return
+      // Still respect edits made BEFORE the tool was armed: clearing those
+      // would silently discard real work.
       if (dirtyRef.current) return
-      // Deferred: the registration happens as the layers build, after this
-      // event fires.
       setTimeout(() => {
-        if (dirtyRef.current && !enteringModeCleanRef.current) return
         pdfDocRef.current?.annotationStorage.resetModified()
         markDirty(false)
-        enteringModeCleanRef.current = false
       }, 0)
-      enteringModeCleanRef.current = true
     }
     bus.on('annotationeditormodechanged', onModeChanged)
     return () => bus.off('annotationeditormodechanged', onModeChanged)
