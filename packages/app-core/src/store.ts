@@ -26,7 +26,12 @@ import type {
 } from '@shared/ipc'
 import type { VaultTask } from '@shared/tasks'
 import { DEFAULT_PDF_HIGHLIGHT_COLOR, normalizePdfHighlightColor } from '@shared/pdf'
-import { DEFAULT_DOCUMENT_EXTS, DEFAULT_IMAGE_EXTS } from './lib/local-assets'
+import {
+  DEFAULT_DOCUMENT_EXTS,
+  DEFAULT_IMAGE_EXTS,
+  posixRelative,
+  resolveAssetExactPath
+} from './lib/local-assets'
 import { isExcalidrawPath, isObsidianExcalidrawPath } from '@shared/excalidraw'
 import { TASKS_TAB_PATH, isTasksTabPath, parseTasksFromBody } from '@shared/tasks'
 import type { DatabaseDoc, DatabaseSidecar } from '@shared/databases'
@@ -1701,6 +1706,69 @@ function swapAssetHrefBasename(hrefDecoded: string, newName: string): string {
   const slash = hrefDecoded.lastIndexOf('/')
   const dir = slash >= 0 ? hrefDecoded.slice(0, slash + 1) : ''
   return `${dir}${newName}`
+}
+
+/**
+ * Recompute an asset reference's href after the asset moved to `movedPath`
+ * (vault-relative), preserving the reference's original *form*: a leading-slash
+ * href stays vault-root-absolute; everything else stays note-relative,
+ * recomputed from the referencing note's folder. Any `#fragment` / `?query`
+ * suffix (e.g. a PDF `#page=2`) is carried over. This keeps the rewritten link
+ * both portable to standard Markdown viewers and tier-1 resolvable in ZenNotes,
+ * instead of dumping the raw vault-relative path (which is note-relative-wrong
+ * from any subfolder note and only limps home via the unique-basename fallback).
+ */
+function assetHrefForMove(hrefDecoded: string, noteDir: string, movedPath: string): string {
+  const suffixMatch = hrefDecoded.match(/[#?].*$/)
+  const suffix = suffixMatch ? suffixMatch[0] : ''
+  const pathPart = suffix ? hrefDecoded.slice(0, hrefDecoded.length - suffix.length) : hrefDecoded
+  if (pathPart.startsWith('/')) return `/${movedPath}${suffix}`
+  return `${posixRelative(noteDir, movedPath)}${suffix}`
+}
+
+/**
+ * When a NOTE moves to a different folder, its own asset links written as
+ * explicit paths (e.g. `![img](assets/a.jpg)`) no longer resolve from the new
+ * folder — the mirror of the asset-move case. Rewrite each such link so it keeps
+ * pointing at the same (unmoved) asset from the note's new location.
+ *
+ * Only explicit-path links are touched. A bare-name link (`![[a.jpg]]`,
+ * `![img](a.jpg)`) resolves by basename regardless of the note's location, so a
+ * note move never invalidates it — those are left untouched to avoid churn.
+ * Absolute (leading-slash) paths are also note-invariant and left as-is.
+ * `embeds` is the moved note's asset-embed href list, captured before the move.
+ */
+async function rewriteMovedNoteOwnAssetLinks(
+  oldPath: string,
+  newPath: string,
+  embeds: readonly string[]
+): Promise<void> {
+  if (embeds.length === 0) return
+  const oldDir = oldPath.includes('/') ? oldPath.slice(0, oldPath.lastIndexOf('/')) : ''
+  const newDir = newPath.includes('/') ? newPath.slice(0, newPath.lastIndexOf('/')) : ''
+  if (oldDir === newDir) return
+  const vaultRoot = useStore.getState().vault?.root
+  if (!vaultRoot) return
+  let content: { body: string }
+  try {
+    content = await window.zen.readNote(newPath)
+  } catch {
+    return
+  }
+  const { body, changed } = rewriteAssetReferencesInBody(content.body, embeds, (href) => {
+    // Bare name (no directory component): basename-resolved, so unaffected by
+    // the note's location.
+    const pathPart = href.split(/[#?]/)[0]!.trim().replace(/^\/+/, '')
+    if (!pathPart.includes('/')) return href
+    // Explicit-path link: only rewrite one that actually hit an asset by exact
+    // path before the move and no longer does from the new folder (leaves
+    // absolutes, which still hit, untouched).
+    const oldTarget = resolveAssetExactPath(vaultRoot, oldPath, href)
+    if (!oldTarget) return href
+    if (resolveAssetExactPath(vaultRoot, newPath, href) === oldTarget) return href
+    return assetHrefForMove(href, newDir, oldTarget)
+  })
+  if (changed > 0) await window.zen.writeNote(newPath, body)
 }
 
 /**
@@ -5437,10 +5505,16 @@ export const useStore = create<Store>((set, get) => {
     for (const [notePath, hrefs] of referenceHrefsByNote) {
       try {
         const content = await window.zen.readNote(notePath)
-        // Unlike rename, a move invalidates any directory prefix the note
-        // wrote (regardless of style), so every matching reference becomes
-        // the asset's new full vault-relative path outright.
-        const { body, changed } = rewriteAssetReferencesInBody(content.body, hrefs, () => moved.path)
+        // A move invalidates the note's old directory prefix, so recompute each
+        // reference against the asset's new location — note-relative for a
+        // relative href, vault-absolute for a leading-slash one — preserving the
+        // link's original form (see assetHrefForMove). Writing the raw
+        // vault-relative path here instead was note-relative-wrong from any
+        // subfolder note and broke portability to standard Markdown viewers.
+        const noteDir = notePath.includes('/') ? notePath.slice(0, notePath.lastIndexOf('/')) : ''
+        const { body, changed } = rewriteAssetReferencesInBody(content.body, hrefs, (href) =>
+          assetHrefForMove(href, noteDir, moved.path)
+        )
         if (changed > 0) await window.zen.writeNote(notePath, body)
       } catch (err) {
         console.error('moveAssetAndRewriteReferences: failed on', notePath, err)
@@ -8125,7 +8199,13 @@ export const useStore = create<Store>((set, get) => {
 
   moveNote: async (relPath, targetFolder, targetSubpath) => {
     try {
+      // Capture the note's asset embeds before the move so we can keep its own
+      // explicit-path asset links valid from the new folder afterwards.
+      const embeds = get().notes.find((n) => n.path === relPath)?.assetEmbeds ?? []
       const meta = await window.zen.moveNote(relPath, targetFolder, targetSubpath)
+      if (meta.path !== relPath) {
+        await rewriteMovedNoteOwnAssetLinks(relPath, meta.path, embeds)
+      }
       await get().refreshNotes()
       // Drop the note from its old folder's manual order (it lives elsewhere
       // now); a drag move positions it in the destination via placeItemManually.

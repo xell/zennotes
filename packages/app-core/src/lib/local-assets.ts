@@ -55,6 +55,22 @@ function posixNormalize(input: string): string {
   return out.join('/')
 }
 
+/**
+ * POSIX relative path from a note's folder to a vault-relative target, both
+ * vault-relative (no leading slash). E.g. `posixRelative('a-folder',
+ * 'a-folder/assets/a.jpg')` → `assets/a.jpg`, and from `a-folder/sub` →
+ * `../assets/a.jpg`. Used to keep rewritten asset links note-relative (portable
+ * and tier-1 resolvable) rather than dumping the raw vault-relative path.
+ */
+export function posixRelative(fromDir: string, toPath: string): string {
+  const from = posixNormalize(fromDir).split('/').filter(Boolean)
+  const to = posixNormalize(toPath).split('/').filter(Boolean)
+  let i = 0
+  while (i < from.length && i < to.length && from[i] === to[i]) i++
+  const segments = [...Array(from.length - i).fill('..'), ...to.slice(i)]
+  return segments.join('/') || (to[to.length - 1] ?? toPath)
+}
+
 function assetExtension(href: string): string {
   const clean = stripQueryAndHash(href)
   const lastDot = clean.lastIndexOf('.')
@@ -136,6 +152,36 @@ export function resolveAssetVaultRelativePath(
   }
 
   return null
+}
+
+/**
+ * Tier-1-only resolution: the exact vault-relative asset path an href points at
+ * (note-relative join, or vault-root for a leading slash), returned only when an
+ * asset actually exists there — no basename fallback. Lets callers tell an
+ * explicit-path link, which must follow the referencing note when it moves, from
+ * a bare-name link, which resolves by basename and is thus location-independent.
+ */
+export function resolveAssetExactPath(
+  vaultRoot: string | null | undefined,
+  notePath: string | null | undefined,
+  href: string
+): string | null {
+  if (!vaultRoot || !notePath) return null
+  const trimmed = href.trim()
+  if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('//')) return null
+  if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(trimmed)) return null
+
+  const noteDir = notePath.includes('/') ? notePath.slice(0, notePath.lastIndexOf('/')) : ''
+  const decodedHref = decodeHrefPath(trimmed)
+  let target = decodedHref.startsWith('/')
+    ? decodedHref.replace(/^\/+/, '')
+    : noteDir
+      ? posixJoin(noteDir, decodedHref)
+      : decodedHref
+  target = posixNormalize(target)
+  if (target.startsWith('../') || target === '..') return null
+
+  return useStore.getState().assetFiles.some((asset) => asset.path === target) ? target : null
 }
 
 /**

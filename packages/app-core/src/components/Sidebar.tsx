@@ -2458,7 +2458,9 @@ export function Sidebar(): JSX.Element {
           if (!target) return;
           const dest = parseMoveNoteTarget(target);
           for (const note of liveNotes) {
-            await window.zen.moveNote(note.path, dest.folder, dest.subpath);
+            // Via the store action (not window.zen.moveNote directly) so the
+            // moved note's own asset links are rewritten for the new folder.
+            await moveNoteAction(note.path, dest.folder, dest.subpath);
           }
           if (selectedActiveNote) await selectNote(null);
           await refreshAndClear();
