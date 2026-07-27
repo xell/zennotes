@@ -36,6 +36,13 @@ import { confirmApp } from '../lib/confirm-requests'
 import { registerPdfBuffer } from '../lib/pdf-buffers'
 import { registerPdfOutline, type PdfOutlineItem } from '../lib/pdf-outline'
 import {
+  recallPdfView,
+  rememberPdfView,
+  type PdfReadingMode,
+  type PdfViewMode,
+  type PdfViewPosition
+} from '../lib/pdf-view-memory'
+import {
   isListedSubtype,
   isTextMarkupSubtype,
   normalizeQuadPoints,
@@ -75,17 +82,11 @@ function suppressPdfjsDocumentDrag(event: DragEvent): void {
 document.addEventListener('dragover', suppressPdfjsDocumentDrag)
 document.addEventListener('drop', suppressPdfjsDocumentDrag)
 
-// `light` is the untouched page. `dark` uses PDF.js's render-time
-// `pageColors`, which recolours the default page background and default
-// (black) text during rasterisation while leaving embedded raster images
-// intact. `invert` is the coarse CSS-filter fallback (also negates images),
-// for documents whose colour cannot be themed by `pageColors` alone.
-// `sepia` is the same mechanism as `dark` — a warm paper/ink pair handed to
-// `pageColors` — so it likewise leaves embedded images untouched, unlike the
-// `invert` filter. Its warmth is user-tunable (`pdfSepiaTone`).
-export type PdfReadingMode = 'light' | 'sepia' | 'dark' | 'invert'
-// Standard viewer page-layout modes, each a scrollMode + spreadMode pair.
-type PdfViewMode = 'single' | 'continuous' | 'two-page'
+// The reading-mode and page-layout unions are declared in pdf-view-memory —
+// which has to name them in order to store them — so the viewer and its memory
+// cannot drift apart. Documented there; re-exported here as the viewer's own
+// vocabulary.
+export type { PdfReadingMode, PdfViewMode }
 
 const DARK_PAGE_COLORS = { background: '#1f1f22', foreground: '#d6d3cc' } as const
 
@@ -193,10 +194,20 @@ export function PdfView({
   // Resolves outline destinations; owned by the viewer-build effect.
   const linkServiceRef = useRef<PDFLinkService | null>(null)
 
+  // Where this tab was last time it was mounted, if it has been. Read once, at
+  // first render, so the layout/reading mode below open at the remembered
+  // values and the very first viewer build is already correct — a later
+  // correction would rebuild the viewer and flash the default first. Consumed
+  // by `onPagesInit` for the page/scroll/zoom half, which can only be applied
+  // once the pages exist.
+  const restoreRef = useRef<PdfViewPosition | null | undefined>(undefined)
+  if (restoreRef.current === undefined) restoreRef.current = recallPdfView(tabPath) ?? null
+  const restored = restoreRef.current
+
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null)
   // Bumped to force a re-fetch of the bytes on disk (Revert).
   const [reloadKey, setReloadKey] = useState(0)
-  const [mode, setMode] = useState<PdfReadingMode>('light')
+  const [mode, setMode] = useState<PdfReadingMode>(restored?.readingMode ?? 'light')
   const [highlightOn, setHighlightOn] = useState(false)
   // Read by the mode-restore listener, which must not re-subscribe per toggle.
   const highlightOnRef = useRef(false)
@@ -217,7 +228,7 @@ export function PdfView({
   const [scalePct, setScalePct] = useState(100)
   const [scaleSelect, setScaleSelect] = useState<string>('page-width')
   const [customScale, setCustomScale] = useState(false)
-  const [viewMode, setViewMode] = useState<PdfViewMode>('continuous')
+  const [viewMode, setViewMode] = useState<PdfViewMode>(restored?.viewMode ?? 'continuous')
   const [findOpen, setFindOpen] = useState(false)
   const [findQuery, setFindQuery] = useState('')
   const [findMatch, setFindMatch] = useState<{ current: number; total: number }>({
@@ -239,8 +250,21 @@ export function PdfView({
   const pdfDocRef = useRef<PDFDocumentProxy | null>(null)
   // Latest view mode, read inside the (rebuild-on-dark-toggle) viewer effect
   // without making it a dependency.
-  const viewModeRef = useRef<PdfViewMode>('continuous')
+  const viewModeRef = useRef<PdfViewMode>(viewMode)
   viewModeRef.current = viewMode
+  // Synced mirrors of the state the view memory saves, so the unmount capture
+  // never has to read back from React state or from `containerRef.current` —
+  // which React may already have detached by the time an effect cleanup runs
+  // (the same constraint MediaPlayer's playback memory works around).
+  const modeRef = useRef<PdfReadingMode>(mode)
+  modeRef.current = mode
+  const currentPageRef = useRef(currentPage)
+  currentPageRef.current = currentPage
+  const statusRef = useRef(status)
+  statusRef.current = status
+  const scrollPosRef = useRef({ top: 0, left: 0 })
+  const tabPathRef = useRef(tabPath)
+  tabPathRef.current = tabPath
   // Synced ref so the resize observer can read the active zoom preset without
   // re-binding.
   const scaleSelectRef = useRef(scaleSelect)
@@ -394,6 +418,12 @@ export function PdfView({
     eventBusRef.current = eventBus
 
     const onPagesInit = (): void => {
+      // Where this tab was when it was last unmounted, if anywhere. Taken once:
+      // later rebuilds (a reading-mode toggle) preserve position through
+      // prevTop/restoreScaleRef instead, and must not be dragged back to it.
+      const remembered = restoreRef.current
+      restoreRef.current = null
+
       applyViewMode(viewer, viewModeRef.current)
       // Pre-seed both fit scales (the intermediate set updates currentScale
       // synchronously without an extra paint) so pinch detents work from the
@@ -402,16 +432,26 @@ export function PdfView({
       fitScalesRef.current['page-fit'] = viewer.currentScale
       viewer.currentScaleValue = 'page-width'
       fitScalesRef.current['page-width'] = viewer.currentScale
-      // First open uses the configured default zoom; a rebuild (dark toggle)
+      // A tab returning to view reopens at its remembered zoom; otherwise a
+      // first open uses the configured default, and a rebuild (dark toggle)
       // restores whatever zoom the user was at.
-      viewer.currentScaleValue = restoreScaleRef.current ?? defaultZoomRef.current
+      viewer.currentScaleValue =
+        remembered?.scaleValue ?? restoreScaleRef.current ?? defaultZoomRef.current
       // Revert reloads the document; put the reader back where they were.
-      if (restorePageRef.current != null) {
+      if (remembered) {
+        viewer.currentPageNumber = Math.min(Math.max(1, remembered.page), pdfDoc.numPages)
+      } else if (restorePageRef.current != null) {
         viewer.currentPageNumber = restorePageRef.current
         restorePageRef.current = null
       }
-      container.scrollTop = prevTop
-      container.scrollLeft = prevLeft
+      // Set after the page: in continuous scrolling the offset is the exact
+      // position and supersedes the page it lands on, while in single-page mode
+      // the page is what matters and this is the offset within it.
+      container.scrollTop = remembered ? remembered.scrollTop : prevTop
+      container.scrollLeft = remembered ? remembered.scrollLeft : prevLeft
+      // Seed the tracked offset with what we just applied, so switching away
+      // again before scrolling once still remembers this position rather than 0.
+      scrollPosRef.current = { top: container.scrollTop, left: container.scrollLeft }
       setStatus('ready')
     }
     const onScaleChanging = (evt: { scale?: number; presetValue?: string }): void => {
@@ -482,6 +522,39 @@ export function PdfView({
       eventBusRef.current = null
     }
   }, [pdfDoc, buildKey, pageColors, markDirty])
+
+  // Track the scroll offset continuously rather than reading it at unmount:
+  // the container element is a DOM ref, and React may have detached it by the
+  // time the capture below runs. Bound once — the container node itself is
+  // stable across viewer rebuilds; only its contents are replaced.
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const onScroll = (): void => {
+      scrollPosRef.current = { top: container.scrollTop, left: container.scrollLeft }
+    }
+    container.addEventListener('scroll', onScroll, { passive: true })
+    return () => container.removeEventListener('scroll', onScroll)
+  }, [])
+
+  // Save where the reader was when this tab stops rendering, so returning to it
+  // reopens here instead of at page 1 in the default layout. Unmount only —
+  // an asset tab renders only while active, so this cleanup IS the tab switch.
+  useEffect(() => {
+    return () => {
+      // A document that never opened has nothing worth saving, and writing its
+      // placeholder state would clobber a good entry from an earlier visit.
+      if (statusRef.current !== 'ready') return
+      rememberPdfView(tabPathRef.current, {
+        page: currentPageRef.current,
+        scrollTop: scrollPosRef.current.top,
+        scrollLeft: scrollPosRef.current.left,
+        viewMode: viewModeRef.current,
+        scaleValue: restoreScaleRef.current ?? defaultZoomRef.current,
+        readingMode: modeRef.current
+      })
+    }
+  }, [])
 
   // Toggle the highlight authoring tool on the live viewer.
   useEffect(() => {
