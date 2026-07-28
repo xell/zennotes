@@ -50,6 +50,7 @@ describe('config persistence', () => {
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
       quickCapturePinned: false,
+      quickCaptureVaultRoot: null,
       openWindows: null
     })
 
@@ -59,9 +60,36 @@ describe('config persistence', () => {
     expect(cfg.localVaults[0]?.root).toBe(VAULT_A)
   })
 
+  // The quick-capture vault choice is what makes the panel's destination
+  // sticky across invocations and restarts, so it has to survive a round trip
+  // and it has to be resolved (a relative root would not match the absolute
+  // roots the picker offers, and the choice would be silently ignored).
+  it('round-trips the quick-capture vault choice, resolved to an absolute path', async () => {
+    await saveConfig({
+      workspaceMode: 'local',
+      vaultRoot: VAULT_A,
+      localVaults: [],
+      remoteWorkspace: null,
+      remoteWorkspaceProfileId: null,
+      remoteWorkspaceProfiles: [],
+      windowState: null,
+      zoomFactor: 1,
+      quickCaptureHotkey: 'CommandOrControl+Shift+Space',
+      quickCapturePinned: false,
+      quickCaptureVaultRoot: VAULT_A,
+      openWindows: null
+    })
+    expect((await loadConfig()).quickCaptureVaultRoot).toBe(path.resolve(VAULT_A))
+
+    // Absent / blank means "no override", i.e. follow the last-used window.
+    await updateConfig((cfg) => ({ ...cfg, quickCaptureVaultRoot: null }))
+    expect((await loadConfig()).quickCaptureVaultRoot).toBeNull()
+  })
+
   it('returns defaults on first run (no config file)', async () => {
     const cfg = await loadConfig()
     expect(cfg.vaultRoot).toBeNull()
+    expect(cfg.quickCaptureVaultRoot).toBeNull()
     expect(cfg.localVaults).toEqual([])
   })
 
@@ -77,6 +105,7 @@ describe('config persistence', () => {
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
       quickCapturePinned: false,
+      quickCaptureVaultRoot: null,
       openWindows: null
     })
     // Second save triggers the rotation: the first config is copied to .bak,
@@ -92,6 +121,7 @@ describe('config persistence', () => {
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
       quickCapturePinned: false,
+      quickCaptureVaultRoot: null,
       openWindows: null
     })
     // Backup now holds the first config; corrupt the primary.
@@ -132,6 +162,7 @@ describe('config persistence', () => {
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
       quickCapturePinned: false,
+      quickCaptureVaultRoot: null,
       openWindows: null
     })
 
@@ -163,6 +194,7 @@ describe('config persistence', () => {
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
       quickCapturePinned: false,
+      quickCaptureVaultRoot: null,
       openWindows: null
     })
     const raw = await readFile(configFile(), 'utf8')
@@ -181,6 +213,7 @@ describe('config persistence', () => {
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
       quickCapturePinned: false,
+      quickCaptureVaultRoot: null,
       openWindows: null
     })
     await saveConfig({
@@ -194,6 +227,7 @@ describe('config persistence', () => {
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
       quickCapturePinned: false,
+      quickCaptureVaultRoot: null,
       openWindows: null
     })
     // Delete the primary — but the backup from the previous save survives.
@@ -218,6 +252,7 @@ describe('config persistence', () => {
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
       quickCapturePinned: false,
+      quickCaptureVaultRoot: null,
       openWindows: null
     })
     await chmod(configFile(), 0o000)
@@ -243,6 +278,7 @@ describe('config persistence', () => {
       zoomFactor: 1,
       quickCaptureHotkey: 'CommandOrControl+Shift+Space',
       quickCapturePinned: false,
+      quickCaptureVaultRoot: null,
       openWindows: null
     })
     // Corrupt the primary AND delete the backup so loadConfigSafely() must

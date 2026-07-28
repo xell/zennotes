@@ -443,6 +443,9 @@ function flushWindowNoteOpens(win: BrowserWindow): void {
 // Finder "Open in ZenNotes" that lands in the hidden quick-capture
 // panel looks like the app opened a quick note instead of the file.
 const workspaceWindowIds = new Set<number>()
+/** Id of the workspace window focused most recently. Quick capture reads it to
+ *  decide which vault to capture into when it has no explicit choice. */
+let lastFocusedWorkspaceWindowId: number | null = null
 // The app is on its way out (before-quit already ran the unsaved-PDF guard),
 // so per-window close handlers must NOT prompt again.
 let appIsQuitting = false
@@ -1893,6 +1896,16 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
       scheduleWindowStatePersist()
     })
   }
+
+  // Which workspace window you were last in. Quick capture inherits its vault
+  // from this when it has no explicit choice: summoned by the global hotkey
+  // from another app, no ZenNotes window is focused, and falling back to
+  // `mainWindow` (the OLDEST surviving window, not the most recent one) sent
+  // captures into whatever vault that window happened to hold. Every platform,
+  // unlike the macOS-only handler above.
+  win.on('focus', () => {
+    lastFocusedWorkspaceWindowId = win.id
+  })
 
   win.on('move', scheduleWindowStatePersist)
   win.on('resize', scheduleWindowStatePersist)
@@ -3956,6 +3969,22 @@ function registerIpc(): void {
     return quickCapturePinned
   })
 
+  handle(IPC.APP_LIST_QUICK_CAPTURE_VAULTS, async () => quickCaptureVaultChoices())
+
+  handle(IPC.APP_SET_QUICK_CAPTURE_VAULT, async (_e, root: string) => {
+    const trimmed = typeof root === 'string' ? root.trim() : ''
+    if (!trimmed) return null
+    const resolved = path.resolve(trimmed)
+    // Only accept somewhere the picker actually offered, so a stale or crafted
+    // root can't silently redirect captures outside the open set.
+    const match = quickCaptureVaultChoices().find((v) => v.root === resolved)
+    if (!match) return null
+    const win = quickCaptureWindow
+    if (win && !win.isDestroyed()) windowVaults.setLocalVault(win.id, match)
+    await updateConfig((cfg) => ({ ...cfg, quickCaptureVaultRoot: resolved }))
+    return match
+  })
+
   handle(IPC.TIKZ_RENDER, async (_e, source: string) => {
     const result = await renderTikz(source)
     if (result.ok) return { ok: true, svg: result.svg }
@@ -4442,18 +4471,77 @@ function hideQuickCaptureWindow(win: BrowserWindow): void {
   if (returnFocus && isMac()) app.hide()
 }
 
+/** Vaults the quick-capture panel can be pointed at: the local vaults held by
+ *  open workspace windows, deduped by root, plus the panel's own current vault
+ *  so the live destination is always in the list (a chosen vault is sticky, so
+ *  it can outlive the window it came from). Sorted by name for a stable menu. */
+function quickCaptureVaultChoices(): VaultInfo[] {
+  const byRoot = new Map<string, VaultInfo>()
+  for (const id of workspaceWindowIds) {
+    if (windowVaults.isRemoteWindow(id)) continue
+    const vault = windowVaults.vaultForWindow(id)
+    if (vault) byRoot.set(vault.root, vault)
+  }
+  const panel = quickCaptureWindow
+  if (panel && !panel.isDestroyed()) {
+    const own = windowVaults.vaultForWindow(panel.id)
+    if (own && !windowVaults.isRemoteWindow(panel.id)) byRoot.set(own.root, own)
+  }
+  return [...byRoot.values()].sort((a, b) => a.name.localeCompare(b.name))
+}
+
+async function isDirectory(target: string): Promise<boolean> {
+  try {
+    return (await fsp.stat(target)).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/** The workspace window quick capture should inherit its vault from: whichever
+ *  one is focused, else the one focused most recently. `mainWindow` is the last
+ *  resort only — it is the oldest surviving window, so with several vaults open
+ *  it is rarely the one the user means. */
+function quickCaptureSourceWindow(): BrowserWindow | null {
+  const focused = BrowserWindow.getFocusedWindow()
+  if (focused && workspaceWindowIds.has(focused.id)) return focused
+  if (lastFocusedWorkspaceWindowId != null) {
+    const recent = BrowserWindow.fromId(lastFocusedWorkspaceWindowId)
+    if (recent && !recent.isDestroyed()) return recent
+  }
+  return mainWindow
+}
+
+/** Bind the quick-capture window to the vault it should capture into. An
+ *  explicit pick from its vault picker wins and is sticky across invocations
+ *  (and restarts); otherwise it follows the window you were last working in. */
+async function applyQuickCaptureVault(win: BrowserWindow): Promise<void> {
+  const cfg = await loadConfig()
+  const pinnedRoot = cfg.quickCaptureVaultRoot
+  // A chosen vault holds even when no window has it open — the point of
+  // "sticky" — but not if the folder has since gone away.
+  if (pinnedRoot && (await isDirectory(pinnedRoot))) {
+    windowVaults.setLocalVault(win.id, vaultInfo(pinnedRoot))
+    return
+  }
+  const sourceWindow = quickCaptureSourceWindow()
+  if (sourceWindow && sourceWindow.id !== win.id && !sourceWindow.isDestroyed()) {
+    inheritWindowWorkspaceSession(sourceWindow, win)
+  }
+}
+
 async function showQuickCaptureWindow(): Promise<void> {
   // Remember whether ZenNotes was already frontmost. If no ZenNotes window is
   // focused, the panel was summoned from another app (global hotkey / deep
   // link) — dismissing it should hand focus back to that app.
   quickCaptureReturnFocus = !BrowserWindow.getFocusedWindow()
   const win = await ensureQuickCaptureWindow()
-  const sourceWindow = BrowserWindow.getFocusedWindow() ?? mainWindow
-  if (sourceWindow && sourceWindow.id !== win.id && !sourceWindow.isDestroyed()) {
-    inheritWindowWorkspaceSession(sourceWindow, win)
-  }
+  await applyQuickCaptureVault(win)
   win.show()
   win.focus()
+  // The panel's renderer stays alive between hide/show, so tell it to re-read
+  // the destination — the vault may have changed since it was last visible.
+  if (!win.isDestroyed()) win.webContents.send(IPC.APP_QUICK_CAPTURE_VAULT_CHANGED)
 }
 
 async function toggleQuickCaptureWindow(): Promise<void> {

@@ -259,6 +259,19 @@ export interface ZenBridge {
   /** Whether the quick-capture window stays pinned on top (won't hide on blur). */
   getQuickCapturePinned(): Promise<boolean>
   setQuickCapturePinned(pinned: boolean): Promise<boolean>
+  /** Vaults the quick-capture panel can currently capture into: the ones held
+   *  by open workspace windows, plus its own current vault so the active
+   *  destination is always listed. Empty off desktop. */
+  listQuickCaptureVaults(): Promise<VaultInfo[]>
+  /** Point the quick-capture panel at `root`, one of the vaults returned by
+   *  `listQuickCaptureVaults`. Sticky — it overrides the usual inherit-from-
+   *  the-last-used-window behaviour until changed again. Resolves to the vault
+   *  now in effect, or null if the root wasn't an available choice. */
+  setQuickCaptureVault(root: string): Promise<VaultInfo | null>
+  /** Subscribe to the quick-capture panel's destination changing. It is
+   *  re-resolved on every show and the panel's renderer survives hide/show, so
+   *  the header would otherwise display a stale vault. */
+  onQuickCaptureVaultChange(cb: () => void): () => void
   renderTikz(source: string): Promise<TikzRenderResponse>
 
   mcpGetRuntime(): Promise<McpServerRuntime>

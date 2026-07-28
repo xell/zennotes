@@ -124,6 +124,12 @@ export const IPC = {
   APP_SET_QUICK_CAPTURE_HOTKEY: 'app:set-quick-capture-hotkey',
   APP_GET_QUICK_CAPTURE_PINNED: 'app:get-quick-capture-pinned',
   APP_SET_QUICK_CAPTURE_PINNED: 'app:set-quick-capture-pinned',
+  APP_LIST_QUICK_CAPTURE_VAULTS: 'app:list-quick-capture-vaults',
+  APP_SET_QUICK_CAPTURE_VAULT: 'app:set-quick-capture-vault',
+  /** Main → quick-capture renderer: the panel's destination vault may have
+   *  changed (it is re-resolved on every show, and the renderer survives
+   *  hide/show), so re-read it. */
+  APP_QUICK_CAPTURE_VAULT_CHANGED: 'app:quick-capture-vault-changed',
   APP_READ_EXTERNAL_FILE: 'app:read-external-file',
   APP_WRITE_EXTERNAL_FILE: 'app:write-external-file',
   APP_MOVE_EXTERNAL_FILE_TO_VAULT: 'app:move-external-file-to-vault',

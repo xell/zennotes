@@ -60,7 +60,7 @@ import {
 } from '@codemirror/autocomplete'
 import { completionNavKeymap } from '../lib/cm-completion-nav'
 import { slashCommandRender, templateSlashCommandSource } from '../lib/cm-slash-commands'
-import type { NoteMeta } from '@shared/ipc'
+import type { NoteMeta, VaultInfo } from '@shared/ipc'
 import {
   DEFAULT_THEME_ID,
   THEMES,
@@ -78,7 +78,7 @@ import { applyVimKeymap } from '../lib/vim-keymap'
 import { DEFAULT_VIM_KEYMAP } from '../lib/vim-keymap-defaults'
 import { isPaletteNextKey, isPalettePreviousKey } from '../lib/palette-nav'
 import { isImeComposing } from '../lib/ime'
-import { PinIcon } from './icons'
+import { ChevronRightIcon, PinIcon } from './icons'
 
 const PREFS_KEY = 'zen:prefs:v2'
 
@@ -248,7 +248,13 @@ export function QuickCaptureApp(): JSX.Element {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notes, setNotes] = useState<NoteMeta[]>([])
-  const [overlay, setOverlay] = useState<'none' | 'search' | 'command'>('none')
+  const [overlay, setOverlay] = useState<'none' | 'search' | 'command' | 'vault'>('none')
+  // Where this capture will land, and the vaults it can be pointed at. With
+  // several vaults open in several windows the destination is otherwise
+  // invisible, and captures summoned from another app silently followed
+  // whichever window main happened to pick.
+  const [vault, setVault] = useState<VaultInfo | null>(null)
+  const [vaultChoices, setVaultChoices] = useState<VaultInfo[]>([])
   const editorRef = useRef<EditorView | null>(null)
 
   // Set a different title for the quick capture window.
@@ -267,6 +273,73 @@ export function QuickCaptureApp(): JSX.Element {
     }
     return undefined
   }, [prefs])
+
+  // Keep the destination vault (and the list of alternatives) current. Main
+  // re-resolves the destination on every show and this renderer survives
+  // hide/show, so without the subscription the header would show a stale vault
+  // after the panel is summoned from a different window.
+  // Root the panel was last pointed at, so a change can be detected.
+  const vaultRootRef = useRef<string | null>(null)
+
+  const refreshVaults = useCallback(async () => {
+    try {
+      const [current, choices] = await Promise.all([
+        window.zen.getCurrentVault(),
+        window.zen.listQuickCaptureVaults()
+      ])
+      setVault(current)
+      setVaultChoices(choices)
+      const previous = vaultRootRef.current
+      const next = current?.root ?? null
+      vaultRootRef.current = next
+      if (previous && next && previous !== next) {
+        // A note opened from the old vault is meaningless in the new one: its
+        // path would resolve to a different (probably non-existent) file, and
+        // saving would write there. Fall back to a fresh capture — but keep
+        // whatever is in the buffer, since that text is the user's and dropping
+        // it is exactly the data loss this whole feature exists to prevent.
+        setMode(NEW_MODE)
+      }
+    } catch (err) {
+      console.error('quick capture: failed to read the destination vault', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshVaults()
+    const off = window.zen.onQuickCaptureVaultChange(() => void refreshVaults())
+    return () => off()
+  }, [refreshVaults])
+
+  const chooseVault = useCallback(
+    async (root: string) => {
+      setOverlay('none')
+      try {
+        const next = await window.zen.setQuickCaptureVault(root)
+        if (next) {
+          setVault(next)
+          if (vaultRootRef.current !== next.root) {
+            vaultRootRef.current = next.root
+            // Same reasoning as in refreshVaults: the open note belonged to the
+            // previous vault, the typed text belongs to the user.
+            setMode(NEW_MODE)
+          }
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      }
+      // The note picker lists the destination vault's notes, so it has to be
+      // rebuilt against the new one rather than left showing the old vault's.
+      try {
+        const all = await window.zen.listNotes()
+        setNotes(all.filter((n) => n.folder !== 'trash'))
+      } catch {
+        /* the watcher refresh below will catch up */
+      }
+      requestAnimationFrame(() => editorRef.current?.focus())
+    },
+    []
+  )
 
   // Initial notes fetch + live refresh from the vault watcher so the
   // picker stays current as files are created or renamed elsewhere.
@@ -662,6 +735,32 @@ export function QuickCaptureApp(): JSX.Element {
             {mode.note.folder}
           </span>
         )}
+        {/* The destination vault, always visible. Multi-window means several
+            vaults can be open at once, and nothing else here says which one a
+            capture lands in. Click to send it somewhere else. */}
+        <button
+          type="button"
+          onClick={() => setOverlay((current) => (current === 'vault' ? 'none' : 'vault'))}
+          title={
+            vault
+              ? `Capturing into ${vault.name} (${vault.root}) — click to change`
+              : 'No vault'
+          }
+          aria-label={vault ? `Capturing into ${vault.name}. Change vault` : 'Choose a vault'}
+          aria-haspopup="menu"
+          aria-expanded={overlay === 'vault'}
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          className={[
+            'flex max-w-[10rem] shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5',
+            'text-2xs tracking-wide transition-colors',
+            overlay === 'vault'
+              ? 'bg-accent/15 text-accent'
+              : 'bg-paper-200/80 text-ink-500 hover:bg-paper-200 hover:text-ink-700'
+          ].join(' ')}
+        >
+          <span className="truncate">{vault?.name ?? 'No vault'}</span>
+          <ChevronRightIcon width={10} height={10} className="shrink-0 rotate-90 opacity-60" />
+        </button>
         <button
           type="button"
           onClick={togglePinned}
@@ -682,6 +781,18 @@ export function QuickCaptureApp(): JSX.Element {
 
       <div className="relative min-h-0 min-w-0 flex-1">
         <div ref={setEditorContainer} className="absolute inset-0 overflow-hidden" />
+
+        {overlay === 'vault' && (
+          <VaultPickerOverlay
+            vaults={vaultChoices}
+            currentRoot={vault?.root ?? null}
+            onPick={(root) => void chooseVault(root)}
+            onCancel={() => {
+              setOverlay('none')
+              requestAnimationFrame(() => editorRef.current?.focus())
+            }}
+          />
+        )}
 
         {overlay === 'search' && (
           <NotePickerOverlay
@@ -708,6 +819,7 @@ export function QuickCaptureApp(): JSX.Element {
               else if (action === 'save-no-close') void save()
               else if (action === 'new') void newNote()
               else if (action === 'open') setOverlay('search')
+              else if (action === 'vault') setOverlay('vault')
             }}
           />
         )}
@@ -751,6 +863,100 @@ function OverlayShell({ children }: OverlayShellProps): JSX.Element {
     <div className="absolute inset-0 z-10 flex flex-col bg-paper-100/95 backdrop-blur-sm">
       {children}
     </div>
+  )
+}
+
+interface VaultPickerOverlayProps {
+  vaults: VaultInfo[]
+  currentRoot: string | null
+  onPick: (root: string) => void
+  onCancel: () => void
+}
+
+/**
+ * Choose which open vault this capture lands in. Deliberately not a filter box
+ * like the note picker: the list is the handful of vaults you currently have
+ * open, so it is short enough to read and arrow through, and a search field
+ * would just be one more thing to dismiss.
+ */
+function VaultPickerOverlay({
+  vaults,
+  currentRoot,
+  onPick,
+  onCancel
+}: VaultPickerOverlayProps): JSX.Element {
+  const initial = Math.max(
+    0,
+    vaults.findIndex((v) => v.root === currentRoot)
+  )
+  const [active, setActive] = useState(initial)
+  const listRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    listRef.current?.focus()
+  }, [])
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (isPaletteNextKey(e)) {
+      e.preventDefault()
+      setActive((i) => Math.min(vaults.length - 1, i + 1))
+    } else if (isPalettePreviousKey(e)) {
+      e.preventDefault()
+      setActive((i) => Math.max(0, i - 1))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      const picked = vaults[active]
+      if (picked) onPick(picked.root)
+    } else if (e.key === 'Escape') {
+      // Dismiss just this overlay; stop the event so the window-level Esc
+      // listener doesn't also run its overlay-dismiss fallback.
+      e.preventDefault()
+      e.stopPropagation()
+      e.nativeEvent.stopImmediatePropagation()
+      onCancel()
+    }
+  }
+
+  return (
+    <OverlayShell>
+      <div className="border-b border-paper-300/70 px-4 py-2 text-xs text-ink-500">
+        Capture into…
+      </div>
+      <div
+        ref={listRef}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+        className="min-h-0 flex-1 overflow-y-auto outline-none"
+      >
+        {vaults.length === 0 ? (
+          <div className="px-4 py-3 text-xs text-ink-500">No open vaults. Esc to dismiss.</div>
+        ) : (
+          vaults.map((v, idx) => {
+            const isActive = idx === active
+            const isCurrent = v.root === currentRoot
+            return (
+              <button
+                key={v.root}
+                type="button"
+                onMouseEnter={() => setActive(idx)}
+                onClick={() => onPick(v.root)}
+                title={v.root}
+                className={[
+                  'flex w-full items-center gap-2 px-4 py-1.5 text-left text-sm',
+                  isActive ? 'bg-paper-200 text-ink-900' : 'text-ink-700 hover:bg-paper-200/60'
+                ].join(' ')}
+              >
+                <span className="w-3 shrink-0 text-accent">{isCurrent ? '✓' : ''}</span>
+                <span className="truncate">{v.name}</span>
+                <span className="ml-auto truncate text-2xs text-ink-400" dir="rtl">
+                  {v.root}
+                </span>
+              </button>
+            )
+          })
+        )}
+      </div>
+    </OverlayShell>
   )
 }
 
@@ -849,7 +1055,7 @@ function NotePickerOverlay({ notes, onPick, onCancel }: NotePickerOverlayProps):
   )
 }
 
-type CommandAction = 'save' | 'save-no-close' | 'new' | 'open'
+type CommandAction = 'save' | 'save-no-close' | 'new' | 'open' | 'vault'
 
 interface CommandOverlayProps {
   modKey: string
@@ -892,6 +1098,12 @@ function CommandOverlay({ modKey, mode, onAction, onCancel }: CommandOverlayProp
         label: 'Open another note…',
         hint: `${modKey}P`,
         keywords: 'open switch picker find search note'
+      },
+      {
+        id: 'vault' as CommandAction,
+        label: 'Capture into another vault…',
+        hint: '',
+        keywords: 'vault workspace destination switch change where folder target'
       }
     ],
     [mode.kind, modKey]
@@ -959,9 +1171,13 @@ function CommandOverlay({ modKey, mode, onAction, onCancel }: CommandOverlayProp
                 ].join(' ')}
               >
                 <span className="truncate">{cmd.label}</span>
-                <kbd className="ml-auto rounded bg-paper-200 px-1.5 py-0.5 text-2xs text-ink-500">
-                  {cmd.hint}
-                </kbd>
+                {/* Not every command has a shortcut; an empty kbd would render
+                    as a stray grey pill. */}
+                {cmd.hint && (
+                  <kbd className="ml-auto rounded bg-paper-200 px-1.5 py-0.5 text-2xs text-ink-500">
+                    {cmd.hint}
+                  </kbd>
+                )}
               </button>
             )
           })

@@ -498,6 +498,15 @@ const api: ZenBridge = {
     ipcRenderer.invoke(IPC.APP_GET_QUICK_CAPTURE_PINNED),
   setQuickCapturePinned: (pinned: boolean): Promise<boolean> =>
     ipcRenderer.invoke(IPC.APP_SET_QUICK_CAPTURE_PINNED, pinned),
+  listQuickCaptureVaults: (): Promise<VaultInfo[]> =>
+    ipcRenderer.invoke(IPC.APP_LIST_QUICK_CAPTURE_VAULTS),
+  setQuickCaptureVault: (root: string): Promise<VaultInfo | null> =>
+    ipcRenderer.invoke(IPC.APP_SET_QUICK_CAPTURE_VAULT, root),
+  onQuickCaptureVaultChange: (cb: () => void): (() => void) => {
+    const listener = (): void => cb()
+    ipcRenderer.on(IPC.APP_QUICK_CAPTURE_VAULT_CHANGED, listener)
+    return () => ipcRenderer.off(IPC.APP_QUICK_CAPTURE_VAULT_CHANGED, listener)
+  },
   renderTikz: (source: string): Promise<{ ok: boolean; svg?: string; error?: string }> =>
     ipcRenderer.invoke(IPC.TIKZ_RENDER, source),
 

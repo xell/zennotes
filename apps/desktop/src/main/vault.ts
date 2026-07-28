@@ -315,6 +315,11 @@ export interface PersistedConfig {
   /** When true, the quick-capture window stays pinned on top of all windows
    *  and does not auto-hide when it loses focus. */
   quickCapturePinned: boolean
+  /** Vault root the quick-capture panel captures into, chosen explicitly from
+   *  its own vault picker. Sticky: it overrides the usual "inherit from the
+   *  window you were last in" until the user picks a different one. Null means
+   *  no override, i.e. follow the last-focused workspace window. */
+  quickCaptureVaultRoot: string | null
   /** All windows that were open when the app last ran. Restored on next
    *  launch so the user's multi-window layout persists across sessions. */
   openWindows: PersistedWindowSession[] | null
@@ -333,6 +338,7 @@ const DEFAULT_CONFIG: PersistedConfig = {
   zoomFactor: 1,
   quickCaptureHotkey: DEFAULT_QUICK_CAPTURE_HOTKEY,
   quickCapturePinned: false,
+  quickCaptureVaultRoot: null,
   openWindows: null
 }
 
@@ -453,6 +459,10 @@ function normalizePersistedConfig(value: unknown): PersistedConfig {
       ? candidate.quickCaptureHotkey.trim()
       : DEFAULT_QUICK_CAPTURE_HOTKEY
   const quickCapturePinned = candidate.quickCapturePinned === true
+  const quickCaptureVaultRoot =
+    typeof candidate.quickCaptureVaultRoot === 'string' && candidate.quickCaptureVaultRoot.trim()
+      ? path.resolve(candidate.quickCaptureVaultRoot.trim())
+      : null
   const normalizeWindowSession = (raw: unknown): PersistedWindowSession | null => {
     if (!raw || typeof raw !== 'object') return null
     const v = raw as Record<string, unknown>
@@ -488,6 +498,7 @@ function normalizePersistedConfig(value: unknown): PersistedConfig {
     zoomFactor,
     quickCaptureHotkey,
     quickCapturePinned,
+    quickCaptureVaultRoot,
     openWindows
   }
 }

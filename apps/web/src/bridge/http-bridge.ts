@@ -1337,6 +1337,20 @@ async function setQuickCapturePinned(_pinned: boolean): Promise<boolean> {
   return false
 }
 
+async function listQuickCaptureVaults(): Promise<VaultInfo[]> {
+  // The quick capture panel is desktop-only, and the web build serves a single
+  // workspace, so there is never a choice of destination to offer.
+  return []
+}
+
+async function setQuickCaptureVault(_root: string): Promise<VaultInfo | null> {
+  return null
+}
+
+function onQuickCaptureVaultChange(_cb: () => void): () => void {
+  return () => {}
+}
+
 async function renderTikz(_source: string): Promise<TikzRenderResponse> {
   return { ok: false, error: 'TikZ rendering is not available in the web build yet.' }
 }
@@ -1590,6 +1604,9 @@ export const httpBridge: ZenBridge = {
   setQuickCaptureHotkey,
   getQuickCapturePinned,
   setQuickCapturePinned,
+  listQuickCaptureVaults,
+  setQuickCaptureVault,
+  onQuickCaptureVaultChange,
   renderTikz,
 
   mcpGetRuntime,
