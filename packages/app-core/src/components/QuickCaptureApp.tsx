@@ -453,6 +453,23 @@ export function QuickCaptureApp(): JSX.Element {
     [mode, submitting]
   )
 
+  /** Last-chance save on app quit, called from main (which destroys this window
+   *  rather than hiding it, so an undismissed draft would otherwise be lost).
+   *  Silent and unconditional: no prompt, no hiding, no reset — just get the
+   *  text onto disk. Exposed as a window hook, the same way the unsaved-PDF
+   *  quit guard reaches its renderer state. */
+  useEffect(() => {
+    const host = window as Window & { __zenFlushQuickCapture?: () => Promise<void> }
+    host.__zenFlushQuickCapture = async () => {
+      const view = editorRef.current
+      if (!view || !view.state.doc.toString().trim()) return
+      await save({ silent: true })
+    }
+    return () => {
+      delete host.__zenFlushQuickCapture
+    }
+  }, [save])
+
   /** Save the buffer (if there's anything to save) and hide the window.
    *  Used by both ⌘↩ and ⌘W — neither drops a draft on the floor. An
    *  empty buffer hides silently (no nag); a save error keeps the window

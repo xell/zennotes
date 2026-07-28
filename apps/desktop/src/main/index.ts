@@ -4471,6 +4471,27 @@ function hideQuickCaptureWindow(win: BrowserWindow): void {
   if (returnFocus && isMac()) app.hide()
 }
 
+/** Commit whatever is sitting in the quick-capture editor, silently. Same
+ *  renderer-hook shape as `confirmWindowUnsavedPdfs`: the buffer, the editing
+ *  mode and the save logic all live in the renderer, so main just asks it to
+ *  save. No prompt and no cancel — by the time this runs the quit is already
+ *  confirmed, and the alternative is throwing the text away. */
+async function flushQuickCaptureDraft(): Promise<void> {
+  const win = quickCaptureWindow
+  if (!win || win.isDestroyed()) return
+  const save = win.webContents
+    .executeJavaScript('window.__zenFlushQuickCapture ? window.__zenFlushQuickCapture() : null')
+    .catch((err) => {
+      // Never let this wedge the quit — the worst case is losing the draft we
+      // were trying to rescue, which is no worse than the old behaviour.
+      console.error('[quit] failed to flush the quick capture draft', err)
+    })
+  // An unresponsive renderer must not hold the app open. Two writes at most,
+  // so this is generous; matches the stage-2 flush's own timeout.
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 2000))
+  await Promise.race([save, timeout])
+}
+
 /** Vaults the quick-capture panel can be pointed at: the local vaults held by
  *  open workspace windows, deduped by root, plus the panel's own current vault
  *  so the live destination is always in the list (a chosen vault is sticky, so
@@ -5249,6 +5270,8 @@ async function confirmUnsavedPdfsBeforeQuit(): Promise<boolean> {
 
 let quitUnsavedConfirmed = false
 let quitConfirmInFlight = false
+let quitDraftFlushed = false
+let quitDraftFlushInFlight = false
 let quitFlushDone = false
 app.on('before-quit', (event) => {
   // Stage 1: unsaved-highlights confirmation, BEFORE any teardown — so a
@@ -5263,6 +5286,23 @@ app.on('before-quit', (event) => {
       quitUnsavedConfirmed = true
       appIsQuitting = true // per-window close guards must not re-prompt now
       app.quit() // re-fires before-quit, now past the guard
+    })
+    return
+  }
+
+  // Stage 1.5: rescue an undismissed quick-capture draft. This has to happen
+  // BEFORE the stage-2 teardown below, because `windowVaults.stopAll()` clears
+  // the per-window vault sessions — the save would then have no vault to
+  // resolve against and would either fail or, worse, fall back to the wrong
+  // one. Runs only once the quit is confirmed, so cancelling stage 1 doesn't
+  // silently commit a note.
+  if (!quitDraftFlushed) {
+    event.preventDefault()
+    if (quitDraftFlushInFlight) return
+    quitDraftFlushInFlight = true
+    void flushQuickCaptureDraft().finally(() => {
+      quitDraftFlushed = true
+      app.quit() // re-fires before-quit, now past this stage
     })
     return
   }
