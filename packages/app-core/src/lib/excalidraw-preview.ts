@@ -6,20 +6,10 @@ import {
   extractObsidianExcalidrawScene
 } from '@shared/excalidraw'
 
-export interface EmbedSize {
-  width?: number
-  height?: number
-}
-
-/** Parse an Obsidian-style embed size hint: `600`, `600x400`. */
-const SIZE_HINT_RE = /^(\d+)(?:x(\d+))?$/
-
-export function parseEmbedSizeHint(hint: string | null | undefined): EmbedSize | null {
-  if (!hint) return null
-  const m = hint.trim().match(SIZE_HINT_RE)
-  if (!m) return null
-  return { width: Number(m[1]), height: m[2] ? Number(m[2]) : undefined }
-}
+// Re-exported from the leaf `embed-size` module, which owns the parsing. It
+// must not live here: this file dynamic-imports @excalidraw/excalidraw, and
+// anything importing the parser from here inherits that whole graph.
+export { parseEmbedSizeHint, type EmbedSize } from './embed-size'
 
 interface CacheEntry {
   mtime: number

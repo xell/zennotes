@@ -14,6 +14,7 @@ import {
   resolveAssetVaultRelativePath,
   resolveLocalAssetUrl
 } from './local-assets'
+import { parseImageEmbedLabel } from './embed-size'
 import { setImageBlockDragPayload } from './image-block-dnd'
 import { assetTabPath } from './asset-tabs'
 import {
@@ -68,6 +69,9 @@ type ParsedImage = {
   alt: string
   href: string
   resolvedUrl: string
+  /** Render size from a `|600` / `|600x400` label, if the label was one. */
+  width?: number
+  height?: number
 }
 
 type ParsedPdf = {
@@ -189,11 +193,9 @@ function parseStandaloneLocalImage(lineText: string): ParsedImage | null {
     if (classifyLocalAssetHref(href) !== 'image') return null
     const resolvedUrl = resolveLocalAssetUrl(state.vault?.root, state.activeNote?.path, href)
     if (!resolvedUrl) return null
-    return {
-      alt: (fromMarkdown[1] ?? '').trim(),
-      href,
-      resolvedUrl
-    }
+    // A trailing `|600` in the alt is a render size, not alt text — same rule
+    // the preview renderer applies, so both surfaces agree on what a label means.
+    return { ...parseImageEmbedLabel(fromMarkdown[1]), href, resolvedUrl }
   }
 
   const fromEmbed = lineText.match(STANDALONE_OBSIDIAN_EMBED_RE)
@@ -202,11 +204,7 @@ function parseStandaloneLocalImage(lineText: string): ParsedImage | null {
   if (classifyLocalAssetHref(href) !== 'image') return null
   const resolvedUrl = resolveLocalAssetUrl(state.vault?.root, state.activeNote?.path, href)
   if (!resolvedUrl) return null
-  return {
-    alt: (fromEmbed[2] ?? '').trim(),
-    href,
-    resolvedUrl
-  }
+  return { ...parseImageEmbedLabel(fromEmbed[2]), href, resolvedUrl }
 }
 
 function parseStandaloneLocalPdf(lineText: string): ParsedPdf | null {
@@ -245,7 +243,9 @@ class LocalImageWidget extends WidgetType {
     private readonly lineText: string,
     private readonly alt: string,
     private readonly href: string,
-    private readonly resolvedUrl: string
+    private readonly resolvedUrl: string,
+    private readonly width?: number,
+    private readonly height?: number
   ) {
     super()
   }
@@ -258,7 +258,11 @@ class LocalImageWidget extends WidgetType {
       other.lineText === this.lineText &&
       other.alt === this.alt &&
       other.href === this.href &&
-      other.resolvedUrl === this.resolvedUrl
+      other.resolvedUrl === this.resolvedUrl &&
+      // Without these, editing `|600` to `|300` would reuse the old widget and
+      // the image would not resize until something else forced a rebuild.
+      other.width === this.width &&
+      other.height === this.height
     )
   }
 
@@ -267,6 +271,12 @@ class LocalImageWidget extends WidgetType {
     figure.className = 'local-image-embed cm-local-image-embed'
     figure.draggable = true
     figure.title = 'Drag to move. Use </> to edit this block.'
+    // Width caps the figure, not the image: the frame is a bordered full-width
+    // block containing a `width: 100%` image, so sizing only the image would
+    // leave it floating inside a full-width box with the controls pinned to the
+    // box's edges. `max-width` keeps it responsive in a narrow editor. Matches
+    // what the preview renderer does in buildImageEmbed.
+    if (this.width) figure.style.maxWidth = `${this.width}px`
 
     figure.addEventListener('dragstart', (event) => {
       const dataTransfer = event.dataTransfer
@@ -300,6 +310,7 @@ class LocalImageWidget extends WidgetType {
     image.alt = this.alt
     image.loading = 'lazy'
     image.draggable = false
+    if (this.height) image.style.maxHeight = `${this.height}px`
 
     const topControls = document.createElement('div')
     topControls.className = 'local-image-embed-controls local-image-embed-controls-top'
@@ -836,7 +847,9 @@ function computeDecorations(view: EditorView): DecorationSet {
               line.text,
               parsedImage.alt,
               parsedImage.href,
-              parsedImage.resolvedUrl
+              parsedImage.resolvedUrl,
+              parsedImage.width,
+              parsedImage.height
             )
           })
         })

@@ -57,6 +57,49 @@ describe('renderMarkdown', () => {
     expect(html).toContain('alt="CleanShot 2026-04-13 at 14.31.31@2x.png"')
   })
 
+  // Image size hints, the `![[image.png|600]]` syntax excalidraw embeds have
+  // always accepted. The size rides as data attributes rather than an inline
+  // style because decorateLocalAssets re-homes the image into an embed figure
+  // whose stylesheet sets `width: 100%`, so it has to be applied after the CSS.
+  it('moves an image size hint out of alt and onto the element', () => {
+    const html = renderMarkdown('![[photo.png|600]]')
+
+    expect(html).toContain('data-embed-width="600"')
+    expect(html).not.toContain('data-embed-height')
+    // Crucially the alt is emptied, not left holding "600".
+    expect(html).toContain('alt=""')
+  })
+
+  it('parses a width x height image hint', () => {
+    const html = renderMarkdown('![[photo.png|600x400]]')
+
+    expect(html).toContain('data-embed-width="600"')
+    expect(html).toContain('data-embed-height="400"')
+  })
+
+  it('applies the same hint to Markdown image syntax', () => {
+    const html = renderMarkdown('![600](photo.png)')
+
+    expect(html).toContain('data-embed-width="600"')
+    expect(html).toContain('alt=""')
+  })
+
+  it('keeps alt text alongside a size hint', () => {
+    const html = renderMarkdown('![[photo.png|A cat|600]]')
+
+    expect(html).toContain('data-embed-width="600"')
+    expect(html).toContain('alt="A cat"')
+  })
+
+  // The label WAS the alt attribute before sizes existed, so a caption that
+  // merely contains digits must not be swallowed as a size.
+  it('leaves a non-size label as alt text', () => {
+    const html = renderMarkdown('![[chart.png|Q3 revenue 600]]')
+
+    expect(html).toContain('alt="Q3 revenue 600"')
+    expect(html).not.toContain('data-embed-width')
+  })
+
   it('renders excalidraw embeds as placeholder divs', () => {
     const html = renderMarkdown('![[diagram.excalidraw]]')
 

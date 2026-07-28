@@ -237,6 +237,27 @@ function isStandaloneAnchorParagraph(anchor: HTMLAnchorElement): HTMLParagraphEl
   return text === anchorText ? paragraph : null
 }
 
+/** The render size `remarkImageEmbedSize` parked on the element, if any. */
+function imageEmbedSize(img: HTMLImageElement): { width: number | null; height: number | null } {
+  const width = Number(img.dataset.embedWidth)
+  const height = Number(img.dataset.embedHeight)
+  return {
+    width: Number.isFinite(width) && width > 0 ? width : null,
+    height: Number.isFinite(height) && height > 0 ? height : null
+  }
+}
+
+/**
+ * Size an image that renders on its own, i.e. NOT inside an embed figure.
+ * `max-*` rather than `width`/`height` so the image still shrinks inside a
+ * narrow pane instead of overflowing it.
+ */
+function applyInlineImageEmbedSize(img: HTMLImageElement): void {
+  const { width, height } = imageEmbedSize(img)
+  if (width) img.style.maxWidth = `${width}px`
+  if (height) img.style.maxHeight = `${height}px`
+}
+
 function isStandaloneImageParagraph(img: HTMLImageElement): HTMLParagraphElement | null {
   const paragraph = img.parentElement as HTMLParagraphElement | null
   if (!paragraph || paragraph.tagName !== 'P') return null
@@ -266,6 +287,19 @@ function buildImageEmbed(
 ): HTMLElement {
   const figure = document.createElement('figure')
   figure.className = 'local-image-embed not-prose'
+
+  // A size hint belongs on the figure, not the image. The frame is a bordered,
+  // full-width block and the image inside it is `width: 100%`, so capping only
+  // the image would leave a 600px picture floating in a full-width box, with
+  // the hover controls pinned to the box's edges rather than the picture's.
+  // Capping the figure makes the whole embed — border, controls, caption —
+  // shrink to the requested width together.
+  const { width, height } = imageEmbedSize(img)
+  if (width) {
+    figure.style.maxWidth = `${width}px`
+    img.style.removeProperty('max-width')
+  }
+  if (height) img.style.maxHeight = `${height}px`
 
   const frame = document.createElement('div')
   frame.className = 'local-image-embed-frame'
@@ -467,6 +501,9 @@ export function enhanceLocalAssetNodes(
     const assetVaultRel = resolveAssetVaultRelativePath(vaultRoot, notePath, raw)
     img.src = resolved
     img.loading = 'lazy'
+    // Sized here for an image rendering on its own; `buildImageEmbed` moves the
+    // width onto the figure instead when this becomes a framed embed.
+    applyInlineImageEmbedSize(img)
     img.dataset.localAssetUrl = resolved
     img.dataset.localAssetHref = raw
     img.dataset.localAssetKind = 'image'

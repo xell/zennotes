@@ -15,7 +15,9 @@ import type { Root as MdRoot } from 'mdast'
 import type { Root as HastRoot, Element as HastElement } from 'hast'
 import { recordRendererPerf } from './perf'
 import { classifyLocalAssetHref } from './local-assets'
-import { parseEmbedSizeHint } from './excalidraw-preview'
+// From the leaf embed-size module, never via excalidraw-preview — that path
+// drags @excalidraw/excalidraw's dynamic import into whatever imports it.
+import { parseEmbedSizeHint, parseImageEmbedLabel } from './embed-size'
 import { parseColWidthsComment } from './markdown-table'
 
 /**
@@ -201,6 +203,37 @@ function remarkWikilinks() {
       }
       p.children.splice(index, 1, ...next)
       return [SKIP, index + next.length]
+    })
+  }
+}
+
+/**
+ * Remark plugin: move a trailing size hint out of an image's alt text and onto
+ * the element, so `![[image.png|600]]` renders 600px wide instead of putting
+ * "600" in the alt attribute.
+ *
+ * Deliberately a tree pass rather than a special case inside `remarkWikilinks`:
+ * wikilink embeds are turned into ordinary `image` nodes there, so visiting
+ * every image afterwards covers both that syntax and plain Markdown
+ * `![600](image.png)` in one place, instead of two parsers to keep in step.
+ *
+ * The size travels as data attributes rather than an inline style because the
+ * rendered image is later re-homed into an embed figure by `decorateLocalAssets`
+ * (which reuses the same element), and that figure's stylesheet sets
+ * `width: 100%` — the sizing has to be applied there, after the CSS, or it
+ * would simply be overridden.
+ */
+function remarkImageEmbedSize() {
+  return (tree: AnyNode): void => {
+    visit(tree, 'image', (node: AnyNode) => {
+      const image = node as { alt?: string | null; data?: { hProperties?: Record<string, string> } }
+      const { alt, width, height } = parseImageEmbedLabel(image.alt)
+      if (!width && !height) return
+      image.alt = alt
+      const hProperties = { ...(image.data?.hProperties ?? {}) }
+      if (width) hProperties['data-embed-width'] = String(width)
+      if (height) hProperties['data-embed-height'] = String(height)
+      image.data = { ...(image.data ?? {}), hProperties }
     })
   }
 }
@@ -483,6 +516,8 @@ const processor = unified()
   .use(remarkBreaks)
   .use(remarkMath)
   .use(remarkWikilinks)
+  // After remarkWikilinks, so `![[img|600]]` embeds are already image nodes.
+  .use(remarkImageEmbedSize)
   .use(remarkHashtags)
   .use(remarkHighlight)
   .use(remarkCallouts)
