@@ -4371,7 +4371,13 @@ async function ensureQuickCaptureWindow(): Promise<BrowserWindow> {
     show: false,
     frame: false,
     titleBarStyle: mac ? 'hiddenInset' : 'hidden',
-    trafficLightPosition: { x: 12, y: 12 },
+    // Centred on the header's text row, not the window's top edge. The header
+    // is 44px tall (py-2.5 = 10px above and below a 24px row, set by the h-6
+    // pin button), so its centre line is at y=22. `trafficLightPosition` is the
+    // TOP of the 12px-tall button block, hence 22 - 6 = 16. At the old y=12 the
+    // buttons centred at 18 and sat 4px above the title. Same arithmetic the
+    // main window already uses: y=16 against an h-11 (44px) title bar.
+    trafficLightPosition: { x: 12, y: 16 },
     autoHideMenuBar: true,
     alwaysOnTop: true,
     skipTaskbar: !mac,
