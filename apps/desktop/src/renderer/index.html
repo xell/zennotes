@@ -23,10 +23,17 @@
       process. Note: frame-ancestors is intentionally absent — browsers ignore
       it in <meta> tags (spec-mandated); in Electron the equivalent protection
       comes from the main-process navigation guards above.
+
+      frame-src allows http://localhost:* and http://127.0.0.1:* so the right
+      pane's Planner tab can host a locally-served web app (PlannerPanel).
+      Scoped to loopback deliberately: it lets in a dev server you are already
+      running on your own machine, and nothing off it. No other directive is
+      widened, so the panel can be framed but cannot become a channel for
+      loading remote script/style/fetch into the renderer.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self' data: blob: zen-asset: zen-theme:; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: zen-asset: zen-theme:; media-src 'self' data: blob: zen-asset: zen-theme:; frame-src 'self' data: blob: zen-asset:; font-src 'self' data: zen-theme: zen-excalidraw:; worker-src 'self' blob:; connect-src 'self' zen-asset: zen-theme: zen-excalidraw:; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none';"
+      content="default-src 'self' data: blob: zen-asset: zen-theme:; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: zen-asset: zen-theme:; media-src 'self' data: blob: zen-asset: zen-theme:; frame-src 'self' data: blob: zen-asset: http://localhost:* http://127.0.0.1:*; font-src 'self' data: zen-theme: zen-excalidraw:; worker-src 'self' blob:; connect-src 'self' zen-asset: zen-theme: zen-excalidraw:; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none';"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ZenNotes</title>

@@ -311,6 +311,11 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
     tomlKey: 'kanban_group_by',
     comment: 'status | priority | folder'
   },
+  plannerUrl: {
+    section: 'view',
+    tomlKey: 'planner_url',
+    comment: 'local Planner app URL; must use http://localhost or http://127.0.0.1'
+  },
   // terminal
   terminalLightTheme: {
     section: 'terminal',

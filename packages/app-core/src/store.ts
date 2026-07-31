@@ -440,6 +440,27 @@ function clampPdfSepiaTone(value: unknown): number {
   return Math.min(100, Math.max(0, Math.round(value)))
 }
 
+const DEFAULT_PLANNER_URL = 'http://localhost:5173/'
+
+function normalizePlannerUrl(value: unknown): string {
+  if (typeof value !== 'string') return DEFAULT_PLANNER_URL
+  const trimmed = value.trim()
+  try {
+    const url = new URL(trimmed)
+    if (
+      url.protocol !== 'http:' ||
+      (url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') ||
+      url.username ||
+      url.password
+    ) {
+      return DEFAULT_PLANNER_URL
+    }
+    return url.toString()
+  } catch {
+    return DEFAULT_PLANNER_URL
+  }
+}
+
 interface Prefs {
   vimMode: boolean
   /** Key sequence that exits insert mode (maps to <Esc>), e.g. "jk".
@@ -609,6 +630,8 @@ interface Prefs {
   /** Ordered status ids for the custom-status Kanban board (group-by "custom").
    *  Each id matches an inline `@status:<id>` task token. Config-driven. (#354) */
   kanbanStatuses: string[]
+  /** URL of the locally served Planner app. */
+  plannerUrl: string
   /** True once the user has dismissed the first-run onboarding wizard. */
   hasCompletedOnboarding: boolean
   /** xterm.js theme name to use when the app is in light mode. Empty string = derive from CSS variables. */
@@ -866,6 +889,7 @@ export const DEFAULT_PREFS: Prefs = {
   kanbanGroupBy: 'status',
   kanbanColumnTitles: {},
   kanbanStatuses: [],
+  plannerUrl: DEFAULT_PLANNER_URL,
   hasCompletedOnboarding: false,
   terminalLightTheme: 'github-light',
   terminalDarkTheme: 'github-dark',
@@ -1151,6 +1175,7 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
     kanbanGroupBy: normalizeKanbanGroupBy(p.kanbanGroupBy),
     kanbanColumnTitles: normalizeKanbanColumnTitles(p.kanbanColumnTitles),
     kanbanStatuses: normalizeKanbanStatuses(p.kanbanStatuses),
+    plannerUrl: normalizePlannerUrl(p.plannerUrl),
     hasCompletedOnboarding:
       typeof p.hasCompletedOnboarding === 'boolean'
         ? p.hasCompletedOnboarding
@@ -2002,6 +2027,7 @@ function collectPrefs(s: {
   kanbanGroupBy: KanbanGroupBy
   kanbanColumnTitles: Record<string, string>
   kanbanStatuses: string[]
+  plannerUrl: string
   hasCompletedOnboarding: boolean
   terminalLightTheme: string
   terminalDarkTheme: string
@@ -2089,6 +2115,7 @@ function collectPrefs(s: {
     kanbanGroupBy: s.kanbanGroupBy,
     kanbanColumnTitles: s.kanbanColumnTitles,
     kanbanStatuses: s.kanbanStatuses,
+    plannerUrl: s.plannerUrl,
     hasCompletedOnboarding: s.hasCompletedOnboarding,
     terminalLightTheme: s.terminalLightTheme,
     terminalDarkTheme: s.terminalDarkTheme,
@@ -2536,7 +2563,7 @@ interface Store {
   panelWidths: PanelWidths
   pinnedRefMode: PaneMode
   /** Runtime-only: which tab is active in the right pane (not persisted). */
-  rightPaneTab: 'reference' | 'terminal'
+  rightPaneTab: 'reference' | 'terminal' | 'planner'
 
   /** Auto-title new Quick Notes to today's date instead of the
    *  default "Quick Note <ts>" pattern. */
@@ -2631,6 +2658,8 @@ interface Store {
   kanbanColumnTitles: Record<string, string>
   /** Ordered status ids for the custom-status Kanban board (config-driven). */
   kanbanStatuses: string[]
+  /** URL of the locally served Planner app. */
+  plannerUrl: string
   /** True once the user has finished or skipped the first-run onboarding. */
   hasCompletedOnboarding: boolean
   terminalLightTheme: string
@@ -2874,6 +2903,7 @@ interface Store {
   /** Replace the ordered custom-status list (from Settings). Normalized and
    *  written back to config.toml + the per-vault view override. (#354) */
   setKanbanStatuses: (statuses: string[]) => void
+  setPlannerUrl: (url: string) => void
   setTasksCalendarSelectedDate: (iso: string | null) => void
   setTasksCalendarMonthAnchor: (iso: string | null) => void
   setTaskCursorIndex: (idx: number) => void
@@ -3060,7 +3090,7 @@ interface Store {
   setPinnedRefWidth: (px: number) => void
   setPanelWidth: (panel: RightPanelId, px: number) => void
   setPinnedRefMode: (mode: PaneMode) => void
-  setRightPaneTab: (tab: 'reference' | 'terminal') => void
+  setRightPaneTab: (tab: 'reference' | 'terminal' | 'planner') => void
 
   setQuickNoteDateTitle: (on: boolean) => void
   setQuickNoteTitlePrefix: (prefix: string | null) => void
@@ -4284,6 +4314,7 @@ export const useStore = create<Store>((set, get) => {
   kanbanGroupBy: loadPrefs().kanbanGroupBy,
   kanbanColumnTitles: loadPrefs().kanbanColumnTitles,
   kanbanStatuses: loadPrefs().kanbanStatuses,
+  plannerUrl: loadPrefs().plannerUrl,
   hasCompletedOnboarding: loadPrefs().hasCompletedOnboarding,
   terminalLightTheme: loadPrefs().terminalLightTheme,
   terminalDarkTheme: loadPrefs().terminalDarkTheme,
@@ -5172,6 +5203,10 @@ export const useStore = create<Store>((set, get) => {
     set({ kanbanStatuses: next })
     savePrefs(collectPrefs(get()))
     persistVaultViewOverride({ kanbanStatuses: next })
+  },
+  setPlannerUrl: (url) => {
+    set({ plannerUrl: normalizePlannerUrl(url) })
+    savePrefs(collectPrefs(get()))
   },
   setTasksCalendarSelectedDate: (iso) => set({ tasksCalendarSelectedDate: iso }),
   setTasksCalendarMonthAnchor: (iso) => set({ tasksCalendarMonthAnchor: iso }),

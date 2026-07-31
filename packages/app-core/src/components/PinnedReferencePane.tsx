@@ -59,7 +59,8 @@ import { LazyPreview as Preview } from './LazyPreview'
 import { MediaPlayer } from './MediaPlayer'
 import { PdfView } from './PdfView'
 import { TerminalPanel } from './TerminalPanel'
-import { DocumentTextIcon, ListIcon, PinIcon, TerminalIcon } from './icons'
+import { PlannerPanel } from './PlannerPanel'
+import { CalendarIcon, DocumentTextIcon, ListIcon, PinIcon, TerminalIcon } from './icons'
 import { ModeDropdown } from './ModeDropdown'
 import type { NoteMeta } from '@shared/ipc'
 import { allLeaves } from '../lib/pane-layout'
@@ -604,6 +605,17 @@ export function PinnedReferencePane(): JSX.Element | null {
                 </button>
                 <button
                   type="button"
+                  title="Planner"
+                  onClick={() => setRightPaneTab('planner')}
+                  className={[
+                    'flex h-6 w-6 items-center justify-center rounded transition-colors',
+                    rightPaneTab === 'planner' ? 'bg-paper-50 text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800'
+                  ].join(' ')}
+                >
+                  <CalendarIcon width={13} height={13} />
+                </button>
+                <button
+                  type="button"
                   title="Reference"
                   onClick={() => {
                     setRightPaneTab('reference')
@@ -623,6 +635,12 @@ export function PinnedReferencePane(): JSX.Element | null {
 
       {/* Terminal — always mounted so the PTY survives tab switches. */}
       <TerminalPanel visible={rightPaneTab === 'terminal' && pinnedRefVisible} />
+
+      {/* Planner — the opposite of the terminal's treatment: it unmounts when
+          it isn't the visible tab, so the hosted app is torn down rather than
+          left running invisibly (a hidden iframe keeps its timers and sockets
+          alive). Costs a reload on every reopen; see PlannerPanel. */}
+      <PlannerPanel visible={rightPaneTab === 'planner' && pinnedRefVisible} />
 
       <div
         className="relative flex min-h-0 min-w-0 flex-1 flex-col"

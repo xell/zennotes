@@ -528,6 +528,8 @@ export function SettingsModal(): JSX.Element {
   const setCalendarShowWeekNumbers = useStore(
     (s) => s.setCalendarShowWeekNumbers,
   );
+  const plannerUrl = useStore((s) => s.plannerUrl);
+  const setPlannerUrl = useStore((s) => s.setPlannerUrl);
   const customTemplates = useStore((s) => s.customTemplates);
   const deleteCustomTemplate = useStore((s) => s.deleteCustomTemplate);
   const hideBuiltinTemplates = useStore((s) => s.hideBuiltinTemplates);
@@ -2615,6 +2617,20 @@ export function SettingsModal(): JSX.Element {
             description="Set up the columns for the Tasks Kanban Custom status board. Other @field boards (sprint, area, …) appear automatically as you tag tasks — no setup needed."
           >
             <KanbanStatusesRow settingId="kanban-statuses" />
+          </Section>
+          <Section
+            title="Planner"
+            description="Configure the locally served Planner app shown in the right pane. Use a localhost or 127.0.0.1 HTTP URL."
+          >
+            <TextInputRow
+              label="Planner URL"
+              description="The Planner page to load in the right pane."
+              value={plannerUrl}
+              placeholder="http://localhost:5173/"
+              settingId="planner-url"
+              commitOnBlur
+              onChange={(next) => setPlannerUrl(next ?? "")}
+            />
           </Section>
           <button
             type="button"

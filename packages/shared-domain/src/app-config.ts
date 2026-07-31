@@ -116,6 +116,7 @@ export const PORTABLE_PREF_KEYS = [
   'kanbanGroupBy',
   'kanbanColumnTitles',
   'kanbanStatuses',
+  'plannerUrl',
   // terminal
   'terminalLightTheme',
   'terminalDarkTheme',
@@ -229,6 +230,7 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   kanbanGroupBy: 'status',
   kanbanColumnTitles: {},
   kanbanStatuses: [],
+  plannerUrl: 'http://localhost:5173/',
   terminalLightTheme: 'github-light',
   terminalDarkTheme: 'github-dark',
   terminalScrollbarOnHover: true,

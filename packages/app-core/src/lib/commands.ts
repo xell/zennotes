@@ -727,6 +727,25 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       }
     },
     {
+      id: 'view.planner-panel',
+      title: 'Toggle Planner Panel',
+      category: 'View',
+      keywords: 'planner day plan schedule agenda web app localhost',
+      // Same three-way toggle as the Terminal command: open the pane on it,
+      // close the pane if it is already the visible tab, otherwise switch to it.
+      run: () => {
+        const { pinnedRefVisible: vis, rightPaneTab: tab, togglePinnedRefVisible, setRightPaneTab } = getState()
+        if (!vis) {
+          setRightPaneTab('planner')
+          togglePinnedRefVisible()
+        } else if (tab === 'planner') {
+          togglePinnedRefVisible()
+        } else {
+          setRightPaneTab('planner')
+        }
+      }
+    },
+    {
       id: 'view.close-right-panel',
       title: 'Close Right Panel',
       category: 'View',
