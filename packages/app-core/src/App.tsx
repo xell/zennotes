@@ -895,6 +895,19 @@ function App(): JSX.Element {
         }
         return
       }
+      if (matchesShortcut(e, overrides, 'global.togglePlannerPanel')) {
+        e.preventDefault()
+        const { pinnedRefVisible: vis, rightPaneTab: tab, togglePinnedRefVisible, setRightPaneTab } = useStore.getState()
+        if (!vis) {
+          setRightPaneTab('planner')
+          togglePinnedRefVisible()
+        } else if (tab === 'planner') {
+          togglePinnedRefVisible()
+        } else {
+          setRightPaneTab('planner')
+        }
+        return
+      }
       if (matchesShortcut(e, overrides, 'global.focusTerminal')) {
         e.preventDefault()
         const { pinnedRefVisible: vis, rightPaneTab: tab, togglePinnedRefVisible, setRightPaneTab } = useStore.getState()

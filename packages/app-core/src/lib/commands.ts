@@ -730,6 +730,7 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       id: 'view.planner-panel',
       title: 'Toggle Planner Panel',
       category: 'View',
+      shortcut: shortcut('global.togglePlannerPanel'),
       keywords: 'planner day plan schedule agenda web app localhost',
       // Same three-way toggle as the Terminal command: open the pane on it,
       // close the pane if it is already the visible tab, otherwise switch to it.

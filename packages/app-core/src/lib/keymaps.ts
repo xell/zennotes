@@ -21,6 +21,7 @@ export type KeymapId =
   | "global.toggleOutlinePanel"
   | "global.toggleCommentsPanel"
   | "global.toggleTerminalPanel"
+  | "global.togglePlannerPanel"
   | "global.focusTerminal"
   | "global.addComment"
   | "global.pdfHighlightSelection"
@@ -305,6 +306,15 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Toggle terminal panel",
     description: "Show or hide the terminal panel in the active pane.",
     defaultBinding: "",
+  },
+  {
+    id: "global.togglePlannerPanel",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Toggle Planner panel",
+    description: "Show or hide the Planner panel in the right pane.",
+    defaultBinding: "Mod+9",
   },
   {
     id: "global.focusTerminal",
