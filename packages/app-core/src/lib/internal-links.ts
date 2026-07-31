@@ -116,24 +116,17 @@ function unwrapMdUrl(url: string): string {
 const LOCAL_FILE_EXT_RE =
   /\.(md|markdown|txt|png|apng|avif|gif|jpe?g|svg|webp|pdf|mp3|m4a|aac|flac|ogg|wav|mp4|m4v|mov|ogv|webm|canvas|excalidraw)$/i
 
-/** Return a configured Planner `/open/...` URL, or null for ordinary links. */
+/** Return a URL under the configured Planner base, or null for ordinary links. */
 export function plannerLinkUrl(href: string, plannerBaseUrl: string): string | null {
   const raw = href.trim()
   const base = plannerBaseUrl.trim()
-  if (!raw || !base) return null
+  if (!raw || !base || raw.includes(' ')) return null
   try {
     const target = new URL(raw)
     const baseUrl = new URL(base)
-    const basePath = baseUrl.pathname.replace(/\/+$/, '')
-    const routePrefix = `${basePath}/open/`.replace(/^\/\//, '/')
-    if (
-      target.origin !== baseUrl.origin ||
-      raw.includes(' ') ||
-      !target.pathname.startsWith(routePrefix) ||
-      target.pathname.slice(routePrefix.length).length === 0
-    ) {
-      return null
-    }
+    const basePath = baseUrl.pathname.replace(/\/+$/, '') || '/'
+    const pathMatches = basePath === '/' || target.pathname === basePath || target.pathname.startsWith(`${basePath}/`)
+    if (target.origin !== baseUrl.origin || !pathMatches) return null
     return target.toString()
   } catch {
     return null

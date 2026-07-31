@@ -109,22 +109,35 @@ describe('extractLinkAtCursor', () => {
 describe('plannerLinkUrl', () => {
   const base = 'http://localhost:5173/'
 
-  it('matches a Planner open route on the configured origin', () => {
-    expect(plannerLinkUrl('http://localhost:5173/open/dp1:e:R3Cl8wWXuifFhCVJ', base)).toBe(
-      'http://localhost:5173/open/dp1:e:R3Cl8wWXuifFhCVJ'
-    )
-  })
-
-  it('rejects other paths, origins, and whitespace in the route', () => {
+  it('matches the base URL and any descendant route', () => {
     for (const href of [
       'http://localhost:5173/',
-      'http://localhost:5173/open/',
+      'http://localhost:5173/open/dp1:e:R3Cl8wWXuifFhCVJ',
+      'http://localhost:5173/goto/item?view=week#today'
+    ]) {
+      expect(plannerLinkUrl(href, base), href).toBe(href)
+    }
+  })
+
+  it('rejects other origins, whitespace, and paths outside a nested base', () => {
+    for (const href of [
       'http://localhost:5173/open/foo bar',
       'http://127.0.0.1:5173/open/foo',
       'https://localhost:5173/open/foo'
     ]) {
       expect(plannerLinkUrl(href, base), href).toBeNull()
     }
+
+    expect(plannerLinkUrl('http://localhost:5173/plannerish/item', 'http://localhost:5173/planner/')).toBeNull()
+    expect(plannerLinkUrl('http://localhost:5173/planner/item', 'http://localhost:5173/planner/')).toBe(
+      'http://localhost:5173/planner/item'
+    )
+  })
+
+  it('rejects invalid or empty inputs', () => {
+    expect(plannerLinkUrl('', base)).toBeNull()
+    expect(plannerLinkUrl('not a url', base)).toBeNull()
+    expect(plannerLinkUrl('http://localhost:5173/', '')).toBeNull()
   })
 })
 
