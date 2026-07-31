@@ -53,6 +53,7 @@ export function PlannerPanel({ visible }: Props): JSX.Element | null {
         // work at all: storage, its HMR socket, and any call to its own backend
         // would fail from the opaque origin the asset viewer uses.
         sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
+        allow="clipboard-write"
         className="min-h-0 min-w-0 flex-1 border-0 bg-white"
       />
       <div className="zen-planner-panel-footer flex shrink-0 items-center justify-between gap-2 border-t border-paper-300/70 px-2 py-1 text-2xs text-ink-400">
