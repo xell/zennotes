@@ -13,7 +13,7 @@ import {
 } from "../lib/wikilinks";
 import { openWikilinkHeading } from "../lib/wikilink-navigation";
 import { listDatabaseLinkTargets, resolveDatabaseWikilink } from "../lib/database-links";
-import { externalLinkUrl, resolveInternalNoteHref } from "../lib/internal-links";
+import { externalLinkUrl, plannerLinkUrl, resolveInternalNoteHref } from "../lib/internal-links";
 import { toggleTaskAtIndex } from "../lib/tasklists";
 import {
   enhanceLocalAssetNodes,
@@ -407,6 +407,8 @@ export const Preview = memo(function Preview({
   const pinnedRefKind = useStore((s) => s.pinnedRefKind);
   const pinnedRefVisible = useStore((s) => s.pinnedRefVisible);
   const togglePinnedRefVisible = useStore((s) => s.togglePinnedRefVisible);
+  const plannerUrl = useStore((s) => s.plannerUrl);
+  const openPlannerUrl = useStore((s) => s.openPlannerUrl);
   const pinnedAssetPath = pinnedRefKind === "asset" ? pinnedRefPath : null;
   const [hovered, setHovered] = useState<{
     note: NoteMeta;
@@ -524,6 +526,8 @@ export const Preview = memo(function Preview({
   const pinnedAssetPathRef = useRef<string | null>(pinnedAssetPath);
   const pinnedRefVisibleRef = useRef(pinnedRefVisible);
   const togglePinnedRefVisibleRef = useRef(togglePinnedRefVisible);
+  const plannerUrlRef = useRef(plannerUrl);
+  const openPlannerUrlRef = useRef(openPlannerUrl);
   const selectNoteRef = useRef(selectNote);
   const openNoteInTabRef = useRef(openNoteInTab);
   const locateAssetInManagerRef = useRef(locateAssetInManager);
@@ -560,6 +564,12 @@ export const Preview = memo(function Preview({
   useEffect(() => {
     togglePinnedRefVisibleRef.current = togglePinnedRefVisible;
   }, [togglePinnedRefVisible]);
+  useEffect(() => {
+    plannerUrlRef.current = plannerUrl;
+  }, [plannerUrl]);
+  useEffect(() => {
+    openPlannerUrlRef.current = openPlannerUrl;
+  }, [openPlannerUrl]);
   useEffect(() => {
     selectNoteRef.current = selectNote;
   }, [selectNote]);
@@ -653,6 +663,12 @@ export const Preview = memo(function Preview({
         if (internalNote.heading)
           void openWikilinkHeading(internalNote.path, internalNote.heading);
         else void selectNoteRef.current(internalNote.path);
+        return;
+      }
+      const planner = plannerLinkUrl(linkHref, plannerUrlRef.current);
+      if (planner) {
+        e.preventDefault();
+        openPlannerUrlRef.current(planner);
         return;
       }
       // An external web link — `[site](https://…)` or a bare `[site](google.com)`

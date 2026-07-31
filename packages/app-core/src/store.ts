@@ -2660,6 +2660,8 @@ interface Store {
   kanbanStatuses: string[]
   /** URL of the locally served Planner app. */
   plannerUrl: string
+  /** Current transient Planner route opened from a note link, if any. */
+  plannerTargetUrl: string | null
   /** True once the user has finished or skipped the first-run onboarding. */
   hasCompletedOnboarding: boolean
   terminalLightTheme: string
@@ -2904,6 +2906,8 @@ interface Store {
    *  written back to config.toml + the per-vault view override. (#354) */
   setKanbanStatuses: (statuses: string[]) => void
   setPlannerUrl: (url: string) => void
+  openPlannerUrl: (url: string) => void
+  goPlannerHome: () => void
   setTasksCalendarSelectedDate: (iso: string | null) => void
   setTasksCalendarMonthAnchor: (iso: string | null) => void
   setTaskCursorIndex: (idx: number) => void
@@ -4315,6 +4319,7 @@ export const useStore = create<Store>((set, get) => {
   kanbanColumnTitles: loadPrefs().kanbanColumnTitles,
   kanbanStatuses: loadPrefs().kanbanStatuses,
   plannerUrl: loadPrefs().plannerUrl,
+  plannerTargetUrl: null,
   hasCompletedOnboarding: loadPrefs().hasCompletedOnboarding,
   terminalLightTheme: loadPrefs().terminalLightTheme,
   terminalDarkTheme: loadPrefs().terminalDarkTheme,
@@ -5207,6 +5212,14 @@ export const useStore = create<Store>((set, get) => {
   setPlannerUrl: (url) => {
     set({ plannerUrl: normalizePlannerUrl(url) })
     savePrefs(collectPrefs(get()))
+  },
+  openPlannerUrl: (url) => {
+    const target = url.trim()
+    if (!target) return
+    set({ plannerTargetUrl: target, rightPaneTab: 'planner', pinnedRefVisible: true })
+  },
+  goPlannerHome: () => {
+    set({ plannerTargetUrl: null, rightPaneTab: 'planner', pinnedRefVisible: true })
   },
   setTasksCalendarSelectedDate: (iso) => set({ tasksCalendarSelectedDate: iso }),
   setTasksCalendarMonthAnchor: (iso) => set({ tasksCalendarMonthAnchor: iso }),
@@ -6849,7 +6862,7 @@ export const useStore = create<Store>((set, get) => {
   },
 
   setRightPaneTab: (tab) => {
-    set({ rightPaneTab: tab })
+    set({ rightPaneTab: tab, ...(tab === 'planner' ? { plannerTargetUrl: null } : {}) })
   },
 
   setQuickNoteDateTitle: (on) => {

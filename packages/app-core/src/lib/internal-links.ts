@@ -116,13 +116,30 @@ function unwrapMdUrl(url: string): string {
 const LOCAL_FILE_EXT_RE =
   /\.(md|markdown|txt|png|apng|avif|gif|jpe?g|svg|webp|pdf|mp3|m4a|aac|flac|ogg|wav|mp4|m4v|mov|ogv|webm|canvas|excalidraw)$/i
 
-/**
- * A fully-qualified URL to open in the browser, or null. Handles explicit
- * `http(s)://` / `mailto:` / `tel:` links AND bare domains a user typed without
- * a scheme — e.g. `[site](google.com)` or `[docs](example.com/path)` — which
- * Markdown would otherwise treat as a dead relative link. Returns null for note
- * links, relative paths, in-page anchors, and local files. (#201)
- */
+/** Return a configured Planner `/open/...` URL, or null for ordinary links. */
+export function plannerLinkUrl(href: string, plannerBaseUrl: string): string | null {
+  const raw = href.trim()
+  const base = plannerBaseUrl.trim()
+  if (!raw || !base) return null
+  try {
+    const target = new URL(raw)
+    const baseUrl = new URL(base)
+    const basePath = baseUrl.pathname.replace(/\/+$/, '')
+    const routePrefix = `${basePath}/open/`.replace(/^\/\//, '/')
+    if (
+      target.origin !== baseUrl.origin ||
+      raw.includes(' ') ||
+      !target.pathname.startsWith(routePrefix) ||
+      target.pathname.slice(routePrefix.length).length === 0
+    ) {
+      return null
+    }
+    return target.toString()
+  } catch {
+    return null
+  }
+}
+
 export function externalLinkUrl(href: string): string | null {
   const h = href.trim()
   if (!h) return null

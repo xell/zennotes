@@ -91,6 +91,7 @@ import {
   externalLinkUrl,
   extractLinkAtCursor,
   markdownLinkAt,
+  plannerLinkUrl,
   resolveInternalNoteHref
 } from '../lib/internal-links'
 import { setBlockType, toggleWrap, wrapLink } from '../lib/cm-format'
@@ -625,12 +626,17 @@ function getEditorContextMenuPosition(view: EditorView): { x: number; y: number 
  * target resolves to nothing (so the click falls through to normal behavior). (#201)
  */
 function followEditorLink(target: string): boolean {
+  const state = useStore.getState()
+  const planner = plannerLinkUrl(target, state.plannerUrl)
+  if (planner) {
+    state.openPlannerUrl(planner)
+    return true
+  }
   const external = externalLinkUrl(target)
   if (external) {
     window.open(external, '_blank')
     return true
   }
-  const state = useStore.getState()
   const focusSoon = (): void => {
     state.setFocusedPanel('editor')
     requestAnimationFrame(() => useStore.getState().editorViewRef?.focus())

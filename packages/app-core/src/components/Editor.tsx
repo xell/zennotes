@@ -27,7 +27,7 @@ import {
 } from '../lib/wikilinks'
 import { openDatabaseFromWikilink, openWikilinkHeading } from '../lib/wikilink-navigation'
 import { classifyLocalAssetHref, resolveAssetVaultRelativePath } from '../lib/local-assets'
-import { externalLinkUrl, extractLinkAtCursor, resolveInternalNoteHref } from '../lib/internal-links'
+import { externalLinkUrl, extractLinkAtCursor, plannerLinkUrl, resolveInternalNoteHref } from '../lib/internal-links'
 import {
   buildMoveNotePrompt,
   parseMoveNoteTarget,
@@ -612,13 +612,18 @@ function registerVimCommands(): void {
     const target = extractLinkAtCursor(doc, pos)
     if (!target) return
 
+    const state = useStore.getState()
+    const planner = plannerLinkUrl(target, state.plannerUrl)
+    if (planner) {
+      state.openPlannerUrl(planner)
+      return
+    }
+
     const external = externalLinkUrl(target)
     if (external) {
       window.open(external, '_blank')
       return
     }
-
-    const state = useStore.getState()
 
     // PDF links: pin the asset in the reference pane for this note
     // instead of prompting to create a note.

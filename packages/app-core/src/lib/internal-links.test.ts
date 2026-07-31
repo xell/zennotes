@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   externalLinkUrl,
   extractLinkAtCursor,
+  plannerLinkUrl,
   markdownLinkAt,
   resolveInternalNoteHref
 } from './internal-links'
@@ -102,6 +103,28 @@ describe('extractLinkAtCursor', () => {
 
   it('returns null when not inside a link', () => {
     expect(extractLinkAtCursor('just text', 3)).toBeNull()
+  })
+})
+
+describe('plannerLinkUrl', () => {
+  const base = 'http://localhost:5173/'
+
+  it('matches a Planner open route on the configured origin', () => {
+    expect(plannerLinkUrl('http://localhost:5173/open/dp1:e:R3Cl8wWXuifFhCVJ', base)).toBe(
+      'http://localhost:5173/open/dp1:e:R3Cl8wWXuifFhCVJ'
+    )
+  })
+
+  it('rejects other paths, origins, and whitespace in the route', () => {
+    for (const href of [
+      'http://localhost:5173/',
+      'http://localhost:5173/open/',
+      'http://localhost:5173/open/foo bar',
+      'http://127.0.0.1:5173/open/foo',
+      'https://localhost:5173/open/foo'
+    ]) {
+      expect(plannerLinkUrl(href, base), href).toBeNull()
+    }
   })
 })
 
