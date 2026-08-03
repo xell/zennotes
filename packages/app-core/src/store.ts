@@ -91,6 +91,7 @@ import { formatMarkdown } from './lib/format-markdown'
 import { confirmMoveToTrash } from './lib/confirm-trash'
 import { confirmApp, confirmAppChoice } from './lib/confirm-requests'
 import { getPdfBuffer } from './lib/pdf-buffers'
+import { clearPendingPdfEdit } from './lib/pdf-pending-edits'
 import { pickServerDirectoryApp } from './lib/server-directory-picker-requests'
 import { promptApp } from './lib/prompt-requests'
 import {
@@ -7769,8 +7770,13 @@ export const useStore = create<Store>((set, get) => {
       if (choice === 'confirm') {
         const saved = await pdfBuffer.save()
         if (!saved) return
+      } else {
+        // 'alt' (Don't Save): discard synchronously, before the tab actually
+        // closes. If this PDF is still mounted, that clears its dirty flag
+        // right now so the unmount its close triggers next doesn't mistake
+        // the edit the user just discarded for one worth preserving.
+        pdfBuffer.discard()
       }
-      // 'alt' (Don't Save) falls through and closes, discarding edits.
     }
 
     // Capture the tab's pane-local position before removal so Cmd/Ctrl+Shift+T
@@ -7824,6 +7830,17 @@ export const useStore = create<Store>((set, get) => {
         ...(activeFields.selectedPath != null ? { focusedPanel: 'editor' } : {})
       }
     })
+    // Defensive: the guard above already saves, discards, or (for a clean
+    // PDF) leaves nothing pending, so this is normally a no-op. It exists so
+    // a stray pending edit can never survive past its tab's actual close and
+    // bleed into a later, unrelated reopen of the same path. Guarded by the
+    // same "still open elsewhere" check as the note-content cache above — a
+    // PDF split across two panes must not have its pending edit cleared out
+    // from under the other pane just because one copy closed. A no-op for
+    // note tabs, which are never in pdf-pending-edits.ts to begin with.
+    const stillOpenAfterClose =
+      get().pinnedRefPath === path || allLeaves(get().paneLayout).some((l) => l.tabs.includes(path))
+    if (!stillOpenAfterClose) clearPendingPdfEdit(path)
     // Imperatively focus the editor after state settles — guards against the
     // case where focusedPanel was already 'editor' (no dep change → effect
     // skipped) and the close button's removal drops browser focus to the body.

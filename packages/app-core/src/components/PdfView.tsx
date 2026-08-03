@@ -34,6 +34,11 @@ import {
 import { PdfBarMenu, PdfMenuItem, PdfMenuRow } from './PdfBarMenu'
 import { confirmApp } from '../lib/confirm-requests'
 import { registerPdfBuffer } from '../lib/pdf-buffers'
+import {
+  clearPendingPdfEdit,
+  getPendingPdfBytes,
+  setPendingPdfEdit
+} from '../lib/pdf-pending-edits'
 import { registerPdfOutline, type PdfOutlineItem } from '../lib/pdf-outline'
 import {
   recallPdfView,
@@ -318,8 +323,18 @@ export function PdfView({
   // rebuild effect below.
   const buildKey = mode === 'dark' ? 'dark' : mode === 'sepia' ? `sepia:${sepiaTone}` : 'light'
 
-  // Fetch bytes and open the document. The custom `zen-asset://` protocol
-  // may not honour range requests, so we hand PDF.js the whole buffer.
+  // Open the document. If this tab has unsaved highlights pending from
+  // before it was last backgrounded (see pdf-pending-edits.ts), parse those
+  // bytes instead of the file on disk — they already carry the highlight,
+  // flattened into a real page annotation, so it renders through PDF.js's
+  // ordinary annotation layer with no special handling. Otherwise fetch the
+  // file fresh; the custom `zen-asset://` protocol may not honour range
+  // requests, so PDF.js gets the whole buffer either way.
+  //
+  // Revert bypasses the pending bytes implicitly rather than by a check
+  // here: it clears this tab's entry itself (see `revertNow`) before
+  // bumping `reloadKey`, so by the time this effect re-runs there is
+  // nothing pending to find and a genuine re-fetch happens.
   useEffect(() => {
     let cancelled = false
     setStatus('loading')
@@ -328,9 +343,15 @@ export function PdfView({
 
     void (async () => {
       try {
-        const response = await fetch(assetUrl)
-        if (!response.ok) throw new Error(`Failed to load PDF (${response.status})`)
-        const data = new Uint8Array(await response.arrayBuffer())
+        const pending = getPendingPdfBytes(tabPath, assetUrl)
+        let data: Uint8Array
+        if (pending) {
+          data = pending
+        } else {
+          const response = await fetch(assetUrl)
+          if (!response.ok) throw new Error(`Failed to load PDF (${response.status})`)
+          data = new Uint8Array(await response.arrayBuffer())
+        }
         if (cancelled) return
         // ERRORS-only verbosity silences benign per-font worker warnings
         // ("TT: undefined function", unsupported hinting ops, etc.) that don't
@@ -343,8 +364,15 @@ export function PdfView({
         }
         pdfDocRef.current = doc
         restoreScaleRef.current = null // a new document opens at the default zoom
-        doc.annotationStorage.resetModified()
-        markDirty(false)
+        if (pending) {
+          // The file on disk doesn't have this content yet, so — unlike a
+          // fresh-from-disk open — this one starts dirty.
+          clearPendingPdfEdit(tabPath)
+          markDirty(true)
+        } else {
+          doc.annotationStorage.resetModified()
+          markDirty(false)
+        }
         setNumPages(doc.numPages)
         setPdfDoc(doc)
       } catch (err) {
@@ -358,14 +386,33 @@ export function PdfView({
     return () => {
       cancelled = true
     }
-  }, [assetUrl, reloadKey])
+  }, [assetUrl, assetPath, tabPath, reloadKey, markDirty])
 
-  // Destroy the document when it is replaced or the view unmounts.
+  // Destroy the document when it is replaced (Revert) or the view unmounts.
+  //
+  // A true unmount while dirty captures the pending edits first: `saveDocument()`
+  // flattens them into real bytes — the same operation Save performs, just
+  // held in memory instead of written to disk — and hands them to
+  // pdf-pending-edits.ts so returning to this tab later reopens with the
+  // highlight intact. A Revert-driven replace is not dirty by the time this
+  // runs (`revertNow` resets it first), so it takes the plain destroy path,
+  // which is what makes Revert an actual discard rather than a resurrection.
   useEffect(() => {
+    if (!pdfDoc) return
     return () => {
-      if (pdfDoc) void pdfDoc.destroy()
+      if (dirtyRef.current) {
+        void pdfDoc
+          .saveDocument()
+          .then((bytes) => setPendingPdfEdit(tabPath, assetUrl, assetPath, bytes))
+          .catch((err) =>
+            console.error('PdfView: failed to preserve unsaved highlights across tab switch', err)
+          )
+          .finally(() => void pdfDoc.destroy())
+      } else {
+        void pdfDoc.destroy()
+      }
     }
-  }, [pdfDoc])
+  }, [pdfDoc, tabPath, assetUrl, assetPath])
 
   // Build (or rebuild) the PDFViewer for the current document and dark-ness.
   useEffect(() => {
@@ -1260,6 +1307,11 @@ export function PdfView({
   // replaying undos depends on PDF.js's stack being complete and symmetric.
   // Page and zoom are restored afterwards so reverting does not also lose the
   // reader's place.
+  //
+  // Clearing any pending entry is defensive rather than load-bearing here —
+  // marking clean before bumping `reloadKey` already keeps the destroy effect
+  // above from capturing one on its way out — but it guarantees a stray
+  // pending edit from an earlier visit can never resurface on this reload.
   const revertNow = useCallback(async (): Promise<void> => {
     const ok = await confirmApp({
       title: 'Discard unsaved highlights?',
@@ -1277,16 +1329,21 @@ export function PdfView({
     }
     setHighlightOn(false)
     markDirty(false)
+    clearPendingPdfEdit(tabPath)
     setReloadKey((n) => n + 1)
-  }, [markDirty])
+  }, [markDirty, tabPath])
 
-  // Expose dirty state + save to the store's close guard, keyed by tab path.
+  // Expose dirty state + save/discard to the store's close-tab and quit
+  // guards, keyed by tab path. Registered for as long as this view is
+  // mounted; while it isn't, pdf-pending-edits.ts registers the same
+  // interface on its behalf for a tab left dirty in the background.
   useEffect(() => {
     return registerPdfBuffer(tabPath, {
       isDirty: () => dirtyRef.current,
-      save: saveNow
+      save: saveNow,
+      discard: () => markDirty(false)
     })
-  }, [tabPath, saveNow])
+  }, [tabPath, saveNow, markDirty])
 
   const modeLabel = useMemo<Record<PdfReadingMode, string>>(
     () => ({ light: 'Light', sepia: 'Sepia', dark: 'Dark', invert: 'Invert' }),

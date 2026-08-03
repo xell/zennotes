@@ -10,6 +10,12 @@ export interface PdfBufferHandle {
   isDirty: () => boolean
   /** Persist the current highlights to the file. Resolves true on success. */
   save: () => Promise<boolean>
+  /** Discard the pending edits without writing them — the "Don't Save"
+   *  choice. Must clear whatever this handle considers "dirty" synchronously,
+   *  so a discard can never be undone by something re-noticing the same
+   *  edits a moment later (see `pdf-pending-edits.ts`, whose capture-on-
+   *  unmount would otherwise re-stash exactly what the user just discarded). */
+  discard: () => void
 }
 
 const registry = new Map<string, PdfBufferHandle>()
@@ -43,4 +49,11 @@ export async function saveAllDirtyPdfBuffers(): Promise<boolean> {
     }
   }
   return allOk
+}
+
+/** Discard every dirty PDF buffer (the quit guard's "Don't Save" path). */
+export function discardAllDirtyPdfBuffers(): void {
+  for (const handle of registry.values()) {
+    if (handle.isDirty()) handle.discard()
+  }
 }

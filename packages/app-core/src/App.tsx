@@ -20,7 +20,11 @@ import { ExcalidrawEmbedMenuHost } from './components/ExcalidrawEmbedMenuHost'
 import { resolveQuickNoteTitle } from './lib/quick-note-title'
 import { isMacPlatform, matchesShortcut, matchesSequenceToken } from './lib/keymaps'
 import { confirmApp, confirmAppChoice } from './lib/confirm-requests'
-import { anyPdfBufferDirty, saveAllDirtyPdfBuffers } from './lib/pdf-buffers'
+import {
+  anyPdfBufferDirty,
+  discardAllDirtyPdfBuffers,
+  saveAllDirtyPdfBuffers
+} from './lib/pdf-buffers'
 import { selectedInboxFolderForIsolation, goUpIsolationWithConfirm } from './lib/sidebar-isolation'
 import { focusPaneOrEdgePanel, focusLastActivePane } from './lib/pane-nav'
 import { requestPaneMode } from './lib/pane-mode'
@@ -352,7 +356,11 @@ function App(): JSX.Element {
         cancelLabel: 'Cancel'
       })
       if (choice === 'cancel') return false
-      if (choice === 'confirm') await saveAllDirtyPdfBuffers()
+      if (choice === 'confirm') {
+        await saveAllDirtyPdfBuffers()
+      } else {
+        discardAllDirtyPdfBuffers()
+      }
       return true
     }
     return () => {
