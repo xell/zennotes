@@ -4150,6 +4150,10 @@ function registerIpc(): void {
   })
   handle(IPC.CONFIG_SET, async (_event, next: AppConfigPortable) => {
     await setPortableConfig(next ?? {})
+    // The config-file watcher deliberately skips our own writes, so it never
+    // notifies the other open windows when a setting changes through the UI.
+    // Push the new config to them directly so every window stays in sync.
+    broadcastConfigChange(next ?? {})
   })
   handle(IPC.CONFIG_GET_PATH, () => getConfigFilePath())
   handle(IPC.CONFIG_REVEAL, async () => {
