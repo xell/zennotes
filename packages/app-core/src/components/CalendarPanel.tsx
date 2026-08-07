@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { NoteContent, NoteMeta } from '@shared/ipc'
 import {
   inferDailyTaskDueDates,
+  isTaskOpen,
   parseTasksFromBody,
   tasksDueOn,
   type VaultTask,
@@ -30,6 +31,7 @@ import {
 } from '../lib/vault-layout'
 import { getISOWeek, getISOWeekYear } from '../lib/template-render'
 import { countWords } from '../lib/word-count'
+import { InlineMarkdown } from '../lib/inline-markdown'
 import { resolveWeekStartDay } from '../lib/week-start'
 import { ChevronLeftIcon, ChevronRightIcon } from './icons'
 import { confirmApp } from '../lib/confirm-requests'
@@ -169,6 +171,7 @@ export function CalendarPanel({ note }: { note: NoteContent }): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [note.path])
   const selectedDate = useMemo(() => parseIsoDate(selectedIso), [selectedIso])
+  const selectedWeekIso = useMemo(() => isoWeekStr(selectedDate), [selectedDate])
 
   // Tasks scheduled for the selected day. Tasks written in a daily note inherit
   // that note's date (implicit due) just like the full Tasks calendar, so we run
@@ -295,7 +298,7 @@ export function CalendarPanel({ note }: { note: NoteContent }): JSX.Element {
           path: n.path,
           title: n.title,
           folder: n.folder,
-        }).filter((t) => !t.checked).length
+        }).filter(isTaskOpen).length
         updates.push([n.path, { sig, words: countWords(body), openTasks }])
       }
       if (!cancelled && updates.length) {
@@ -847,7 +850,11 @@ export function CalendarPanel({ note }: { note: NoteContent }): JSX.Element {
           }}
           className="flex h-3.5 w-3.5 shrink-0 cursor-pointer items-center justify-center rounded-sm border border-paper-400/70 transition-colors hover:bg-paper-300/60"
         />
-        <span className="min-w-0 flex-1 truncate">{task.content || '(empty task)'}</span>
+        <InlineMarkdown
+          text={task.content || '(empty task)'}
+          interactiveLinks={false}
+          className="min-w-0 flex-1 truncate"
+        />
         {task.sourcePath !== (dailyByDate.get(dayIso)?.path ?? '') && (
           <span className="shrink-0 truncate text-2xs text-ink-400">{task.noteTitle}</span>
         )}
@@ -1073,13 +1080,26 @@ export function CalendarPanel({ note }: { note: NoteContent }): JSX.Element {
             <div className="min-w-0 truncate text-xs font-semibold text-ink-800">
               Week of {weekRangeLabel}
             </div>
-            <button
-              type="button"
-              onClick={() => void openOrCreateDay(selectedDate, selectedIso)}
-              className="shrink-0 rounded px-1.5 py-0.5 text-2xs text-ink-500 transition-colors hover:bg-paper-200 hover:text-accent"
-            >
-              {dailyByDate.has(selectedIso) ? 'Open note →' : 'Create note'}
-            </button>
+            <div className="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                onClick={() => void openOrCreateDay(selectedDate, selectedIso)}
+                title={`${dailyByDate.has(selectedIso) ? 'Open' : 'Create'} daily note (${selectedIso})`}
+                className="shrink-0 rounded px-1.5 py-0.5 text-2xs text-ink-500 transition-colors hover:bg-paper-200 hover:text-accent"
+              >
+                {dailyByDate.has(selectedIso) ? 'Day →' : 'Day +'}
+              </button>
+              {weeklyEnabled && (
+                <button
+                  type="button"
+                  onClick={() => void handleWeekClick(selectedDate, selectedWeekIso)}
+                  title={`${weeklyByWeek.has(selectedWeekIso) ? 'Open' : 'Create'} weekly note (${weeklyNoteTitle(selectedDate)})`}
+                  className="shrink-0 rounded px-1.5 py-0.5 text-2xs text-ink-500 transition-colors hover:bg-paper-200 hover:text-accent"
+                >
+                  {weeklyByWeek.has(selectedWeekIso) ? 'Week →' : 'Week +'}
+                </button>
+              )}
+            </div>
           </div>
 
           <form

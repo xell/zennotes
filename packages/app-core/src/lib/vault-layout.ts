@@ -542,6 +542,25 @@ export function resolveCreateLocation(
   return { folder: 'inbox', subpath: '' }
 }
 
+/**
+ * Whether the calendar side panel can be toggled in the current context. The
+ * calendar navigates daily/weekly notes relative to the active note, so it
+ * needs daily or weekly notes enabled *and* an actual note in the pane — it is
+ * meaningless (and cannot render) in the note-less Tasks/Tags views or in the
+ * Quick Notes scratchpad. Keep in sync with `calendarAvailable` in EditorPane.
+ * (#413)
+ */
+export function isCalendarToggleAvailable(
+  settings: VaultSettings | null | undefined,
+  note: { folder?: string } | null | undefined
+): boolean {
+  const s = normalizeVaultSettings(settings)
+  if (!(s.dailyNotes.enabled || s.weeklyNotes.enabled)) return false
+  if (!note) return false
+  if (note.folder === 'quick') return false
+  return true
+}
+
 export function normalizeVaultSettings(
   settings: VaultSettings | null | undefined
 ): VaultSettings {
@@ -628,6 +647,7 @@ export function normalizeVaultSettings(
     },
     drawingsLocation: normalizeFileLocation(settings?.drawingsLocation),
     databasesLocation: normalizeFileLocation(settings?.databasesLocation),
+    tasksLocation: normalizeFileLocation(settings?.tasksLocation),
     folderIcons: normalizedFolderIcons,
     folderColors: normalizedFolderColors,
     favorites: normalizedFavorites,

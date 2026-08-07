@@ -129,7 +129,9 @@ export type KeymapId =
   | "editor.find"
   | "view.isolateFolder"
   | "view.isolateUp"
-  | "view.quicklook";
+  | "view.quicklook"
+  | "editor.hopMarkerForward"
+  | "editor.hopMarkerBackward";
 
 export type KeymapOverrides = Partial<Record<KeymapId, string>>;
 
@@ -1318,6 +1320,26 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
       "Move the selected task down within its group (Tasks list view). Works with Vim mode on or off.",
     defaultBinding: "J",
     maxTokens: 1,
+  },
+  {
+    id: "editor.hopMarkerForward",
+    kind: "shortcut",
+    scope: "vim-editor",
+    group: "view-actions",
+    title: "Hop past next marker",
+    description:
+      "Move the cursor to the far side of the next inline marker on the line — `**bold|**` becomes `**bold**|`, so finishing a formatted word never needs the arrow keys. Crosses `**`, `*`, `~~`, `==`, backticks, `$` and the bracket pairs. Works with Vim mode on or off.",
+    defaultBinding: "Alt+]",
+  },
+  {
+    id: "editor.hopMarkerBackward",
+    kind: "shortcut",
+    scope: "vim-editor",
+    group: "view-actions",
+    title: "Hop before previous marker",
+    description:
+      "Move the cursor to the near side of the previous inline marker on the line — `**bold**|` becomes `**bold|**`, and again to land before the opening `**`. Works with Vim mode on or off.",
+    defaultBinding: "Alt+[",
   },
   {
     id: "editor.moveLineUp",

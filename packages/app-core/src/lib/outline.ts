@@ -1,8 +1,11 @@
 /**
  * Extract the heading outline from a markdown note body.
  *
- * Covers ATX headings (`# Title` through `###### Title`) with two
+ * Covers ATX headings (`# Title` through `###### Title`) with three
  * practical rules:
+ *   - Skip a leading YAML frontmatter block (`---` … `---`), so the
+ *     closing `---` isn't read as a setext underline that turns the
+ *     last frontmatter line into a phantom H2 (#442).
  *   - Skip headings inside fenced code blocks (``` or ~~~), so code
  *     snippets that start lines with `#` don't pollute the outline.
  *   - Accept setext-style underline headings (`Title\n====`) and
@@ -29,11 +32,27 @@ const FENCE_OPEN_RE = /^\s*(`{3,}|~{3,})(.*)$/
 // trailing whitespace (no info string).
 const FENCE_CLOSE_RE = /^\s*(`{3,}|~{3,})[ \t]*$/
 
+/**
+ * 0-based index of the closing `---` of a leading YAML frontmatter block,
+ * or -1 when the body has none. Matches the editor's frontmatter detection
+ * (cm-wysiwyg-blocks): the very first line must be `---`, and the block runs
+ * to the next `---` line.
+ */
+function frontmatterEndIndex(lines: string[]): number {
+  if (lines.length < 2 || lines[0].trim() !== '---') return -1
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === '---') return i
+  }
+  return -1
+}
+
 export function parseOutline(body: string): OutlineItem[] {
   const items: OutlineItem[] = []
   if (!body) return items
 
   const lines = body.split('\n')
+  // Everything up to and including this line is frontmatter and is skipped.
+  const frontmatterEnd = frontmatterEndIndex(lines)
   // The marker run (``` / ~~~) that opened the current fence, or null when not
   // inside one. Tracking the exact marker — instead of toggling a boolean on
   // any fence-looking line — means a `~~~` line can't close a ``` block, a
@@ -46,6 +65,10 @@ export function parseOutline(body: string): OutlineItem[] {
     const raw = lines[i]
     const lineStart = offset
     offset += raw.length + 1 // +1 for the stripped newline
+
+    // Skip the leading frontmatter block wholesale — its fences and `key: value`
+    // lines are YAML, not markdown, and must never surface as outline entries.
+    if (i <= frontmatterEnd) continue
 
     if (fence) {
       const close = raw.match(FENCE_CLOSE_RE)

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { csvPathFromDatabaseTab, formDirFromCsvPath } from '@shared/databases'
 import { serializeRows } from '@shared/database-csv'
 import { useStore } from '../store'
@@ -14,8 +14,9 @@ import { isImeComposing } from '../lib/ime'
 import { DatabaseTableView } from './DatabaseTableView'
 import { DatabaseBoardView } from './DatabaseBoardView'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
+import { DatabaseFilterMenu } from './DatabaseFilterMenu'
 import { Button, IconButton } from './ui/Button'
-import { DatabaseIcon, TableIcon, KanbanIcon, PlusIcon } from './icons'
+import { DatabaseIcon, TableIcon, KanbanIcon, PlusIcon, FilterIcon } from './icons'
 
 /**
  * Host for a CSV database tab: loads the database, renders the header
@@ -39,6 +40,8 @@ export function DatabaseView({
   const [renamingView, setRenamingView] = useState<string | null>(null)
   const [rawMode, setRawMode] = useState(false)
   const [editingTitle, setEditingTitle] = useState(false)
+  const [filterAnchor, setFilterAnchor] = useState<DOMRect | null>(null)
+  const filterBtnRef = useRef<HTMLButtonElement>(null)
   // Only `.base` databases rename by title (a legacy loose `.csv` doesn't).
   const canRenameTitle = !!csvPath && !!formDirFromCsvPath(csvPath)
 
@@ -177,6 +180,24 @@ export function DatabaseView({
           {!rawMode && (
             <>
               <Button
+                ref={filterBtnRef}
+                variant={
+                  filterAnchor || (activeView.filters?.length ?? 0) > 0 ? 'secondary' : 'ghost'
+                }
+                size="sm"
+                title="Filter rows"
+                onClick={(e) => {
+                  // Read the anchor rect during dispatch — React nulls the
+                  // synthetic event's currentTarget once dispatch ends, and
+                  // the updater can run deferred (crashes the root otherwise).
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  setFilterAnchor((prev) => (prev ? null : rect))
+                }}
+              >
+                <FilterIcon className="h-3.5 w-3.5" /> Filter
+                {(activeView.filters?.length ?? 0) > 0 ? ` (${activeView.filters.length})` : ''}
+              </Button>
+              <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => updateDatabaseSchema(csvPath, addField(doc))}
@@ -206,6 +227,17 @@ export function DatabaseView({
           <DatabaseBoardView csvPath={csvPath} doc={doc} view={activeView} />
         )}
       </div>
+
+      {filterAnchor && !rawMode && (
+        <DatabaseFilterMenu
+          csvPath={csvPath}
+          doc={doc}
+          view={activeView}
+          anchor={filterAnchor}
+          ignoreRef={filterBtnRef}
+          onClose={() => setFilterAnchor(null)}
+        />
+      )}
 
       {viewMenu && (
         <ContextMenu

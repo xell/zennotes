@@ -132,16 +132,34 @@ The server validates request origins.
 
 Current model:
 
-- same-origin is allowed
-- explicitly configured origins from `ZENNOTES_ALLOWED_ORIGINS` are allowed
+- same-origin is allowed, with credentials
+- explicitly configured origins from `ZENNOTES_ALLOWED_ORIGINS` are
+  allowed, with credentials
+- `ZENNOTES_ALLOWED_ORIGINS=*` allows any origin **without** credentials:
+  the origin is echoed back but `Access-Control-Allow-Credentials` is
+  omitted, so the session cookie never rides on a cross-origin request.
+  Bearer-token clients are unaffected, since they attach the token
+  themselves
 - localhost/loopback origins are allowed in dev-like loopback scenarios
 
-This is stricter than the previous permissive `*` model.
+Entries are matched as origins, not URLs, and opaque origins are
+first-class: `null` (sandboxed iframes, `data:` documents, and `file://`
+pages in most engines), scheme-only origins such as `file://`, and custom
+schemes such as `capacitor://localhost` or `app://.` can all be listed
+verbatim. Before 2.19.0 those were parsed away and rejected even when
+configured, and `*` was compared literally so it allowed nothing.
 
-Rejected origins are logged once per unique origin in the form
-`CORS rejected origin "https://x.example.com"; add it to
-ZENNOTES_ALLOWED_ORIGINS to allow it`, so misconfigured deployments
-surface in operator logs instead of silently failing in the browser.
+CORS is a browser-side control: a rejected origin is logged but the
+request still runs, and it is the browser that withholds the response
+from the page. The **ZenNotes desktop app is never subject to it** — its
+server traffic goes through the Electron main process, which sends no
+`Origin` header. Rejections in the log come from browser or WebView
+clients.
+
+Rejected origins are logged once per unique origin, naming both the
+`ZENNOTES_ALLOWED_ORIGINS` fix and the wildcard, and the effective policy
+is printed at startup as `cors:` in the banner — so a deployment can be
+checked without waiting for a client to fail.
 
 ## Trusted proxies
 

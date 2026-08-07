@@ -16,6 +16,7 @@ import { codeBlockFlairPlugin } from './cm-code-block-flair'
 import { tablePlugin } from './cm-table'
 import { wysiwygBlocksPlugin } from './cm-wysiwyg-blocks'
 import { hashtagExtension } from './cm-hashtags'
+import { taskMetadataExtension } from './cm-task-metadata'
 import { wikilinkRenderExtension } from './cm-wikilink-render'
 
 vi.mock('../store', () => {
@@ -46,6 +47,8 @@ const RICH_DOC = [
   '- bullet one',
   '- bullet two',
   '',
+  '- [ ] A task !high due:2000-01-01 @waiting #urgent',
+  '',
   '---',
   '',
   '| A | B |',
@@ -75,6 +78,7 @@ describe('wysiwyg plugin composition', () => {
           tablePlugin,
           wysiwygBlocksPlugin,
           hashtagExtension,
+          taskMetadataExtension,
           wikilinkRenderExtension
         ]
       })
@@ -89,6 +93,10 @@ describe('wysiwyg plugin composition', () => {
     expect(view.dom.querySelectorAll('.cm-wq-bullet').length).toBeGreaterThanOrEqual(2)
     expect(view.dom.querySelectorAll('.cm-wq-quote').length).toBeGreaterThanOrEqual(1)
     expect(view.dom.querySelectorAll('.cm-hashtag').length).toBeGreaterThanOrEqual(1)
+    // Task-metadata marks coexist with the checkbox + hashtag on the same line.
+    expect(view.dom.querySelectorAll('.cm-task-prio-high').length).toBe(1)
+    expect(view.dom.querySelectorAll('.cm-task-due-overdue').length).toBe(1)
+    expect(view.dom.querySelectorAll('.cm-task-field').length).toBe(1)
     expect(view.dom.querySelectorAll('.cm-wikilink').length).toBeGreaterThanOrEqual(1)
     expect(view.dom.querySelectorAll('.cm-code-flair').length).toBeGreaterThanOrEqual(1)
 

@@ -148,3 +148,41 @@ describe('markdownSnippetTransaction', () => {
     expect(applySnippet('hello', 'Space')).toBeNull()
   })
 })
+
+// #405: a fenced/math block opened inside a bullet list must auto-close with the
+// content and closing fence indented to the fence column, not escape to col 0.
+describe('block snippets inside list items (#405)', () => {
+  it('expands a fence in a bullet item, indented to the fence column', () => {
+    const state = typeThenTrigger('- ', '```bash', 'Enter')
+    expect(state?.doc.toString()).toBe('- ```bash\n  \n  ```')
+    expect(state?.selection.main.head).toBe(12) // caret on the indented middle line
+  })
+
+  it('indents to the deeper column for a nested list item', () => {
+    const state = typeThenTrigger('  - ', '```py', 'Enter')
+    expect(state?.doc.toString()).toBe('  - ```py\n    \n    ```')
+  })
+
+  it('expands a math block inside a list item too', () => {
+    const state = typeThenTrigger('- ', '$$', 'Enter')
+    expect(state?.doc.toString()).toBe('- $$\n  \n  $$')
+  })
+
+  it('expands a fence inside an ordered list item', () => {
+    const state = typeThenTrigger('1. ', '```', 'Enter')
+    expect(state?.doc.toString()).toBe('1. ```\n   \n   ```')
+  })
+
+  it('does not auto-close the closing fence of an open list block as a new opener', () => {
+    // The list fence above is still open; typing its closing ``` must not be
+    // mistaken for a new opener (that was the "adds another trio" symptom).
+    const doc = '- ```bash\n  code\n  '
+    const typed = typeInput(createState(doc, doc.length), '```')
+    expect(markdownSnippetTransaction(typed, 'Enter')).toBeNull()
+  })
+
+  it('still opens a new fence on a fresh list item after a closed block', () => {
+    const state = typeThenTrigger('- ```bash\n  x\n  ```\n- ', '```', 'Enter')
+    expect(state?.doc.toString()).toBe('- ```bash\n  x\n  ```\n- ```\n  \n  ```')
+  })
+})

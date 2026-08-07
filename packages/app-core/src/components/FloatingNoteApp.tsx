@@ -392,7 +392,12 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
           livePreviewCompartment.of(
             appliedPrefsRef.current.livePreview
-              ? wysiwygExtensions(useStore.getState().renderTablesInLivePreview)
+              ? wysiwygExtensions(
+                  useStore.getState().renderTablesInLivePreview,
+                  useStore.getState().mathRenderer,
+                  // See ExternalFileApp: tag preambles are main-pane only.
+                  ''
+                )
               : []
           ),
           lineNumbersCompartment.of(lineNumberExtension(appliedPrefsRef.current.lineNumberMode)),
@@ -458,7 +463,13 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
         lineNumbersCompartment.reconfigure(lineNumberExtension(next.lineNumberMode)),
         wordWrapCompartment.reconfigure(next.wordWrap ? EditorView.lineWrapping : []),
         livePreviewCompartment.reconfigure(
-          next.livePreview ? wysiwygExtensions(useStore.getState().renderTablesInLivePreview) : []
+          next.livePreview
+            ? wysiwygExtensions(
+                useStore.getState().renderTablesInLivePreview,
+                useStore.getState().mathRenderer,
+                ''
+              )
+            : []
         )
       ]
     })

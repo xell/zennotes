@@ -74,6 +74,12 @@ function rendererManualChunk(id: string): string | undefined {
     return 'vendor-function-plot'
   }
 
+  // Keep the tiny `?url` wasm-locator modules out of this chunk so it stays a
+  // pure dynamic import, only fetched when a Typst formula is actually rendered.
+  if (id.includes('/@myriaddreamin/') && !id.includes('.wasm')) {
+    return 'vendor-typst'
+  }
+
   if (id.includes('/d3')) {
     return 'vendor-d3'
   }
@@ -102,7 +108,8 @@ function isDeferredRendererPreload(dep: string): boolean {
     dep.includes('vendor-d3') ||
     dep.includes('vendor-mermaid') ||
     dep.includes('vendor-jsxgraph') ||
-    dep.includes('vendor-function-plot')
+    dep.includes('vendor-function-plot') ||
+    dep.includes('vendor-typst')
   )
 }
 
@@ -150,6 +157,15 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
+    // Typst ships a WASM compiler loaded lazily via `?url` + dynamic import; keep
+    // it out of the esbuild dep pre-bundler so the wasm glue stays intact.
+    optimizeDeps: {
+      exclude: [
+        '@myriaddreamin/typst.ts',
+        '@myriaddreamin/typst-ts-web-compiler',
+        '@myriaddreamin/typst-ts-renderer'
+      ]
+    },
     build: {
       outDir: 'out/renderer',
       minify: 'esbuild',

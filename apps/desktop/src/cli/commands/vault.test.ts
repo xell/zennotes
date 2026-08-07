@@ -103,7 +103,7 @@ describe('resolveVaultRoot', () => {
 
 describe('cmdVaultList', () => {
   it('lists vaults most recently opened first, marking the default', async () => {
-    await cmdVaultList('', makeArgs())
+    await cmdVaultList(makeArgs())
     const output = stdoutLines.join('')
     const lines = output.trimEnd().split('\n')
 
@@ -113,18 +113,20 @@ describe('cmdVaultList', () => {
   })
 
   it('emits structured entries with --json', async () => {
-    await cmdVaultList('', makeArgs([['json', 'true']]))
+    await cmdVaultList(makeArgs([['json', 'true']]))
     const entries = JSON.parse(stdoutLines.join(''))
 
     expect(entries).toEqual([
       {
         name: 'Work Vault',
+        kind: 'local',
         root: workVault,
         lastOpenedAt: 2_000,
         isDefault: true
       },
       {
         name: 'personal',
+        kind: 'local',
         root: personalVault,
         lastOpenedAt: 1_000,
         isDefault: false
@@ -134,7 +136,7 @@ describe('cmdVaultList', () => {
 
   it('explains the empty state', async () => {
     await writeConfig({})
-    await cmdVaultList('', makeArgs())
+    await cmdVaultList(makeArgs())
     expect(stdoutLines.join('')).toContain('No vaults known yet')
   })
 })

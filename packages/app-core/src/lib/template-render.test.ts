@@ -79,6 +79,20 @@ describe('formatDate', () => {
   it('emits bracketed text literally', () => {
     expect(formatDate(REF, '[Week of] MMMM D')).toBe('Week of May 29')
   })
+
+  it('accepts the date-fns tokens used by note directory/title patterns (#411)', () => {
+    const wk = String(getISOWeek(REF)).padStart(2, '0')
+    // date-fns-style tokens format identically to their moment-style peers,
+    // so a directory/title pattern's variables work verbatim in a template.
+    expect(formatDate(REF, 'yyyy-MM-dd')).toBe('2026-05-29')
+    expect(formatDate(REF, 'yy/M/d')).toBe('26/5/29')
+    expect(formatDate(REF, 'EEEE, MMMM d')).toBe('Friday, May 29')
+    expect(formatDate(REF, 'EEE')).toBe('Fri')
+    expect(formatDate(REF, 'yyyy-[W]ww')).toBe(`2026-W${wk}`)
+    expect(formatDate(REF, 'w')).toBe(String(getISOWeek(REF)))
+    // the original moment-style tokens still work
+    expect(formatDate(REF, 'YYYY-MM-DD dddd')).toBe('2026-05-29 Friday')
+  })
 })
 
 describe('renderTitle', () => {

@@ -236,7 +236,15 @@ or via the orchestrator of your choice.
   the proxy is on a different IP than loopback (e.g. on a Docker bridge
   network or a separate host).
 - `ZENNOTES_ALLOWED_ORIGINS` — comma-separated origins permitted to use
-  the API from the browser. Misses are logged once per origin.
+  the API from a browser or WebView. Misses are logged once per origin,
+  and the effective policy is printed in the startup banner (`cors:`).
+  Values are matched verbatim, so opaque origins count: `null` and
+  `file://` are valid entries, as are custom schemes like
+  `capacitor://localhost`. `*` allows any origin, but then the session
+  cookie is withheld cross-origin (a wildcard plus credentials would let
+  any site a user visits drive their session) — token clients still work.
+  The **desktop app does not need this**: it talks to the server from its
+  main process, which sends no `Origin`, so CORS never applies to it.
 - `ZENNOTES_BROWSE_ROOTS` — directories the server may consider as
   vault candidates. Anything outside is rejected.
 - `ZENNOTES_MAX_NOTE_BYTES` / `ZENNOTES_MAX_ASSET_BYTES` — per-request

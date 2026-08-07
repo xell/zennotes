@@ -148,6 +148,68 @@ That was previously caused by legacy remote config migration. Current behavior s
 
 If you remove the last saved remote while connected remotely, ZenNotes should automatically switch back to the local workspace.
 
+## Using the `zn` CLI against the server
+
+The CLI reaches the same server the desktop and web clients do. Every command
+except `zn open` works remotely.
+
+Once you have connected the desktop app to a server, that server is nameable
+from the terminal — the CLI reads the same saved profiles:
+
+```bash
+zn vault list                    # local vaults and servers, together
+zn list --server home
+zn capture "from my laptop" --server home --tag work
+zn task toggle "inbox/Daily.md#0" --server home
+```
+
+`--vault <name>` resolves either kind, so a name that belongs to a server
+works there too:
+
+```bash
+zn list --vault home
+```
+
+`--server` wins when both are given, which is what you want in a script if a
+local vault and a server happen to share a name. (If they do, `--vault` refuses
+to guess and tells you to be explicit.)
+
+### A server you have not saved
+
+Pass the URL directly, with the token if auth is enabled:
+
+```bash
+zn list --server 192.168.1.10:7878 --token "$TOKEN"
+zn list --server https://notes.example.com --token "$TOKEN"
+```
+
+A bare `host:port` gets `http://` filled in.
+
+### CI and headless machines
+
+Set the environment instead of saving anything to disk. This is the case where
+a machine has the CLI and nothing else:
+
+```bash
+export ZENNOTES_SERVER=notes.example.com:7878
+export ZENNOTES_REMOTE_TOKEN="$TOKEN"
+
+zn capture "nightly build failed" --tag ci
+```
+
+Token precedence is `--token`, then `ZENNOTES_REMOTE_TOKEN`, then whatever the
+saved profile carries.
+
+### What differs from a local vault
+
+- `zn open` hands file paths to the desktop app, so it needs a local vault. Use
+  `zn read <path>` to print a remote note instead.
+- `zn search` runs the server's search engine (ripgrep where available) rather
+  than the CLI's own scan, so ordering can differ. `--limit` is applied by the
+  CLI after the server responds.
+- `zn create` with a body is two requests (create, then write), because the
+  server's create route takes no body.
+
 ## Rotating the server's auth token
 
 If you suspect a leaked token, rotate it from any authenticated client:

@@ -4,15 +4,15 @@
  * agent would see.
  */
 
-import { backlinks, listNotes, searchText } from '../../mcp/vault-ops.js'
+import type { VaultBackend } from '../backend.js'
 import { getBool, getNumber, getString, type ParsedArgs } from '../args.js'
 import { emitJson, emitLine, pad, truncate } from '../format.js'
 
-export async function cmdSearch(vault: string, args: ParsedArgs): Promise<void> {
+export async function cmdSearch(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const query = getString(args, 'query') ?? args.positionals.join(' ')
   if (!query.trim()) throw new Error('zn search requires a query.')
   const limit = getNumber(args, 'limit') ?? 50
-  const matches = await searchText(vault, query.trim(), limit)
+  const matches = await vault.searchText(query.trim(), limit)
   if (getBool(args, 'json')) {
     emitJson(matches)
     return
@@ -26,12 +26,12 @@ export async function cmdSearch(vault: string, args: ParsedArgs): Promise<void> 
   }
 }
 
-export async function cmdSearchTitle(vault: string, args: ParsedArgs): Promise<void> {
+export async function cmdSearchTitle(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const query = getString(args, 'query') ?? args.positionals.join(' ')
   if (!query.trim()) throw new Error('zn search-title requires a query.')
   const needle = query.trim().toLowerCase()
   const limit = getNumber(args, 'limit') ?? 20
-  const all = await listNotes(vault)
+  const all = await vault.listNotes()
   const matches = all
     .filter((n) => n.folder !== 'trash' && n.title.toLowerCase().includes(needle))
     .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -47,10 +47,10 @@ export async function cmdSearchTitle(vault: string, args: ParsedArgs): Promise<v
   for (const n of matches) emitLine(n.path)
 }
 
-export async function cmdBacklinks(vault: string, args: ParsedArgs): Promise<void> {
+export async function cmdBacklinks(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const rel = getString(args, 'path') ?? args.positionals[0]
   if (!rel) throw new Error('zn backlinks requires a note path.')
-  const refs = await backlinks(vault, rel)
+  const refs = await vault.backlinks(rel)
   if (getBool(args, 'json')) {
     emitJson(refs)
     return

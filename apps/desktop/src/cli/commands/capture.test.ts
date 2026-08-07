@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-vi.mock('../../mcp/vault-ops.js', () => ({ createNote: vi.fn() }))
-
+// capture.ts used to import vault-ops for createNote, which pulled the whole
+// filesystem module into this test; it now takes a backend (#493), so there
+// is nothing left to stub out.
 import { deriveTitle } from './capture'
 
 describe('cli capture deriveTitle — clean titles from list/task lines', () => {

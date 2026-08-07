@@ -174,7 +174,13 @@ export function ExternalFileApp(): JSX.Element {
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
           livePreviewCompartment.of(
             appliedPrefsRef.current.livePreview
-              ? wysiwygExtensions(useStore.getState().renderTablesInLivePreview)
+              ? wysiwygExtensions(
+                  useStore.getState().renderTablesInLivePreview,
+                  useStore.getState().mathRenderer,
+                  // Tag-driven Typst preambles (#486) resolve against a vault
+                  // note's tags; this window edits a file outside the vault.
+                  ''
+                )
               : []
           ),
           lineNumbersCompartment.of(lineNumberExtension(appliedPrefsRef.current.lineNumberMode)),
@@ -248,7 +254,13 @@ export function ExternalFileApp(): JSX.Element {
         lineNumbersCompartment.reconfigure(lineNumberExtension(next.lineNumberMode)),
         wordWrapCompartment.reconfigure(next.wordWrap ? EditorView.lineWrapping : []),
         livePreviewCompartment.reconfigure(
-          next.livePreview ? wysiwygExtensions(useStore.getState().renderTablesInLivePreview) : []
+          next.livePreview
+            ? wysiwygExtensions(
+                useStore.getState().renderTablesInLivePreview,
+                useStore.getState().mathRenderer,
+                ''
+              )
+            : []
         )
       ]
     })

@@ -9,6 +9,7 @@ import {
   dateNoteDirectoryDisplayLabel,
   favoriteFolderKey,
   folderForVaultRelativePath,
+  isCalendarToggleAvailable,
   isFavoriteFolderKey,
   noteFolderSubpath,
   normalizeVaultSettings,
@@ -699,5 +700,29 @@ describe('normalizeVaultSettings drawings/databases location (#362)', () => {
       drawingsLocation: { mode: 'folder', folder: '/assets/drawings/' }
     } as unknown as VaultSettings)
     expect(custom.drawingsLocation).toEqual({ mode: 'folder', folder: 'assets/drawings' })
+  })
+})
+
+describe('isCalendarToggleAvailable (#413)', () => {
+  const daily = { dailyNotes: { enabled: true } } as unknown as VaultSettings
+  const weekly = { weeklyNotes: { enabled: true } } as unknown as VaultSettings
+  const note = { folder: 'inbox' }
+
+  it('is available with daily or weekly enabled and a note present', () => {
+    expect(isCalendarToggleAvailable(daily, note)).toBe(true)
+    expect(isCalendarToggleAvailable(weekly, note)).toBe(true)
+  })
+
+  it('is unavailable when neither daily nor weekly notes are enabled', () => {
+    expect(isCalendarToggleAvailable(null, note)).toBe(false)
+  })
+
+  it('is unavailable without a note (Tasks/Tags views)', () => {
+    expect(isCalendarToggleAvailable(daily, null)).toBe(false)
+    expect(isCalendarToggleAvailable(daily, undefined)).toBe(false)
+  })
+
+  it('is unavailable in the Quick Notes scratchpad', () => {
+    expect(isCalendarToggleAvailable(daily, { folder: 'quick' })).toBe(false)
   })
 })

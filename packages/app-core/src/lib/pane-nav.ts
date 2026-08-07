@@ -7,11 +7,19 @@
  * mental model matches what they see on screen — sibling panes in a
  * deeply nested split still look like simple neighbors.
  */
-import { useStore } from '../store'
+import { isTasksViewActive, useStore } from '../store'
 import { findLeaf } from './pane-layout'
+import { getVisiblePanelsNow, resolveNextPanel, type Panel } from './vim-nav'
+import {
+  ROW_PANEL_DEFS,
+  findPositionByIndex,
+  getIndexedElements,
+  getIndexedValue,
+  isRowPanel,
+  rowCursor
+} from './panel-rows'
 
 export type PaneDirection = 'h' | 'j' | 'k' | 'l'
-type EdgePanel = 'sidebar' | 'notelist' | 'editor' | 'connections'
 
 interface PaneRect {
   id: string
@@ -91,45 +99,48 @@ function focusPinnedRefDom(): void {
   cm?.focus()
 }
 
-function getVisibleEdgePanels(state: ReturnType<typeof useStore.getState>): EdgePanel[] {
-  const panels: EdgePanel[] = []
-  if (state.sidebarOpen) panels.push('sidebar')
-  if (state.noteListOpen && !state.unifiedSidebar) panels.push('notelist')
-  panels.push('editor')
-  if (document.querySelector('[data-connections-panel]')) panels.push('connections')
-  return panels
+/** The panels currently on screen, left to right. Shared with vim's `<C-w>hjkl`
+ *  so both navigations walk the exact same list. (#477) */
+function getVisiblePanelList(state: ReturnType<typeof useStore.getState>): Panel[] {
+  return getVisiblePanelsNow({
+    sidebarOpen: state.sidebarOpen,
+    noteListOpen: state.noteListOpen,
+    unifiedSidebar: state.unifiedSidebar,
+    tasksViewOpen: isTasksViewActive(state)
+  })
 }
 
-function resolveNeighborEdgePanel(
-  current: EdgePanel,
+function resolveNeighborPanel(
+  current: Panel,
   direction: PaneDirection,
-  panels: EdgePanel[]
-): EdgePanel | null {
-  const index = panels.indexOf(current)
-  if (index === -1) return null
-  if (direction === 'h' || direction === 'k') {
-    return index > 0 ? panels[index - 1] : current
-  }
-  return index < panels.length - 1 ? panels[index + 1] : current
+  panels: Panel[]
+): Panel | null {
+  if (!panels.includes(current)) return null
+  return resolveNextPanel(current, direction === 'h' || direction === 'k' ? 'left' : 'right', panels)
 }
 
-function findIndexedElement(
-  selector: string,
-  datasetKey: 'sidebarIdx' | 'notelistIdx' | 'connectionsIdx',
-  targetIndex: number
-): HTMLElement | null {
-  const items = Array.from(document.querySelectorAll<HTMLElement>(selector))
-    .map((el) => ({
-      el,
-      index: Number(el.dataset[datasetKey])
-    }))
-    .filter((entry) => Number.isFinite(entry.index))
-    .sort((a, b) => a.index - b.index)
-  return items.find((entry) => entry.index === targetIndex)?.el ?? items[0]?.el ?? null
-}
-
-function focusEdgePanel(panel: Exclude<EdgePanel, 'editor'>): void {
+/**
+ * Give `panel` keyboard focus, whichever kind of panel it is. One routine for
+ * both pane navigations (and for any future entry point), because keeping two
+ * copies of "how do I focus the comments panel" is exactly how `Alt+hjkl` ended
+ * up reaching fewer panels than `<C-w>hjkl`. (#477)
+ *
+ * Row-list panels (sidebar / note list / connections / outline) don't take DOM
+ * focus: their keys are handled centrally off `focusedPanel`, so we only blur
+ * whatever held focus and scroll their cursor row back into view. The comments
+ * and calendar panels own their keyboard handling, so they take real DOM focus.
+ */
+export function focusPanel(panel: Panel, direction?: PaneDirection): void {
   const state = useStore.getState()
+  if (panel === 'editor') {
+    if (direction) focusEditorEdgePane(direction)
+    else {
+      state.setFocusedPanel('editor')
+      requestAnimationFrame(() => useStore.getState().editorViewRef?.focus())
+    }
+    return
+  }
+  if (panel === 'sidebar' && !state.sidebarOpen) state.toggleSidebar()
   state.setFocusedPanel(panel)
   ;(document.activeElement as HTMLElement | null)?.blur()
   // Landing on the sidebar: reveal the note being edited (retry-based, so it
@@ -139,18 +150,25 @@ function focusEdgePanel(panel: Exclude<EdgePanel, 'editor'>): void {
     state.requestSidebarReveal({ kind: 'leaf', path: state.activeNote.path })
     return
   }
+  if (panel === 'tasks' || panel === 'tags') return
   requestAnimationFrame(() => {
-    const target =
-      panel === 'sidebar'
-        ? findIndexedElement('[data-sidebar-idx]', 'sidebarIdx', state.sidebarCursorIndex)
-        : panel === 'notelist'
-          ? findIndexedElement('[data-notelist-idx]', 'notelistIdx', state.noteListCursorIndex)
-          : findIndexedElement(
-              '[data-connections-idx]',
-              'connectionsIdx',
-              state.connectionsCursorIndex
-            )
-    target?.scrollIntoView({ block: 'nearest' })
+    if (panel === 'comments' || panel === 'calendar') {
+      document
+        .querySelector<HTMLElement>(`[data-${panel}-panel]`)
+        ?.focus({ preventScroll: true })
+      return
+    }
+    if (!isRowPanel(panel)) return
+    const { selector, datasetKey } = ROW_PANEL_DEFS[panel]
+    const { index, setIndex } = rowCursor(panel, state)
+    const items = getIndexedElements(selector, datasetKey)
+    const row = items[findPositionByIndex(items, datasetKey, index)]
+    if (!row) return
+    // Re-seat the cursor on the row we actually landed on, so the highlight and
+    // the stored index agree even when the list shrank while we were away.
+    const landed = getIndexedValue(row, datasetKey)
+    if (landed >= 0 && landed !== index) setIndex(landed)
+    row.scrollIntoView({ block: 'nearest' })
   })
 }
 
@@ -228,26 +246,27 @@ function focusEditorEdgePane(direction: PaneDirection): boolean {
 export function focusPaneOrEdgePanel(direction: PaneDirection): boolean {
   const state = useStore.getState()
   const focused = state.focusedPanel
+  const panels = getVisiblePanelList(state)
 
-  // When focus is on a horizontal edge panel, move relative to THAT panel
-  // instead of geometrically from activePaneId — otherwise `l` from the sidebar
-  // navigates from the last active pane and skips the pane that sits right next
-  // to the sidebar. (#124)
-  if (
-    (direction === 'h' || direction === 'l') &&
-    (focused === 'sidebar' || focused === 'notelist' || focused === 'connections')
-  ) {
-    const next = resolveNeighborEdgePanel(focused, direction, getVisibleEdgePanels(state))
+  // When focus is already on a panel, move relative to THAT panel instead of
+  // geometrically from activePaneId — otherwise `l` from the sidebar navigates
+  // from the last active pane and skips the pane sitting right next to it
+  // (#124). Every panel in the list qualifies, so the walk continues past
+  // Connections into Comments / Outline / Calendar the way `<C-w>hjkl` does
+  // rather than dead-ending. (#477)
+  if (focused && focused !== 'editor' && focused !== 'tabs' && panels.includes(focused)) {
+    const next = resolveNeighborPanel(focused, direction, panels)
     if (!next || next === focused) return false
     if (next === 'editor') return focusEditorEdgePane(direction)
-    focusEdgePanel(next)
+    focusPanel(next)
     return true
   }
 
   if (focusPaneInDirection(direction)) return true
 
-  const next = resolveNeighborEdgePanel('editor', direction, getVisibleEdgePanels(state))
-  if (!next || next === 'editor') return false
-  focusEdgePanel(next)
+  const current: Panel = panels.includes('tasks') ? 'tasks' : 'editor'
+  const next = resolveNeighborPanel(current, direction, panels)
+  if (!next || next === current) return false
+  focusPanel(next)
   return true
 }

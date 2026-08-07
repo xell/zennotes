@@ -36,6 +36,7 @@ import type {
   GitCommitResult,
   GitStatusResult,
   ImportedAsset,
+  LinkMetadata,
   LocalVaultEntry,
   MoveExternalFileResult,
   NoteComment,
@@ -129,6 +130,10 @@ function resolveBasePath(): string {
 
 const BASE_PATH = resolveBasePath()
 const API_BASE = `${BASE_PATH}/api`
+
+// Deployment base path (e.g. "" at the root, "/zennotes" behind a proxy), so
+// entrypoint code can build same-origin asset URLs that survive subpath mounts.
+export const webBasePath = BASE_PATH
 
 type JsonBody = Record<string, unknown> | unknown[]
 type JsonRequestInit = Omit<RequestInit, 'body'> & { body?: JsonBody }
@@ -568,6 +573,17 @@ async function revealNoteTarget(_relPath: string): Promise<void> {
 
 async function revealFilePath(_absPath: string): Promise<void> {
   // No OS file manager on the web.
+}
+
+async function openExternalFile(_href: string): Promise<{ ok: boolean; error?: string }> {
+  // The web app has no access to the machine's filesystem or default apps.
+  return { ok: false, error: 'desktop-only' }
+}
+
+async function fetchLinkMetadata(url: string): Promise<LinkMetadata> {
+  // The browser can't fetch arbitrary cross-origin pages (CORS); a bookmark on
+  // web falls back to a bare link card until a server-side proxy is added.
+  return { url, ok: false }
 }
 
 async function revealFolder(_folder: NoteFolder, _subpath: string): Promise<void> {
@@ -1017,12 +1033,18 @@ async function importPastedImage(_input: PastedImageInput): Promise<ImportedAsse
   throw new Error('Clipboard image paste is only available in the desktop app right now.')
 }
 
-async function renameAsset(_relPath: string, _nextName: string): Promise<AssetMeta> {
-  throw new Error('Asset rename is only available in the desktop app right now.')
+function renameAsset(relPath: string, nextName: string): Promise<AssetMeta> {
+  return jsonRequest<AssetMeta>('/assets/rename', {
+    method: 'POST',
+    body: { path: relPath, name: nextName }
+  })
 }
 
-async function moveAsset(_relPath: string, _targetDir: string): Promise<AssetMeta> {
-  throw new Error('Asset move is only available in the desktop app right now.')
+function moveAsset(relPath: string, targetDir: string): Promise<AssetMeta> {
+  return jsonRequest<AssetMeta>('/assets/move', {
+    method: 'POST',
+    body: { path: relPath, targetDir }
+  })
 }
 
 async function duplicateAsset(_relPath: string): Promise<AssetMeta> {
@@ -1309,6 +1331,15 @@ async function openMarkdownFile(_absPath: string): Promise<boolean> {
   return false
 }
 
+async function openFileDialog(): Promise<boolean> {
+  // Native "Open File…" picker is desktop-only (no OS file dialog on web).
+  return false
+}
+
+async function openFolderTemporary(_absPath: string): Promise<void> {
+  // Temporary folder sessions are a desktop-only capability (no OS paths on web).
+}
+
 async function toggleQuickCapture(): Promise<void> {
   // Web build can't bind a system-wide shortcut; the quick capture
   // window is desktop-only.
@@ -1560,6 +1591,8 @@ export const httpBridge: ZenBridge = {
   duplicateNote,
   exportNotePdf,
   revealNote,
+  openExternalFile,
+  fetchLinkMetadata,
   revealNoteTarget,
   revealFilePath,
   moveNote,
@@ -1599,6 +1632,8 @@ export const httpBridge: ZenBridge = {
   writeExternalFile,
   moveExternalFileToVault,
   openMarkdownFile,
+  openFileDialog,
+  openFolderTemporary,
   toggleQuickCapture,
   getQuickCaptureHotkey,
   setQuickCaptureHotkey,

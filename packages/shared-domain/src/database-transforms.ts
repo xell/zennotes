@@ -2,7 +2,7 @@
  * Pure, type-aware filter / sort / group transforms over database rows.
  * Reused by both the Table view (filter + sort) and the Board view (group-by).
  */
-import type { DbField, DbRow, FilterRule, SortRule } from './databases'
+import type { DbField, DbRow, FilterConjunction, FilterRule, SortRule } from './databases'
 import { EMPTY_GROUP } from './databases'
 
 const MULTISELECT_SEP = ', '
@@ -72,11 +72,17 @@ function matchesRule(row: DbRow, rule: FilterRule, field: DbField | undefined): 
 export function filterRows(
   rows: DbRow[],
   filters: FilterRule[] | undefined,
-  fieldsById: Map<string, DbField>
+  fieldsById: Map<string, DbField>,
+  conjunction: FilterConjunction = 'and'
 ): DbRow[] {
   if (!filters || filters.length === 0) return rows
-  // All rules AND together (MVP).
-  return rows.filter((row) => filters.every((rule) => matchesRule(row, rule, fieldsById.get(rule.fieldId))))
+  // `and` (default) keeps rows matching every rule; `or` keeps rows matching
+  // any rule. (#394)
+  const test = (row: DbRow, rule: FilterRule): boolean =>
+    matchesRule(row, rule, fieldsById.get(rule.fieldId))
+  return conjunction === 'or'
+    ? rows.filter((row) => filters.some((rule) => test(row, rule)))
+    : rows.filter((row) => filters.every((rule) => test(row, rule)))
 }
 
 // ---------------------------------------------------------------------------

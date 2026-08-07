@@ -2,10 +2,11 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TASKS_TAB_PATH, type VaultTask } from '@shared/tasks'
-import { databaseTabPath } from '@shared/databases'
+import { databaseTabPath, type DatabaseDoc } from '@shared/databases'
 import { assetTabPath } from './lib/asset-tabs'
 import { findLeaf, type PaneLayout, type PaneLeaf } from './lib/pane-layout'
 import type { AssetMeta } from '@shared/ipc'
+import { NO_VALUE_COLUMN_ID } from './components/TasksKanban'
 
 function makeTask(content: string, taskIndex = 0): VaultTask {
   return {
@@ -19,6 +20,7 @@ function makeTask(content: string, taskIndex = 0): VaultTask {
     content,
     checked: false,
     forwarded: false,
+    cancelled: false,
     waiting: false,
     tags: []
   }
@@ -965,6 +967,38 @@ describe('importDroppedMarkdownFiles (web import-as-note)', () => {
   })
 })
 
+describe('cancelTaskFromList (#450)', () => {
+  it('cancels an inline task by writing `[-]` to the note', async () => {
+    const note = { ...makeNote('- [ ] Write the proposal'), path: 'inbox/Note.md', title: 'Note' }
+    const writeNote = vi.fn().mockResolvedValue(note)
+    installZen({
+      writeNote,
+      listNotes: vi.fn().mockResolvedValue([note]),
+      readNote: vi.fn().mockResolvedValue({ ...note, body: '- [ ] Write the proposal' })
+    })
+    const { useStore } = await loadStore()
+
+    await useStore.getState().cancelTaskFromList(makeTask('Write the proposal', 0))
+
+    expect(writeNote).toHaveBeenCalledWith('inbox/Note.md', '- [-] Write the proposal')
+  })
+
+  it('un-cancels a `[-]` task back to `[ ]`', async () => {
+    const note = { ...makeNote('- [-] Write the proposal'), path: 'inbox/Note.md', title: 'Note' }
+    const writeNote = vi.fn().mockResolvedValue(note)
+    installZen({
+      writeNote,
+      listNotes: vi.fn().mockResolvedValue([note]),
+      readNote: vi.fn().mockResolvedValue({ ...note, body: '- [-] Write the proposal' })
+    })
+    const { useStore } = await loadStore()
+
+    await useStore.getState().cancelTaskFromList({ ...makeTask('Write the proposal', 0), cancelled: true })
+
+    expect(writeNote).toHaveBeenCalledWith('inbox/Note.md', '- [ ] Write the proposal')
+  })
+})
+
 describe('preview tabs (VS Code-style open flow)', () => {
   function activeLeaf(store: { paneLayout: PaneLayout; activePaneId: string }): PaneLeaf {
     const leaf = findLeaf(store.paneLayout, store.activePaneId)
@@ -1054,6 +1088,63 @@ describe('note jump history with database tabs', () => {
     // Ctrl+O → jump back to the grid.
     await useStore.getState().jumpToPreviousNote()
     expect(useStore.getState().selectedPath).toBe(dbTab)
+  })
+})
+
+describe('note jump history for offset opens (#484)', () => {
+  // Opening a note *at an offset* — a template's `{{cursor}}`, a vault-search
+  // hit, a `[[note#heading]]` link — went straight to the raw tab primitive and
+  // recorded nothing, so Ctrl+O skipped straight past the note you left. After
+  // "New Note from Template" with only one note behind you, it did nothing at
+  // all, which is how this was reported.
+  it('records where you came from, so Ctrl+O returns there', async () => {
+    installZen({
+      readNote: vi
+        .fn()
+        .mockImplementation(async (path: string) => makeNote('body text', path))
+    })
+    const { useStore } = await loadStore()
+
+    await useStore.getState().selectNote('inbox/From.md')
+    expect(useStore.getState().selectedPath).toBe('inbox/From.md')
+
+    await useStore.getState().openNoteAtOffset('inbox/Target.md', 4)
+    expect(useStore.getState().selectedPath).toBe('inbox/Target.md')
+    expect(useStore.getState().noteBackstack.map((l) => l.path)).toContain('inbox/From.md')
+
+    await useStore.getState().jumpToPreviousNote()
+    expect(useStore.getState().selectedPath).toBe('inbox/From.md')
+  })
+
+  it('leaves the forward stack ready after jumping back', async () => {
+    installZen({
+      readNote: vi
+        .fn()
+        .mockImplementation(async (path: string) => makeNote('body text', path))
+    })
+    const { useStore } = await loadStore()
+
+    await useStore.getState().selectNote('inbox/From.md')
+    await useStore.getState().openNoteAtOffset('inbox/Target.md', 4)
+    await useStore.getState().jumpToPreviousNote()
+    expect(useStore.getState().selectedPath).toBe('inbox/From.md')
+
+    await useStore.getState().jumpToNextNote()
+    expect(useStore.getState().selectedPath).toBe('inbox/Target.md')
+  })
+
+  it('does not record a jump to the note already open', async () => {
+    installZen({
+      readNote: vi
+        .fn()
+        .mockImplementation(async (path: string) => makeNote('body text', path))
+    })
+    const { useStore } = await loadStore()
+
+    await useStore.getState().selectNote('inbox/Same.md')
+    const before = useStore.getState().noteBackstack.length
+    await useStore.getState().openNoteAtOffset('inbox/Same.md', 8)
+    expect(useStore.getState().noteBackstack.length).toBe(before)
   })
 })
 
@@ -1197,11 +1288,97 @@ describe('viewPrefsFromVault (#292 — per-vault view overlay)', () => {
     expect('tasksViewMode' in patch).toBe(false)
   })
 
+  it('overlays the Assets sort order, and drops an invalid one (#473)', async () => {
+    installZen()
+    const { viewPrefsFromVault } = await loadStore()
+    expect(
+      viewPrefsFromVault({ view: { assetSortOrder: 'modified-desc' } } as unknown as ViewArg)
+        .assetSortOrder
+    ).toBe('modified-desc')
+    expect(
+      'assetSortOrder' in
+        viewPrefsFromVault({ view: { assetSortOrder: 'size-sideways' } } as unknown as ViewArg)
+    ).toBe(false)
+  })
   it('returns an empty patch when there is no view block', async () => {
     installZen()
     const { viewPrefsFromVault } = await loadStore()
     expect(viewPrefsFromVault({} as unknown as ViewArg)).toEqual({})
     expect(viewPrefsFromVault(null)).toEqual({})
+  })
+
+  it('overlays and normalizes kanbanColumnOrder (#389)', async () => {
+    installZen()
+    const { viewPrefsFromVault } = await loadStore()
+    const patch = viewPrefsFromVault({
+      view: {
+        kanbanColumnOrder: {
+          'field:status': ['review', 'backlog', 'review', 42, 'done'],
+          'not-a-groupby': ['x'],
+          priority: []
+        }
+      }
+    } as unknown as ViewArg)
+    // Dedupes, drops non-strings, drops unknown group-bys, drops empty arrays.
+    expect(patch.kanbanColumnOrder).toEqual({ 'field:status': ['review', 'backlog', 'done'] })
+  })
+
+  it('keeps a renamed No-value bucket title through normalization (#389)', async () => {
+    installZen()
+    const { viewPrefsFromVault } = await loadStore()
+    // The "No <field>" bucket's title key ends in the __none__ sentinel; its
+    // underscore prefix must not be rejected, or the rename would silently vanish.
+    const key = `field:status:${NO_VALUE_COLUMN_ID}`
+    const patch = viewPrefsFromVault({
+      view: { kanbanColumnTitles: { [key]: 'Unassigned', 'field:status:review': 'In review' } }
+    } as unknown as ViewArg)
+    expect(patch.kanbanColumnTitles).toEqual({ [key]: 'Unassigned', 'field:status:review': 'In review' })
+  })
+})
+
+describe('assetSortOrder (#473: Assets view sort is sticky)', () => {
+  it('defaults to name-asc and survives a store reload', async () => {
+    installZen()
+    const first = await loadStore()
+    expect(first.useStore.getState().assetSortOrder).toBe('name-asc')
+
+    first.useStore.getState().setAssetSortOrder('modified-desc')
+    expect(first.useStore.getState().assetSortOrder).toBe('modified-desc')
+
+    // Re-import without clearing localStorage: this is the "quit and reopen"
+    // path, and the header choice has to come back with it.
+    vi.resetModules()
+    const reloaded = await import('./store')
+    expect(reloaded.useStore.getState().assetSortOrder).toBe('modified-desc')
+  })
+
+  it('falls back to the default when the persisted value is junk', async () => {
+    installZen()
+    const { DEFAULT_PREFS } = await loadStore()
+    localStorage.setItem(
+      'zen:prefs:v2',
+      JSON.stringify({ ...DEFAULT_PREFS, assetSortOrder: 'nonsense' })
+    )
+    vi.resetModules()
+    const reloaded = await import('./store')
+    expect(reloaded.useStore.getState().assetSortOrder).toBe('name-asc')
+  })
+})
+
+describe('setKanbanColumnOrder (#389 — manual Kanban column order)', () => {
+  it('stores a trimmed, deduped order per board and clears it on empty', async () => {
+    installZen()
+    const { useStore } = await loadStore()
+    useStore
+      .getState()
+      .setKanbanColumnOrder('field:status', ['review', 'backlog', 'review', ' done '])
+    expect(useStore.getState().kanbanColumnOrder['field:status']).toEqual([
+      'review',
+      'backlog',
+      'done'
+    ])
+    useStore.getState().setKanbanColumnOrder('field:status', [])
+    expect(useStore.getState().kanbanColumnOrder['field:status']).toBeUndefined()
   })
 })
 
@@ -1358,5 +1535,88 @@ describe('manual reorder: assets as siblings', () => {
     expect([...stored].sort()).toEqual(['Proj/a.md', 'Proj/b.md', 'Proj/x.png', 'Proj/y.png'])
     // …and the dragged asset landed immediately before its target.
     expect(stored.indexOf('Proj/y.png')).toBe(stored.indexOf('Proj/a.md') - 1)
+  })
+})
+
+describe('deleteDatabaseRows (#391 — purge record-page schema mappings)', () => {
+  const CSV = 'db.base/data.csv'
+  function makeDbDoc(): DatabaseDoc {
+    return {
+      version: 1,
+      idFieldId: 'f_id',
+      fields: [],
+      views: [],
+      activeViewId: 'v1',
+      path: CSV,
+      title: 'db',
+      rows: [
+        { id: 'r1', cells: { f_id: 'r1' } },
+        { id: 'r2', cells: { f_id: 'r2' } }
+      ],
+      pages: { r1: 'db.base/pages/r1.md' },
+      pageHasContent: { r1: true }
+    } as unknown as DatabaseDoc
+  }
+
+  it('purges the deleted row page mapping and trashes the note on confirm', async () => {
+    const moveToTrash = vi.fn().mockResolvedValue({})
+    installZen({
+      moveToTrash,
+      writeDatabaseSchema: vi.fn().mockResolvedValue(undefined),
+      writeDatabaseRows: vi.fn().mockResolvedValue(undefined)
+    })
+    const { useStore } = await loadStore()
+    const { getConfirmRequest, settleConfirmRequest } = await import('./lib/confirm-requests')
+    useStore.setState({ databases: { [CSV]: makeDbDoc() } })
+
+    const p = useStore.getState().deleteDatabaseRows(CSV, ['r1'])
+    const req = getConfirmRequest()
+    expect(req).toBeTruthy() // prompted because r1 has a linked page
+    // This fork widened settleConfirmRequest from boolean to ConfirmChoice.
+    settleConfirmRequest(req!, 'confirm') // "Delete row + note"
+    await p
+
+    const doc = useStore.getState().databases[CSV]!
+    expect(doc.rows.map((r) => r.id)).toEqual(['r2'])
+    expect(doc.pages).toEqual({})
+    expect(doc.pageHasContent).toEqual({})
+    expect(moveToTrash).toHaveBeenCalledWith('db.base/pages/r1.md')
+  })
+
+  it('keeps the note on cancel but still purges the stale mapping', async () => {
+    const moveToTrash = vi.fn().mockResolvedValue({})
+    installZen({
+      moveToTrash,
+      writeDatabaseSchema: vi.fn().mockResolvedValue(undefined),
+      writeDatabaseRows: vi.fn().mockResolvedValue(undefined)
+    })
+    const { useStore } = await loadStore()
+    const { getConfirmRequest, settleConfirmRequest } = await import('./lib/confirm-requests')
+    useStore.setState({ databases: { [CSV]: makeDbDoc() } })
+
+    const p = useStore.getState().deleteDatabaseRows(CSV, ['r1'])
+    settleConfirmRequest(getConfirmRequest()!, 'cancel') // "Keep note"
+    await p
+
+    const doc = useStore.getState().databases[CSV]!
+    expect(doc.rows.map((r) => r.id)).toEqual(['r2'])
+    expect(doc.pages).toEqual({}) // stale mapping purged even when the note is kept
+    expect(moveToTrash).not.toHaveBeenCalled()
+  })
+
+  it('deletes a page-less row without prompting', async () => {
+    installZen({
+      writeDatabaseRows: vi.fn().mockResolvedValue(undefined),
+      writeDatabaseSchema: vi.fn().mockResolvedValue(undefined)
+    })
+    const { useStore } = await loadStore()
+    const { getConfirmRequest } = await import('./lib/confirm-requests')
+    useStore.setState({ databases: { [CSV]: makeDbDoc() } })
+
+    await useStore.getState().deleteDatabaseRows(CSV, ['r2']) // r2 has no linked page
+    expect(getConfirmRequest()).toBeNull() // no prompt
+    const doc = useStore.getState().databases[CSV]!
+    expect(doc.rows.map((r) => r.id)).toEqual(['r1'])
+    expect(doc.pages).toEqual({ r1: 'db.base/pages/r1.md' })
   })
 })

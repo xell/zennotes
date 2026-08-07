@@ -2,8 +2,14 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import type { NoteMeta } from "@shared/ipc";
-import { renderMarkdown } from "../lib/markdown";
+import {
+  renderMarkdown,
+  setMarkdownLooseMathDelimiters,
+  setMarkdownMathRenderer,
+} from "../lib/markdown";
 import { expandEmbeds, hasNoteEmbeds } from "../lib/transclusion";
+import { todayIso } from "../lib/task-metadata-tokens";
+import { selectTypstPreambleFor } from "../lib/typst-preamble-select";
 import { useStore } from "../store";
 import { resolveAuto, THEMES } from "../lib/themes";
 import {
@@ -18,6 +24,7 @@ import { toggleTaskAtIndex } from "../lib/tasklists";
 import {
   enhanceLocalAssetNodes,
   findAssetReferenceHrefs,
+  hrefFragment,
   resolveAssetVaultRelativePath,
 } from "../lib/local-assets";
 import { assetTabPath } from "../lib/asset-tabs";
@@ -26,6 +33,10 @@ import { resolveExcalidrawEmbedPath } from "../lib/excalidraw-preview";
 import { LazyExcalidrawPreview } from "./LazyExcalidrawPreview";
 import { enhancePreviewHeadingFolds } from "../lib/preview-heading-fold";
 import { renderDiagrams } from "../lib/diagram-renderers";
+import { renderEmbeds, renderBookmarks } from "../lib/embed-renderers";
+import { renderTypstMath } from "../lib/typst-math-render";
+import { externalFileLink, openExternalFileLink } from "../lib/external-file-link";
+import { setHoveredLink } from "../lib/hovered-link";
 import { attachInlineDiagramPanZoom } from "../lib/inline-diagram-pan-zoom";
 import {
   CODE_COPY_BUTTON_SELECTOR,
@@ -381,6 +392,8 @@ export const Preview = memo(function Preview({
   onRendered?: (() => void) | null;
 }): JSX.Element {
   const ref = useRef<HTMLDivElement | null>(null);
+  const mathRenderer = useStore((s) => s.mathRenderer);
+  const looseMathDelimiters = useStore((s) => s.looseMathDelimiters);
   const vault = useStore((s) => s.vault);
   const notes = useStore((s) => s.notes);
   const folders = useStore((s) => s.folders);
@@ -509,14 +522,22 @@ export const Preview = memo(function Preview({
   const embedsReadyRef = useRef(embedsReady);
   embedsReadyRef.current = embedsReady;
 
-  const html = useMemo(
-    () => renderMarkdown(expandedForCurrent ?? markdown),
-    [expandedForCurrent, markdown],
-  );
+  const html = useMemo(() => {
+    // Point the pipeline at the active engine before rendering, so a toggle
+    // takes effect on the very next render without an effect-ordering race.
+    setMarkdownMathRenderer(mathRenderer);
+    setMarkdownLooseMathDelimiters(looseMathDelimiters);
+    return renderMarkdown(expandedForCurrent ?? markdown);
+  }, [expandedForCurrent, markdown, mathRenderer, looseMathDelimiters]);
   const assetFilesKey = useMemo(
     () => assetFiles.map((asset) => asset.path).join("\n"),
     [assetFiles],
   );
+  // Tag-driven Typst definitions for this note (#486). Empty unless the setting
+  // is on and the note's tags match a preamble, so most notes pay one lookup.
+  const typstPreamble = useStore((s) => selectTypstPreambleFor(s, notePath));
+  const typstPreambleRef = useRef(typstPreamble);
+  typstPreambleRef.current = typstPreamble;
   const notesRef = useRef(notes);
   const markdownRef = useRef(markdown);
   const notePathRef = useRef(notePath);
@@ -722,6 +743,13 @@ export const Preview = memo(function Preview({
         }
         return;
       }
+      // A link to a file outside the vault (`~/…`, `file://…`, an absolute path):
+      // open it with the OS default app instead of silently doing nothing. (#424)
+      if (externalFileLink(href)) {
+        e.preventDefault();
+        void openExternalFileLink(href);
+        return;
+      }
       e.preventDefault();
     };
     const onMouseOver = (e: MouseEvent): void => {
@@ -737,6 +765,16 @@ export const Preview = memo(function Preview({
     };
     const onMouseMove = (e: MouseEvent): void => {
       const target = e.target as HTMLElement;
+      // Status-bar link preview (browser-style): show the target of whatever
+      // link is under the pointer, wikilink or plain markdown link.
+      const anyLink = target.closest("a") as HTMLAnchorElement | null;
+      setHoveredLink(
+        anyLink
+          ? anyLink.dataset.wikilink ||
+              anyLink.dataset.resolvedPath ||
+              anyLink.getAttribute("href")
+          : null,
+      );
       const anchor = target.closest("a.wikilink") as HTMLAnchorElement | null;
       if (!anchor) {
         // Pointer moved off the link. Don't dismiss immediately — the
@@ -791,10 +829,13 @@ export const Preview = memo(function Preview({
       setAssetMenu({ x: e.clientX, y: e.clientY, url, vaultRel, href });
     };
 
+    const onMouseLeave = (): void => setHoveredLink(null);
+
     root.addEventListener("click", onClick);
     root.addEventListener("mouseover", onMouseOver);
     root.addEventListener("mousemove", onMouseMove);
     root.addEventListener("mouseout", onMouseOut);
+    root.addEventListener("mouseleave", onMouseLeave);
     root.addEventListener("change", onChange);
     root.addEventListener("contextmenu", onContextMenu);
 
@@ -803,8 +844,10 @@ export const Preview = memo(function Preview({
       root.removeEventListener("mouseover", onMouseOver);
       root.removeEventListener("mousemove", onMouseMove);
       root.removeEventListener("mouseout", onMouseOut);
+      root.removeEventListener("mouseleave", onMouseLeave);
       root.removeEventListener("change", onChange);
       root.removeEventListener("contextmenu", onContextMenu);
+      setHoveredLink(null);
     };
   }, []);
 
@@ -871,6 +914,49 @@ export const Preview = memo(function Preview({
         input.dataset.taskIndex = String(idx);
         input.setAttribute("role", "checkbox");
         input.classList.add("cursor-pointer");
+        // Tag the item with its OWN checked state and wrap its inline text in a
+        // span, so the completed-task styling (strike/gray) targets just this
+        // line and never bleeds onto nested sub-tasks. Loose items keep their
+        // <p>, which the CSS targets directly; only bare-text (tight) items get
+        // the wrapper.
+        const li = input.closest<HTMLLIElement>("li.task-list-item");
+        if (li) {
+          li.classList.toggle("task-self-done", input.checked);
+          // Due chips are rendered date-neutral (the HTML is cached and outlives
+          // "today"), so the overdue tint is decided here, at attach time, the
+          // same rule the editor uses: past due and the task still open. (#479)
+          const today = todayIso();
+          li.querySelectorAll<HTMLElement>(":scope .zen-task-due[data-due]").forEach(
+            (chip) => {
+              const due = chip.dataset.due ?? "";
+              chip.classList.toggle(
+                "zen-task-due-overdue",
+                !input.checked && due !== "" && due < today,
+              );
+            },
+          );
+          if (!li.querySelector(":scope > .task-item-body")) {
+            const own = Array.from(li.childNodes).filter((node) => {
+              if (node === input) return false;
+              if (node.nodeType === Node.ELEMENT_NODE) {
+                const tag = (node as Element).tagName;
+                if (tag === "UL" || tag === "OL" || tag === "P") return false;
+              }
+              return true;
+            });
+            const hasText = own.some(
+              (node) =>
+                node.nodeType !== Node.TEXT_NODE ||
+                (node.textContent ?? "").trim() !== "",
+            );
+            if (hasText && own.length > 0) {
+              const body = document.createElement("span");
+              body.className = "task-item-body";
+              li.insertBefore(body, own[0]);
+              for (const node of own) body.appendChild(node);
+            }
+          }
+        }
       });
 
     const applyRenderedDom = async (): Promise<void> => {
@@ -888,6 +974,13 @@ export const Preview = memo(function Preview({
       root.replaceChildren(...Array.from(stage.childNodes));
       await renderDiagrams(root, { themeKey: effectiveMode, expanded: false });
       if (cancelled) return;
+      // Typst math (a no-op when the KaTeX renderer is active, since it emits no
+      // `.zen-typst-math` placeholders). Recolored to currentColor, so a theme
+      // switch needs no re-render.
+      await renderTypstMath(root, typstPreambleRef.current);
+      if (cancelled) return;
+      renderEmbeds(root);
+      renderBookmarks(root);
       renderExcalidrawEmbeds(root);
       requestAnimationFrame(() => {
         if (!cancelled && embedsReadyRef.current) onRenderedRef.current?.();
@@ -956,6 +1049,9 @@ export const Preview = memo(function Preview({
     pinnedAssetPath,
     pinnedRefVisible,
     togglePinnedRefVisible,
+    // Editing a note's tags, or the preamble note itself, changes the Typst
+    // definitions its formulas compile against — re-render when it moves (#486).
+    typstPreamble,
     vault?.root,
   ]);
 
@@ -1092,13 +1188,15 @@ export const Preview = memo(function Preview({
         if (abs) window.zen.clipboardWriteText(abs);
       },
     });
+    const assetHref = assetMenu.href;
+    const fragment = hrefFragment(assetHref) || null;
     items.push(
       {
         label: "Open as Reference (This Note)",
         disabled: !vaultRel,
         onSelect: async () => {
           if (vaultRel) {
-            pinAssetReferenceForNote(notePath, vaultRel);
+            pinAssetReferenceForNote(notePath, vaultRel, fragment);
           }
         },
       },
@@ -1106,7 +1204,7 @@ export const Preview = memo(function Preview({
         label: "Open as Reference (Global)",
         disabled: !vaultRel,
         onSelect: async () => {
-          if (vaultRel) pinAssetReference(vaultRel);
+          if (vaultRel) pinAssetReference(vaultRel, fragment);
         },
       },
     );

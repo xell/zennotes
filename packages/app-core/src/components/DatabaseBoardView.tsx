@@ -39,8 +39,8 @@ export function DatabaseBoardView({ csvPath, doc, view }: Props): JSX.Element {
 
   const map = useMemo(() => fieldsById(doc), [doc])
   const visibleRows = useMemo(
-    () => filterRows(doc.rows, view.filters, map),
-    [doc.rows, view.filters, map]
+    () => filterRows(doc.rows, view.filters, map, view.filterConjunction),
+    [doc.rows, view.filters, view.filterConjunction, map]
   )
 
   const titleField = doc.fields.find((f) => f.id !== doc.idFieldId)

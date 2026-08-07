@@ -1,3 +1,4 @@
+import { parseFrontmatterFields, unquote } from './frontmatter'
 import type { NoteFolder } from './ipc'
 import { FENCE_RE, TASK_LINE_RE } from './tasklists'
 
@@ -42,6 +43,10 @@ export interface VaultTask {
   /** True for a `[>]` task forwarded to another note (#316). Mutually
    *  exclusive with `checked`; kept out of the today/upcoming/done buckets. */
   forwarded: boolean
+  /** True for a `[-]` task cancelled — intentionally abandoned (#450). Mutually
+   *  exclusive with `checked`/`forwarded`; kept out of the active buckets and
+   *  collected under its own group. */
+  cancelled: boolean
   /** ISO YYYY-MM-DD, validated via Date round-trip. */
   due?: string
   /** True when `due` was *derived* from the containing daily note's date
@@ -60,6 +65,16 @@ export interface VaultTask {
   status?: string
   /** Inline `#tags` found on the line. */
   tags: string[]
+  /** How this task is stored. `'file'` is a whole-note task (TaskNotes-style:
+   *  a `.md` file tagged `#task`, metadata in frontmatter); `'inline'` (the
+   *  default when absent) is a classic `- [ ]` checkbox line. File-tasks
+   *  round-trip through frontmatter, not the checkbox, so mutators branch on
+   *  this. */
+  kind?: 'inline' | 'file'
+  /** ISO YYYY-MM-DD start/scheduled date (frontmatter `scheduled`). File-tasks. */
+  scheduled?: string
+  /** ISO YYYY-MM-DD completion date (frontmatter `completedDate`). File-tasks. */
+  completedDate?: string
 }
 
 export interface VaultTaskGroups {
@@ -68,6 +83,7 @@ export interface VaultTaskGroups {
   waiting: VaultTask[]
   done: VaultTask[]
   forwarded: VaultTask[]
+  cancelled: VaultTask[]
   overdueCount: number
 }
 
@@ -83,23 +99,12 @@ interface NoteDefaults {
 
 const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n?/
 
-function unquote(v: string): string {
-  const trimmed = v.trim()
-  if (trimmed.length >= 2) {
-    const first = trimmed[0]
-    const last = trimmed[trimmed.length - 1]
-    if ((first === '"' || first === "'") && first === last) {
-      return trimmed.slice(1, -1)
-    }
-  }
-  return trimmed
-}
-
 function normalizePriority(raw: string | undefined): TaskPriority | undefined {
   if (!raw) return undefined
   const v = raw.toLowerCase().trim()
   if (v === 'high' || v === 'h') return 'high'
-  if (v === 'med' || v === 'medium' || v === 'm') return 'med'
+  // `normal` is the TaskNotes default priority; map it onto ZenNotes' `med`.
+  if (v === 'med' || v === 'medium' || v === 'normal' || v === 'm') return 'med'
   if (v === 'low' || v === 'l') return 'low'
   return undefined
 }
@@ -275,6 +280,7 @@ export function parseTasksFromBody(body: string, ctx: ParseTasksContext): VaultT
     const tail = taskMatch[3].replace(/^\]/, '') // drop the closing `]` of the checkbox
     const checked = checkedChar === 'x' || checkedChar === 'X'
     const forwarded = checkedChar === '>'
+    const cancelled = checkedChar === '-'
 
     const tokens = extractTokens(tail)
 
@@ -289,6 +295,7 @@ export function parseTasksFromBody(body: string, ctx: ParseTasksContext): VaultT
       content: tokens.stripped || tail.trim(),
       checked,
       forwarded,
+      cancelled,
       due: tokens.due ?? defaults.due,
       priority: tokens.priority ?? defaults.priority,
       waiting: tokens.waiting,
@@ -306,6 +313,74 @@ export function parseTasksFromBody(body: string, ctx: ParseTasksContext): VaultT
   }
 
   return tasks
+}
+
+// ---------------------------------------------------------------------------
+// File tasks (TaskNotes-style: one task per note, metadata in frontmatter)
+// ---------------------------------------------------------------------------
+
+/** The frontmatter tag that marks a whole note as a task (TaskNotes
+ *  convention, interoperable with TaskForge / Obsidian TaskNotes). */
+export const TASK_FILE_TAG = 'task'
+
+/** Frontmatter `status:` values treated as complete (checked). */
+const DONE_STATUSES = new Set(['done', 'complete', 'completed', 'x'])
+
+/** Frontmatter `status:` values treated as cancelled — intentionally abandoned
+ *  (#450). Kept out of the active/done buckets, collected under Cancelled. */
+export const CANCELLED_STATUSES = new Set(['cancelled', 'canceled'])
+
+function asArray(v: string | string[] | undefined): string[] {
+  if (v == null) return []
+  return Array.isArray(v) ? v : [v]
+}
+
+function firstScalar(v: string | string[] | undefined): string | undefined {
+  if (v == null) return undefined
+  return Array.isArray(v) ? v[0] : v
+}
+
+/**
+ * Parse a whole-note "file task" from `body`, or return null when the note is
+ * not a task file (its frontmatter `tags` don't include `task`). All metadata
+ * comes from frontmatter; the note body is free-form notes about the task. This
+ * is emitted *in addition* to any inline `- [ ]` checkboxes in the same body
+ * (which act as subtasks), each keeping its own id.
+ */
+export function parseTaskFile(body: string, ctx: ParseTasksContext): VaultTask | null {
+  const normalized = body.replace(/\r\n/g, '\n')
+  const m = normalized.match(FRONTMATTER_RE)
+  if (!m) return null
+  const fm = parseFrontmatterFields(m[1])
+
+  const tags = asArray(fm.tags).map((t) => t.replace(/^#/, '').toLowerCase())
+  if (!tags.includes(TASK_FILE_TAG)) return null
+
+  const status = (firstScalar(fm.status) ?? 'open').toLowerCase()
+  const title = firstScalar(fm.title)?.trim() || ctx.title
+
+  return {
+    id: `${ctx.path}#task`,
+    sourcePath: ctx.path,
+    noteTitle: ctx.title,
+    noteFolder: ctx.folder,
+    lineNumber: 0,
+    taskIndex: -1,
+    rawText: '',
+    content: title,
+    checked: DONE_STATUSES.has(status),
+    forwarded: false,
+    cancelled: CANCELLED_STATUSES.has(status),
+    due: normalizeDueDate(firstScalar(fm.due)),
+    priority: normalizePriority(firstScalar(fm.priority)),
+    waiting: status === 'waiting',
+    fields: { status },
+    status,
+    tags: tags.filter((t) => t !== TASK_FILE_TAG),
+    kind: 'file',
+    scheduled: normalizeDueDate(firstScalar(fm.scheduled)),
+    completedDate: normalizeDueDate(firstScalar(fm.completeddate))
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -329,9 +404,14 @@ export function groupTasks(tasks: VaultTask[], today: Date): VaultTaskGroups {
   const waiting: VaultTask[] = []
   const done: VaultTask[] = []
   const forwarded: VaultTask[] = []
+  const cancelled: VaultTask[] = []
   let overdueCount = 0
 
   for (const task of tasks) {
+    if (task.cancelled) {
+      cancelled.push(task)
+      continue
+    }
     if (task.forwarded) {
       forwarded.push(task)
       continue
@@ -384,8 +464,12 @@ export function groupTasks(tasks: VaultTask[], today: Date): VaultTaskGroups {
     return a.taskIndex - b.taskIndex
   })
   forwarded.sort(byDueThenPath)
+  cancelled.sort((a, b) => {
+    if (a.sourcePath !== b.sourcePath) return a.sourcePath < b.sourcePath ? -1 : 1
+    return a.taskIndex - b.taskIndex
+  })
 
-  return { today: today_, upcoming, waiting, done, forwarded, overdueCount }
+  return { today: today_, upcoming, waiting, done, forwarded, cancelled, overdueCount }
 }
 
 /** Helper for UIs that need to know whether a task is overdue relative to now. */
@@ -401,13 +485,25 @@ export function toIsoDateLocal(d: Date): string {
   return toIsoDate(d)
 }
 
+/**
+ * True when a task still counts as open on the calendar surfaces: not done and
+ * not cancelled. `@waiting` tasks stay open — they keep their date (#236) — and
+ * so does a forwarded `[>]` origin: its copy in the target note is written
+ * without the `due:` token, so dropping the origin would take the task off the
+ * calendar entirely. A `[-]` cancelled task is abandoned outright, so it has no
+ * business sitting next to actionable ones. (#450, #476)
+ */
+export function isTaskOpen(task: VaultTask): boolean {
+  return !task.checked && !task.cancelled
+}
+
 /** Tasks scheduled for the given local date (ISO YYYY-MM-DD). Excludes done
- *  (checked) tasks but KEEPS `@waiting` tasks, so a waiting task with a due date
- *  still appears on its date — matching `bucketTasksByDueDate` and the Tasks
- *  calendar. Without this the sidepanel calendar under-counted `@waiting` tasks
- *  the Tasks calendar showed. (#311, complementing #236) */
+ *  (checked) and cancelled tasks but KEEPS `@waiting` tasks, so a waiting task
+ *  with a due date still appears on its date — matching `bucketTasksByDueDate`
+ *  and the Tasks calendar. Without this the sidepanel calendar under-counted
+ *  `@waiting` tasks the Tasks calendar showed. (#311, complementing #236) */
 export function tasksDueOn(tasks: VaultTask[], iso: string): VaultTask[] {
-  return tasks.filter((t) => !t.checked && t.due === iso)
+  return tasks.filter((t) => isTaskOpen(t) && t.due === iso)
 }
 
 /**
@@ -434,16 +530,16 @@ export function inferDailyTaskDueDates(
   return changed ? out : tasks
 }
 
-/** Bucket tasks by `due` ISO date. Done (checked) tasks are skipped; waiting
- *  tasks are kept so a `@waiting` task with a due date still appears on the
- *  calendar on its date (#236). Tasks without a due date land in the special
- *  `'unscheduled'` key. */
+/** Bucket tasks by `due` ISO date. Done (checked) and cancelled tasks are
+ *  skipped (see `isTaskOpen`); waiting tasks are kept so a `@waiting` task with
+ *  a due date still appears on the calendar on its date (#236). Tasks without a
+ *  due date land in the special `'unscheduled'` key. */
 export function bucketTasksByDueDate(
   tasks: VaultTask[]
 ): Map<string, VaultTask[]> {
   const map = new Map<string, VaultTask[]>()
   for (const task of tasks) {
-    if (task.checked) continue
+    if (!isTaskOpen(task)) continue
     const key = task.due ?? 'unscheduled'
     const list = map.get(key)
     if (list) list.push(task)

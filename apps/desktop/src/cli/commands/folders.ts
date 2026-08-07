@@ -4,13 +4,8 @@
  * treats `folder/sub` as the canonical reference.
  */
 
-import {
-  createFolder,
-  deleteFolder,
-  listFolders,
-  renameFolder,
-  type NoteFolder
-} from '../../mcp/vault-ops.js'
+import type { NoteFolder } from '../../mcp/vault-ops.js'
+import type { VaultBackend } from '../backend.js'
 import { getBool, getString, type ParsedArgs } from '../args.js'
 import { emitJson, emitLine, emitOk } from '../format.js'
 
@@ -33,8 +28,8 @@ function splitFolderPath(spec: string): FolderRef {
   return { folder: head as NoteFolder, subpath: rest.join('/') }
 }
 
-export async function cmdFolderList(vault: string, args: ParsedArgs): Promise<void> {
-  const folders = await listFolders(vault)
+export async function cmdFolderList(vault: VaultBackend, args: ParsedArgs): Promise<void> {
+  const folders = await vault.listFolders()
   if (getBool(args, 'json')) {
     emitJson(folders)
     return
@@ -48,12 +43,12 @@ export async function cmdFolderList(vault: string, args: ParsedArgs): Promise<vo
   }
 }
 
-export async function cmdFolderCreate(vault: string, args: ParsedArgs): Promise<void> {
+export async function cmdFolderCreate(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const target = args.positionals[0] ?? getString(args, 'path')
   if (!target) throw new Error('zn folder create requires a folder path like inbox/Work.')
   const ref = splitFolderPath(target)
   if (!ref.subpath) throw new Error('Cannot create the top-level folder; pick a subpath.')
-  await createFolder(vault, ref.folder, ref.subpath)
+  await vault.createFolder(ref.folder, ref.subpath)
   if (getBool(args, 'json')) {
     emitJson({ ok: true, folder: ref.folder, subpath: ref.subpath })
     return
@@ -61,7 +56,7 @@ export async function cmdFolderCreate(vault: string, args: ParsedArgs): Promise<
   emitOk(`Created ${ref.folder}/${ref.subpath}`)
 }
 
-export async function cmdFolderRename(vault: string, args: ParsedArgs): Promise<void> {
+export async function cmdFolderRename(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const oldPath = args.positionals[0] ?? getString(args, 'path')
   const to = getString(args, 'to')
   if (!oldPath) throw new Error('zn folder rename requires a folder path.')
@@ -76,7 +71,7 @@ export async function cmdFolderRename(vault: string, args: ParsedArgs): Promise<
   if (!oldRef.subpath || !newRef.subpath) {
     throw new Error('Both old and new folder paths must include a subpath.')
   }
-  const next = await renameFolder(vault, oldRef.folder, oldRef.subpath, newRef.subpath)
+  const next = await vault.renameFolder(oldRef.folder, oldRef.subpath, newRef.subpath)
   if (getBool(args, 'json')) {
     emitJson({ ok: true, folder: oldRef.folder, subpath: next })
     return
@@ -84,7 +79,7 @@ export async function cmdFolderRename(vault: string, args: ParsedArgs): Promise<
   emitOk(`Renamed to ${oldRef.folder}/${next}`)
 }
 
-export async function cmdFolderDelete(vault: string, args: ParsedArgs): Promise<void> {
+export async function cmdFolderDelete(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const target = args.positionals[0] ?? getString(args, 'path')
   if (!target) throw new Error('zn folder delete requires a folder path.')
   if (!getBool(args, 'yes')) {
@@ -94,7 +89,7 @@ export async function cmdFolderDelete(vault: string, args: ParsedArgs): Promise<
   }
   const ref = splitFolderPath(target)
   if (!ref.subpath) throw new Error('Cannot delete a top-level folder.')
-  await deleteFolder(vault, ref.folder, ref.subpath)
+  await vault.deleteFolder(ref.folder, ref.subpath)
   if (getBool(args, 'json')) {
     emitJson({ ok: true, folder: ref.folder, subpath: ref.subpath })
     return

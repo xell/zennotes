@@ -14,13 +14,14 @@ function task(sourcePath: string, taskIndex: number): VaultTask {
     content: `${sourcePath}:${taskIndex}`,
     checked: false,
     forwarded: false,
+    cancelled: false,
     waiting: false,
     tags: []
   }
 }
 
 function groups(today: VaultTask[]): VaultTaskGroups {
-  return { today, upcoming: [], waiting: [], done: [], forwarded: [], overdueCount: 0 }
+  return { today, upcoming: [], waiting: [], done: [], forwarded: [], cancelled: [], overdueCount: 0 }
 }
 
 describe('applyFileOrder', () => {

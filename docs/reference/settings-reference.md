@@ -254,23 +254,24 @@ PDF export uses the rendered Markdown view rather than raw Markdown source, and 
 
 ## CLI and launcher integrations
 
-Desktop builds expose a `CLI` settings page for installing the `zen` command-line companion.
+Desktop builds expose a `CLI` settings page for installing the `zn` command-line companion.
 
 ### Install Command-Line Tool
 
-The installer creates a symlink named `zen` that points to the wrapper bundled with the app.
-Packaged desktop releases include the CLI runtime dependencies, so `zen`, `zen mcp`, and launcher integrations use the app bundle instead of depending on the development build directory.
+The installer creates a symlink named `zn` that points to the wrapper bundled with the app.
+The command was named `zen` before 2.10.0; it was renamed because `zen` collides with Zen Browser on PATH. Installing `zn` removes a ZenNotes-managed `zen` symlink if one is left over.
+Packaged desktop releases include the CLI runtime dependencies, so `zn`, `zn mcp`, and launcher integrations use the app bundle instead of depending on the development build directory.
 
 Install behavior:
 
 - prefers a user-writable directory that is already on PATH
 - can create `~/.local/bin` or `~/bin` and show a PATH snippet when needed
 - falls back to `/usr/local/bin` with an admin prompt only when no user-writable target is available
-- refuses to overwrite an unmanaged `zen` binary
+- refuses to overwrite an unmanaged `zn` binary
 
 The status panel shows:
 
-- whether `zen` is installed
+- whether `zn` is installed
 - the current or planned install path
 - whether the install is managed by ZenNotes
 - any PATH command you need to run after install
@@ -284,12 +285,52 @@ For note paths with spaces, quote the path or use `--path`.
 Examples:
 
 ```bash
-zen list --tag idea
-zen read "inbox/Project.md"
-zen read --path "hellointerview/system design.md"
-zen search "deadline" --json
-zen mcp
+zn list --tag idea
+zn read "inbox/Project.md"
+zn read --path "hellointerview/system design.md"
+zn search "deadline" --json
+zn mcp
 ```
+
+### Choosing a vault or a server
+
+Every command runs against one vault: a folder on this machine, or a vault behind a self-hosted ZenNotes server.
+
+| Flag | Meaning |
+| --- | --- |
+| `--vault <name\|path>` | A local vault by name or directory, or a saved server by name |
+| `--server <name\|url>` | A ZenNotes server, by saved name or URL. Wins over `--vault` |
+| `--token <token>` | Auth token for `--server`, overriding a saved one |
+
+Server names come from the same profiles the desktop app saves under Settings → Vault → "Connect to Server...", so a server set up in the app is immediately usable from the terminal. `zn vault list` shows local vaults and servers together.
+
+A bare `host:port` gets `http://` filled in. If a local vault and a server share a name, `--vault` reports the ambiguity instead of choosing.
+
+Environment equivalents, for CI and headless machines where nothing should be written to disk:
+
+| Variable | Meaning |
+| --- | --- |
+| `ZENNOTES_VAULT` | Default vault root when `--vault` is not given |
+| `ZENNOTES_SERVER` | Default server when neither `--vault` nor `--server` is given |
+| `ZENNOTES_REMOTE_TOKEN` | Auth token for a server |
+| `ZENNOTES_CONFIG_DIR` | Override the ZenNotes config directory |
+
+Token precedence is `--token`, then `ZENNOTES_REMOTE_TOKEN`, then the saved profile.
+
+```bash
+zn list --server home
+zn capture "from my laptop" --server home --tag work
+zn list --server 192.168.1.10:7878 --token "$TOKEN"
+
+ZENNOTES_SERVER=notes.example.com:7878 ZENNOTES_REMOTE_TOKEN="$TOKEN" zn capture "from CI"
+```
+
+Differences against a server:
+
+- `zn open` hands file paths to the desktop app, so it needs a local vault. Use `zn read` to print a remote note.
+- `zn search` runs the server's search engine rather than the CLI's own scan, so ordering can differ. `--limit` is applied after the server responds.
+
+See [Connect Desktop to a Remote ZenNotes Server](../how-to/connect-desktop-to-remote-server.md) for the full guide.
 
 ### Raycast
 
@@ -297,7 +338,7 @@ On macOS, the Raycast integration is installed from the `CLI` settings page.
 It requires:
 
 - Raycast installed on the Mac
-- the ZenNotes CLI installed as `zen`
+- the ZenNotes CLI installed as `zn`
 - Node.js 22.14 or newer
 - npm 7 or newer
 
@@ -305,7 +346,7 @@ ZenNotes does not require the Raycast Store version. The app copies its bundled
 Raycast extension source into app data, installs dependencies, builds the local
 extension, and imports it into Raycast.
 
-The Raycast command calls `zen list --json`, then opens selected notes through
+The Raycast command calls `zn list --json`, then opens selected notes through
 `zennotes://open` or `zennotes://open-window`.
 
 Raycast actions include:

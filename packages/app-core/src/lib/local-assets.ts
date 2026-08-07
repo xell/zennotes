@@ -1,6 +1,13 @@
 import { useStore } from '../store'
 import { externalLinkUrl } from './internal-links'
+import { openExternalFileLink } from './external-file-link'
 import { isExcalidrawPath, isObsidianExcalidrawPath } from '@shared/excalidraw'
+
+/** Absolute on-disk path for a vault-relative asset, for opening it in the OS
+ *  default app. `path.resolve` in the desktop handler normalizes the join. */
+function vaultAssetAbsolutePath(vaultRoot: string, assetVaultRel: string): string {
+  return `${vaultRoot.replace(/\/+$/, '')}/${assetVaultRel}`
+}
 
 const IMAGE_EXTENSIONS = new Set([
   '.apng',
@@ -22,6 +29,11 @@ export type LocalAssetKind = 'image' | 'pdf' | 'audio' | 'video' | 'html' | 'tex
 
 function stripQueryAndHash(href: string): string {
   return href.split('#')[0]?.split('?')[0] ?? href
+}
+
+export function hrefFragment(href: string): string {
+  const hashIdx = href.indexOf('#')
+  return hashIdx >= 0 ? href.slice(hashIdx) : ''
 }
 
 function decodeHrefPath(value: string): string {
@@ -129,7 +141,8 @@ export function resolveAssetVaultRelativePath(
 
   const noteDir = notePath.includes('/') ? notePath.slice(0, notePath.lastIndexOf('/')) : ''
   const decodedHref = decodeHrefPath(trimmed)
-  let target = decodedHref.startsWith('/')
+  const isAbsolute = decodedHref.startsWith('/')
+  let target = isAbsolute
     ? decodedHref.replace(/^\/+/, '')
     : noteDir
       ? posixJoin(noteDir, decodedHref)
@@ -139,6 +152,27 @@ export function resolveAssetVaultRelativePath(
 
   const assets = useStore.getState().assetFiles
   if (assets.some((asset) => asset.path === target)) return target
+
+  // A wikilink embed (`![[assets/img.png]]`) — and any path written relative
+  // to the vault root — resolves from the root, not the note's folder, which
+  // is what Obsidian does with wikilinks. When the note-relative join above
+  // didn't hit an asset, try the path as vault-root-relative before the fuzzy
+  // basename search below. This is what makes a pasted `![[assets/img.png]]`
+  // render from a note in a subfolder (e.g. a daily note under
+  // `Daily Notes/`), and it's more precise than the basename fallback when
+  // several files share a name. (#459)
+  if (!isAbsolute && noteDir) {
+    const rootTarget = posixNormalize(decodedHref)
+    if (
+      rootTarget &&
+      rootTarget !== target &&
+      !rootTarget.startsWith('../') &&
+      rootTarget !== '..' &&
+      assets.some((asset) => asset.path === rootTarget)
+    ) {
+      return rootTarget
+    }
+  }
 
   const targetBase = target.split('/').filter(Boolean).pop()?.toLowerCase()
   if (!targetBase) return null
@@ -399,7 +433,7 @@ function buildEmbed(
   if (kind === 'pdf') {
     const frame = document.createElement('iframe')
     frame.className = 'local-asset-embed-frame'
-    frame.src = url
+    frame.src = url + hrefFragment(href)
     frame.title = label
     figure.append(frame)
     return figure
@@ -421,6 +455,64 @@ function buildEmbed(
   video.controls = true
   video.preload = 'metadata'
   figure.append(video)
+  return figure
+}
+
+// Paperclip — denotes a non-previewable attachment. Static markup (no user
+// input), so `innerHTML` is safe here.
+const ATTACHMENT_ICON_SVG =
+  '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>'
+
+/**
+ * A compact chip that denotes a non-previewable attachment (`.tldraw`, `.zip`,
+ * unknown types) embedded with image syntax `![](file.ext)`. Reused by both the
+ * reading preview and the editor's live-preview widget so the two match. When
+ * `onOpen` is given the chip is a button that runs it; otherwise it's a plain
+ * link to the resolved asset URL. (#463)
+ */
+export function buildAttachmentChip(
+  resolvedUrl: string,
+  rawHref: string,
+  label: string,
+  onOpen?: (() => void) | null
+): HTMLElement {
+  const figure = document.createElement('figure')
+  figure.className = 'local-file-attachment not-prose'
+  figure.dataset.localAssetUrl = resolvedUrl
+  figure.dataset.localAssetKind = 'file'
+  figure.dataset.localAssetHref = rawHref
+
+  const action = onOpen ? document.createElement('button') : document.createElement('a')
+  action.className = 'local-file-attachment-button'
+  if (onOpen) {
+    ;(action as HTMLButtonElement).type = 'button'
+    action.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      onOpen()
+    })
+  } else {
+    const link = action as HTMLAnchorElement
+    link.href = resolvedUrl
+    link.target = '_blank'
+    link.rel = 'noreferrer'
+  }
+
+  const icon = document.createElement('span')
+  icon.className = 'local-file-attachment-icon'
+  icon.innerHTML = ATTACHMENT_ICON_SVG
+
+  const name = document.createElement('span')
+  name.className = 'local-file-attachment-name'
+  name.textContent = label
+
+  const openHint = document.createElement('span')
+  openHint.className = 'local-file-attachment-open'
+  openHint.setAttribute('aria-hidden', 'true')
+  openHint.textContent = '↗'
+
+  action.append(icon, name, openHint)
+  figure.append(action)
   return figure
 }
 
@@ -499,6 +591,49 @@ export function enhanceLocalAssetNodes(
     const resolved = resolveLocalAssetUrl(vaultRoot, notePath, raw)
     if (!resolved) return
     const assetVaultRel = resolveAssetVaultRelativePath(vaultRoot, notePath, raw)
+
+    // #463: a non-image file embedded with image syntax (`![](file.tldraw)`)
+    // is a broken <img> with no indication it's an attachment. Denote it — a
+    // chip when it's on its own line, an inline link otherwise — so it never
+    // renders blank. Real images fall through to the embed path below;
+    // excalidraw keeps its own dedicated embed handling.
+    const imgKind = classifyLocalAssetHref(raw)
+    if (imgKind && imgKind !== 'image' && imgKind !== 'excalidraw') {
+      const label = localAssetLabel(raw, 'Attachment')
+      // A non-previewable file opens in the OS default app (a `.tldraw` in its
+      // editor, a `.zip` in the archiver) — an in-app asset tab can't render
+      // it, which read as "nothing happened" when clicked. (#463)
+      const openAsset =
+        vaultRoot && assetVaultRel
+          ? () => void openExternalFileLink(vaultAssetAbsolutePath(vaultRoot, assetVaultRel))
+          : null
+      const standalone = isStandaloneImageParagraph(img)
+      if (standalone && standalone.dataset.assetEmbed !== 'true') {
+        standalone.dataset.assetEmbed = 'true'
+        standalone.replaceWith(buildAttachmentChip(resolved, raw, label, openAsset))
+      } else {
+        const link = document.createElement('a')
+        link.className = 'local-file-attachment-inline'
+        link.textContent = label
+        link.href = resolved
+        link.dataset.localAssetUrl = resolved
+        link.dataset.localAssetKind = 'file'
+        link.dataset.localAssetHref = raw
+        if (openAsset) {
+          link.addEventListener('click', (event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            openAsset()
+          })
+        } else {
+          link.target = '_blank'
+          link.rel = 'noreferrer'
+        }
+        img.replaceWith(link)
+      }
+      return
+    }
+
     img.src = resolved
     img.loading = 'lazy'
     // Sized here for an image rendering on its own; `buildImageEmbed` moves the
@@ -534,7 +669,7 @@ export function enhanceLocalAssetNodes(
 
     const assetVaultRel = resolveAssetVaultRelativePath(vaultRoot, notePath, raw)
     const kind = classifyLocalAssetHref(raw) ?? 'file'
-    anchor.href = resolved
+    anchor.href = resolved + hrefFragment(raw)
     anchor.dataset.localAssetUrl = resolved
     anchor.dataset.localAssetKind = kind
     anchor.dataset.localAssetHref = raw

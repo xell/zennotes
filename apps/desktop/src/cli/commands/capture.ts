@@ -7,11 +7,11 @@
  *   zn capture "Quick idea about X"
  */
 
-import { createNote } from '../../mcp/vault-ops.js'
+import type { VaultBackend } from '../backend.js'
 import { getBool, getMany, getString, readStdin, type ParsedArgs } from '../args.js'
 import { emitJson, emitLine, emitOk, truncate } from '../format.js'
 
-export async function cmdCapture(vault: string, args: ParsedArgs): Promise<void> {
+export async function cmdCapture(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const positional = args.positionals.join(' ').trim()
   const stdin = process.stdin.isTTY ? '' : await readStdin()
   const body = positional || stdin.trim()
@@ -29,7 +29,7 @@ export async function cmdCapture(vault: string, args: ParsedArgs): Promise<void>
   const titleOverride = getString(args, 'title')
   const title = titleOverride ?? deriveTitle(body)
   const composed = composeBody(title, body, tags)
-  const meta = await createNote(vault, folder, title, '', composed)
+  const meta = await vault.createNote(folder, title, '', composed)
 
   if (getBool(args, 'json')) {
     emitJson(meta)

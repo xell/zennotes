@@ -75,6 +75,10 @@ import {
 } from "@shared/overrides";
 import { hasSystemFontAccess, listSystemFonts } from "../lib/system-fonts";
 import {
+  dropdownRectForElement,
+  type DropdownRect,
+} from "../lib/dropdown-placement";
+import {
   DEFAULT_SYSTEM_FOLDER_LABELS,
   getSystemFolderLabel,
 } from "../lib/system-folder-labels";
@@ -452,8 +456,26 @@ export function SettingsModal(): JSX.Element {
   );
   const hideActiveLineMarkup = useStore((s) => s.hideActiveLineMarkup);
   const setHideActiveLineMarkup = useStore((s) => s.setHideActiveLineMarkup);
+  const completedTaskStyle = useStore((s) => s.completedTaskStyle);
+  const setCompletedTaskStyle = useStore((s) => s.setCompletedTaskStyle);
+  const mathRenderer = useStore((s) => s.mathRenderer);
+  const typstTagPreambles = useStore((s) => s.typstTagPreambles);
+  const setTypstTagPreambles = useStore((s) => s.setTypstTagPreambles);
+  const setMathRenderer = useStore((s) => s.setMathRenderer);
+  const looseMathDelimiters = useStore((s) => s.looseMathDelimiters);
+  const setLooseMathDelimiters = useStore((s) => s.setLooseMathDelimiters);
+  const keepViewModeAcrossNotes = useStore((s) => s.keepViewModeAcrossNotes);
+  const setKeepViewModeAcrossNotes = useStore(
+    (s) => s.setKeepViewModeAcrossNotes,
+  );
   const markdownSnippets = useStore((s) => s.markdownSnippets);
   const setMarkdownSnippets = useStore((s) => s.setMarkdownSnippets);
+  const autoPairs = useStore((s) => s.autoPairs);
+  const setAutoPairs = useStore((s) => s.setAutoPairs);
+  const autoPairQuotesInProse = useStore((s) => s.autoPairQuotesInProse);
+  const setAutoPairQuotesInProse = useStore(
+    (s) => s.setAutoPairQuotesInProse,
+  );
   const tabsEnabled = useStore((s) => s.tabsEnabled);
   const setTabsEnabled = useStore((s) => s.setTabsEnabled);
   const wrapTabs = useStore((s) => s.wrapTabs);
@@ -648,6 +670,8 @@ export function SettingsModal(): JSX.Element {
   const setAssetImageExts = useStore((s) => s.setAssetImageExts);
   const showSidebarChevrons = useStore((s) => s.showSidebarChevrons);
   const setShowSidebarChevrons = useStore((s) => s.setShowSidebarChevrons);
+  const nestedTags = useStore((s) => s.nestedTags);
+  const setNestedTags = useStore((s) => s.setNestedTags);
   const pdfExportUseTheme = useStore((s) => s.pdfExportUseTheme);
   const setPdfExportUseTheme = useStore((s) => s.setPdfExportUseTheme);
   const appUpdateState = useAppUpdateState();
@@ -1160,18 +1184,27 @@ export function SettingsModal(): JSX.Element {
     return "Current runtime backend: Built-in, because no external search tool is available.";
   }, [vaultTextSearchBackend, vaultTextSearchCapabilities]);
 
+  // Dismiss Settings and hand keyboard focus back to the editor so vim motions
+  // and typing work immediately, matching how the palette modals close. Used by
+  // the explicit dismiss actions (Esc, backdrop, Done) — not the "learn how"
+  // link, which navigates to the Help view and manages its own focus. (#415)
+  const closeSettings = useCallback((): void => {
+    setSettingsOpen(false);
+    focusEditorNormalMode();
+  }, [setSettingsOpen]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       // Don't close Settings on Esc while a nested editor/modal is open —
       // that would discard in-progress work (e.g. a template draft). Those
       // modals handle Esc themselves (Vim normal mode, etc.).
       if (e.key === "Escape" && !templateEditor && !editingRemoteProfile) {
-        setSettingsOpen(false);
+        closeSettings();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setSettingsOpen, templateEditor, editingRemoteProfile]);
+  }, [closeSettings, templateEditor, editingRemoteProfile]);
 
   // Apply Vim key mappings when Settings closes (the modal unmounts on any
   // close — Done, Esc, backdrop), rather than churning Vim maps on every
@@ -1286,6 +1319,13 @@ export function SettingsModal(): JSX.Element {
           description:
             "Which file extensions show the document or image icon in the sidebar.",
           keywords: ["extension", "icon", "pdf", "image", "attachment", "file type"],
+        },
+        {
+          id: "nested-tags",
+          title: "Nested tags (tree view)",
+          description:
+            "Show /-separated tags as a collapsible tree in the sidebar and Tags view instead of a flat list.",
+          keywords: ["hierarchical", "tree", "tags", "nested", "hierarchy"],
         },
       ],
       content: (
@@ -1693,6 +1733,13 @@ export function SettingsModal(): JSX.Element {
               settingId="sidebar-arrows"
               onChange={setShowSidebarChevrons}
             />
+            <ToggleRow
+              label="Nested tags (tree view)"
+              description="Show /-separated tags (like project/compiler) as a collapsible tree in the sidebar and Tags view. Turn off for a flat list of full tag names."
+              value={nestedTags}
+              settingId="nested-tags"
+              onChange={setNestedTags}
+            />
           </Section>
 
           <Section
@@ -1701,7 +1748,7 @@ export function SettingsModal(): JSX.Element {
           >
             <ToggleRow
               label="Use theme for PDF export"
-              description="On: exported PDFs use your current theme — colors and dark/light, including custom themes. Off: a clean light theme, best for printing on paper."
+              description="On: exported PDFs match your preview, your current theme (colors and dark/light, including custom themes) plus your CSS snippets and color tweaks. Off: a clean light theme, best for printing on paper."
               value={pdfExportUseTheme}
               settingId="pdf-export-use-theme"
               onChange={setPdfExportUseTheme}
@@ -1836,6 +1883,39 @@ export function SettingsModal(): JSX.Element {
           ],
         },
         {
+          id: "math-renderer",
+          title: "Math renderer",
+          description:
+            "Choose KaTeX or Typst to typeset $…$ and $$…$$ math in the editor and reading view.",
+          keywords: [
+            "math",
+            "katex",
+            "typst",
+            "latex",
+            "equation",
+            "formula",
+            "renderer",
+            "typesetter",
+          ],
+        },
+        {
+          id: "loose-math-delimiters",
+          title: "Relaxed $$ math delimiters",
+          description:
+            "Render $$…$$ display math even with text before or after the fences, like LaTeX.",
+          keywords: [
+            "math",
+            "display",
+            "dollar",
+            "delimiter",
+            "fence",
+            "inline",
+            "latex",
+            "relaxed",
+            "loose",
+          ],
+        },
+        {
           id: "markdown-overrides",
           title: "Markdown snippets",
           description:
@@ -1849,6 +1929,30 @@ export function SettingsModal(): JSX.Element {
             "markdown",
             "completion",
           ],
+        },
+        {
+          id: "auto-pairs",
+          title: "Auto-pair brackets and delimiters",
+          description:
+            "Insert matching [] () and {} as you type; quotes pair in Markdown code.",
+          keywords: [
+            "auto pair",
+            "autopair",
+            "parentheses",
+            "braces",
+            "brackets",
+            "quotes",
+            "code blocks",
+            "completion",
+            "vim",
+          ],
+        },
+        {
+          id: "auto-pair-quotes-in-prose",
+          title: "Auto-pair quotes in prose",
+          description:
+            "Also insert matching quotes outside Markdown code.",
+          keywords: ["auto pair", "autopair", "quotes", "prose", "code blocks"],
         },
         {
           id: "note-tabs",
@@ -2184,6 +2288,8 @@ export function SettingsModal(): JSX.Element {
             "render-tables",
             "hide-active-line-markup",
             "markdown-overrides",
+            "auto-pairs",
+            "auto-pair-quotes-in-prose",
             "note-tabs",
             "wrap-note-tabs",
             "word-wrap",
@@ -2228,6 +2334,53 @@ export function SettingsModal(): JSX.Element {
                     />
                   </>
                 )}
+                <SegmentedRow
+                  label="Completed task style"
+                  description="How a checked task's text looks in the editor and preview — strike it through, gray it out, or both. The checkbox always shows checked."
+                  value={completedTaskStyle}
+                  settingId="completed-task-style"
+                  options={[
+                    { value: "none", label: "None" },
+                    { value: "strikethrough", label: "Strikethrough" },
+                    { value: "gray", label: "Gray" },
+                    { value: "gray-strikethrough", label: "Both" },
+                  ]}
+                  onChange={(next) => setCompletedTaskStyle(next)}
+                />
+                <SegmentedRow
+                  label="Math renderer"
+                  description="Which typesetter draws $…$ and $$…$$ math, in both the editor and the reading view. KaTeX reads the math as LaTeX; Typst reads it as Typst markup, so switching reinterprets existing formulas, and each note's math is written for whichever engine you pick."
+                  value={mathRenderer}
+                  settingId="math-renderer"
+                  options={[
+                    { value: "katex", label: "KaTeX" },
+                    { value: "typst", label: "Typst" },
+                  ]}
+                  onChange={(next) => setMathRenderer(next)}
+                />
+                {mathRenderer === "typst" && (
+                  <ToggleRow
+                    label="Typst definitions from tags"
+                    description="Prepend shared Typst definitions to a note's formulas based on its tags, so the same notation can mean different things per subject. Write a preamble as an ordinary note in a folder named `typst`, titled with the tag path in dots — `typst/physics.md` applies to #physics, `typst/physics.mechanics.md` to #physics/mechanics, layered general to specific. Preamble notes sync and are editable like any other note."
+                    value={typstTagPreambles}
+                    settingId="typst-tag-preambles"
+                    onChange={setTypstTagPreambles}
+                  />
+                )}
+                <ToggleRow
+                  label="Relaxed $$ math delimiters"
+                  description="Render a $$…$$ display block even when text sits before the opening $$ (`Note: $$…$$`) or after the closing $$ (`$$…$$ done`), like LaTeX. Off by default; the surrounding text moves to its own line in the reading view, while the editor keeps showing the raw source. Leave off if you write literal $$ in prose."
+                  value={looseMathDelimiters}
+                  settingId="loose-math-delimiters"
+                  onChange={setLooseMathDelimiters}
+                />
+                <ToggleRow
+                  label="Keep view mode when switching notes"
+                  description="Stay in the current Edit / Split / Preview mode when you open another note, instead of each note reopening in its own last mode. Handy if you like reading in Preview."
+                  value={keepViewModeAcrossNotes}
+                  settingId="keep-view-mode"
+                  onChange={setKeepViewModeAcrossNotes}
+                />
                 <ToggleRow
                   label="Markdown snippets"
                   description="Auto-close markdown as you type: ** / __ / ~~ / ` / == / [[ / %% then Space wrap the cursor, and ``` / ~~~ / $$ then Enter expand a fenced block. In Vim mode this only applies in insert mode."
@@ -2235,6 +2388,22 @@ export function SettingsModal(): JSX.Element {
                   settingId="markdown-overrides"
                   onChange={setMarkdownSnippets}
                 />
+                <ToggleRow
+                  label="Auto-pair brackets and delimiters"
+                  description="Insert matching [] () and {} as you type, wrap selected text, and skip over a closing delimiter that is already present. Quotes pair inside inline code and fenced code blocks. In Vim mode this only applies in insert mode."
+                  value={autoPairs}
+                  settingId="auto-pairs"
+                  onChange={setAutoPairs}
+                />
+                {autoPairs && (
+                  <ToggleRow
+                    label="Auto-pair quotes in prose"
+                    description={'Also insert matching "" and \'\' outside inline code and fenced code blocks.'}
+                    value={autoPairQuotesInProse}
+                    settingId="auto-pair-quotes-in-prose"
+                    onChange={setAutoPairQuotesInProse}
+                  />
+                )}
                 <ToggleRow
                   label="Note tabs"
                   description="Open notes in tabs and allow split-friendly tab workflows. Turn off to keep the simpler single-note behavior."
@@ -3378,8 +3547,8 @@ export function SettingsModal(): JSX.Element {
                 />
               </Section>
               <Section
-                title="New Drawings & Databases"
-                description="Where new Excalidraw drawings and databases are created, so they don't clutter the root of your vault."
+                title="New Drawings, Databases & Tasks"
+                description="Where new Excalidraw drawings, databases, and task files are created, so they don't clutter the root of your vault."
               >
                 <SegmentedRow
                   label="Default drawings location"
@@ -3443,6 +3612,39 @@ export function SettingsModal(): JSX.Element {
                       void persistVaultSettings({
                         ...vaultSettings,
                         databasesLocation: { mode: "folder", folder: next ?? "" },
+                      })
+                    }
+                  />
+                )}
+                <SegmentedRow
+                  label="Default tasks location"
+                  description="Where new task files (from `+ New task`, the `a` key, `:newtask`, or the command palette) are created. `New Task in Folder…` and `:newtask <folder>` still override this per task."
+                  value={vaultSettings.tasksLocation?.mode ?? "primary"}
+                  settingId="tasks-location"
+                  options={[
+                    { value: "primary", label: "Primary location" },
+                    { value: "active-note", label: "Active note's folder" },
+                    { value: "folder", label: "Specific folder" },
+                  ]}
+                  onChange={(mode) =>
+                    void persistVaultSettings({
+                      ...vaultSettings,
+                      tasksLocation: { ...vaultSettings.tasksLocation, mode },
+                    })
+                  }
+                />
+                {vaultSettings.tasksLocation?.mode === "folder" && (
+                  <TextInputRow
+                    label="Tasks folder"
+                    description="Vault-relative subfolder for new task files, e.g. `Tasks` or `Projects/Inbox`."
+                    value={vaultSettings.tasksLocation?.folder ?? ""}
+                    placeholder="Tasks"
+                    settingId="tasks-folder"
+                    commitOnBlur
+                    onChange={(next) =>
+                      void persistVaultSettings({
+                        ...vaultSettings,
+                        tasksLocation: { mode: "folder", folder: next ?? "" },
                       })
                     }
                   />
@@ -4627,7 +4829,7 @@ export function SettingsModal(): JSX.Element {
     <>
       <div
         className="fixed inset-0 z-modal flex items-start justify-center bg-black/45 px-4 pt-[7vh] backdrop-blur-md"
-        onClick={() => setSettingsOpen(false)}
+        onClick={() => closeSettings()}
       >
         <div
           ref={ref}
@@ -4791,7 +4993,7 @@ export function SettingsModal(): JSX.Element {
               <Button
                 variant="secondary"
                 size="md"
-                onClick={() => setSettingsOpen(false)}
+                onClick={() => closeSettings()}
                 className="shrink-0"
               >
                 Done
@@ -5769,11 +5971,7 @@ function TemplateSelectRow({
   const [activeIdx, setActiveIdx] = useState(0);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
-  const [rect, setRect] = useState<{
-    left: number;
-    top: number;
-    width: number;
-  } | null>(null);
+  const [rect, setRect] = useState<DropdownRect | null>(null);
 
   // Row 0 is "None (blank note)" (null), then each template in order.
   const items = useMemo<Array<NoteTemplate | null>>(
@@ -5802,18 +6000,14 @@ function TemplateSelectRow({
     return () => window.removeEventListener("mousedown", onDown);
   }, [open]);
 
-  // Position the popover below the trigger; track scroll/resize.
+  // Position the popover below the trigger (flipping above when clipped); track
+  // scroll/resize. Estimate the menu height from the row count (#407).
   useLayoutEffect(() => {
     if (!open) return;
     const update = (): void => {
       const el = buttonRef.current;
       if (!el) return;
-      const r = el.getBoundingClientRect();
-      setRect({
-        left: r.left,
-        top: r.bottom + 4,
-        width: Math.max(260, r.width),
-      });
+      setRect(dropdownRectForElement(el, { estHeight: items.length * 32 + 8 }));
     };
     update();
     window.addEventListener("resize", update);
@@ -5822,7 +6016,7 @@ function TemplateSelectRow({
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
     };
-  }, [open]);
+  }, [open, items.length]);
 
   // Keep the keyboard-highlighted row in view.
   useEffect(() => {
@@ -5921,8 +6115,14 @@ function TemplateSelectRow({
           <div
             id="zen-template-portal"
             role="listbox"
-            className="fixed z-popover flex max-h-[320px] flex-col overflow-hidden rounded-xl border border-paper-300 bg-paper-100 shadow-float"
-            style={{ left: rect.left, top: rect.top, width: rect.width }}
+            className="fixed z-popover flex flex-col overflow-hidden rounded-xl border border-paper-300 bg-paper-100 shadow-float"
+            style={{
+              left: rect.left,
+              top: rect.top,
+              bottom: rect.bottom,
+              width: rect.width,
+              maxHeight: rect.maxHeight,
+            }}
           >
             <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-1">
               {items.map((tpl, idx) => {
@@ -5981,11 +6181,7 @@ function FontRow({
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
-  const [rect, setRect] = useState<{
-    left: number;
-    top: number;
-    width: number;
-  } | null>(null);
+  const [rect, setRect] = useState<DropdownRect | null>(null);
 
   // Reset the search box whenever the popover opens.
   useEffect(() => {
@@ -6023,12 +6219,7 @@ function FontRow({
     const update = (): void => {
       const el = buttonRef.current;
       if (!el) return;
-      const r = el.getBoundingClientRect();
-      setRect({
-        left: r.left,
-        top: r.bottom + 4,
-        width: Math.max(260, r.width),
-      });
+      setRect(dropdownRectForElement(el));
     };
     update();
     window.addEventListener("resize", update);
@@ -6149,8 +6340,14 @@ function FontRow({
         createPortal(
           <div
             id="zen-font-portal"
-            className="fixed z-popover flex max-h-[320px] flex-col overflow-hidden rounded-xl border border-paper-300 bg-paper-100 shadow-float"
-            style={{ left: rect.left, top: rect.top, width: rect.width }}
+            className="fixed z-popover flex flex-col overflow-hidden rounded-xl border border-paper-300 bg-paper-100 shadow-float"
+            style={{
+              left: rect.left,
+              top: rect.top,
+              bottom: rect.bottom,
+              width: rect.width,
+              maxHeight: rect.maxHeight,
+            }}
           >
             <div className="border-b border-paper-300/60 p-2">
               <input

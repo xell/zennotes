@@ -51,7 +51,7 @@ beforeEach(() => {
 
 describe('cmdOpen', () => {
   it('rejects when no path is given', async () => {
-    await expect(cmdOpen('', makeArgs([]))).rejects.toThrow(/needs a file path/)
+    await expect(cmdOpen('', makeArgs([]))).rejects.toThrow(/needs a path/)
     expect(spawn).not.toHaveBeenCalled()
   })
 
@@ -126,7 +126,7 @@ describe('cmdOpen', () => {
 
   it('reports the failing token and the joined attempt when nothing matches', async () => {
     await expect(cmdOpen(vaultDir, makeArgs(['inbox/nope', 'really.md']))).rejects.toThrow(
-      /No such file: inbox\/nope[\s\S]*also tried as one path/
+      /No such file or folder: inbox\/nope[\s\S]*also tried as one path/
     )
     expect(spawn).not.toHaveBeenCalled()
   })
@@ -135,5 +135,26 @@ describe('cmdOpen', () => {
     await fsp.writeFile(path.join(vaultDir, 'inbox', 'plain.txt'), 'hi\n')
     await expect(cmdOpen(vaultDir, makeArgs(['inbox/plain.txt']))).rejects.toThrow(/markdown/)
     expect(spawn).not.toHaveBeenCalled()
+  })
+
+  // #466: a folder opens as a focused session — no markdown-extension check.
+  it('launches the app with a folder path (focused session)', async () => {
+    await cmdOpen('', makeArgs([vaultDir]))
+    expect(spawn).toHaveBeenCalledTimes(1)
+    const [, argv] = vi.mocked(spawn).mock.calls[0]
+    expect(argv).toEqual([vaultDir])
+  })
+
+  it('resolves a vault-relative folder', async () => {
+    await cmdOpen(vaultDir, makeArgs(['inbox']))
+    const [, argv] = vi.mocked(spawn).mock.calls[0]
+    expect(argv).toEqual([path.join(vaultDir, 'inbox')])
+  })
+
+  it('opens a mix of files and folders in one launch', async () => {
+    await cmdOpen('', makeArgs([mdFile, vaultDir]))
+    expect(spawn).toHaveBeenCalledTimes(1)
+    const [, argv] = vi.mocked(spawn).mock.calls[0]
+    expect(argv).toEqual([mdFile, vaultDir])
   })
 })

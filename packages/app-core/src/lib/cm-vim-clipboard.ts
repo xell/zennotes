@@ -113,6 +113,12 @@ export const vimClipboardPasteExtension = ViewPlugin.fromClass(
         if (e.key !== 'p' && e.key !== 'P') return
         // Leave OS/editor chords (Ctrl/Cmd/Alt) alone; only bare p / P.
         if (e.ctrlKey || e.metaKey || e.altKey) return
+        // Only act when the main editor content itself has the key, not a nested
+        // focusable widget (a table cell runs its own modal Vim). Otherwise this
+        // capture-phase listener would steal `p` from the cell and replay the
+        // paste on the main editor, dropping the clipboard into the document at
+        // the widget's position instead of the cell. (reported by D. Hellinger)
+        if (e.target !== view.contentDOM) return
 
         const cm = getCM(view)
         const vimState = (cm as unknown as { state?: { vim?: { insertMode?: boolean } } } | null)

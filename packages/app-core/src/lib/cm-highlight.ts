@@ -73,12 +73,20 @@ export function wrapHighlight(inner: string, color: HighlightColorId): string {
  * because the existing wrapper is stripped first; the new span is re-selected
  * so the next color choice replaces it cleanly.
  */
-export function applyHighlight(view: EditorView, action: HighlightColorId | 'remove'): void {
-  const sel = view.state.selection.main
-  if (sel.empty) return
+export function applyHighlight(
+  view: EditorView,
+  action: HighlightColorId | 'remove',
+  range?: { from: number; to: number }
+): void {
   const doc = view.state.doc
-  let from = sel.from
-  let to = sel.to
+  // Prefer an explicit range: a context menu can steal focus and collapse the
+  // live selection before this runs, so callers snapshot the range when the menu
+  // opens. Fall back to the current selection; clamp to the doc for safety. (#416)
+  const rawFrom = range ? Math.min(range.from, range.to) : view.state.selection.main.from
+  const rawTo = range ? Math.max(range.from, range.to) : view.state.selection.main.to
+  let from = Math.max(0, Math.min(rawFrom, doc.length))
+  let to = Math.max(0, Math.min(rawTo, doc.length))
+  if (from === to) return
   // Absorb `==` markers immediately outside the selection so highlighting the
   // inner word (not the markers) still recolors instead of nesting.
   if (

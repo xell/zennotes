@@ -117,7 +117,8 @@ export function buildNoteDestinationPrompt(
     okLabel: 'Create',
     allowEmptySubmit: true,
     suggestions: buildNotesFolderSuggestions(folders),
-    suggestionsHint: 'Empty = vault root · ↑↓ pick a folder · Enter create'
+    autoHighlightFirst: true,
+    suggestionsHint: 'Empty = vault root · ↑↓ or ⌃J/⌃K pick a folder · Enter create'
   }
 }
 
@@ -139,7 +140,8 @@ export function buildTemplateDestinationPrompt(
     okLabel: 'Create',
     allowEmptySubmit: true,
     suggestions: buildNotesFolderSuggestions(folders),
-    suggestionsHint: 'Empty = vault root · ↑↓ pick a folder · Enter create'
+    autoHighlightFirst: true,
+    suggestionsHint: 'Empty = vault root · ↑↓ or ⌃J/⌃K pick a folder · Enter create'
   }
 }
 
@@ -154,7 +156,8 @@ export function buildMoveNotePrompt(
     placeholder: 'inbox/Work',
     okLabel: 'Move',
     suggestions: buildMoveNoteSuggestions(folders),
-    suggestionsHint: '↑↓ pick a folder · Enter to move',
+    autoHighlightFirst: true,
+    suggestionsHint: '↑↓ or ⌃J/⌃K pick a folder · Enter to move',
     validate: validateMoveNoteTarget
   }
 }

@@ -15,7 +15,7 @@ import {
   splitMultiSelect,
   joinMultiSelect
 } from '@shared/database-transforms'
-import { EMPTY_GROUP, type DbField, type DbRow } from '@shared/databases'
+import { EMPTY_GROUP, type DbField, type DbRow, type FilterRule } from '@shared/databases'
 
 /** Deterministic id factory for tests. */
 function counterGenId(): GenId {
@@ -176,6 +176,21 @@ describe('transforms', () => {
       '2'
     ])
     expect(filterRows(rows, [{ fieldId: 'due', op: 'isEmpty' }], map).map((r) => r.id)).toEqual(['3'])
+  })
+
+  it('combines multiple filters with AND (default) or OR (#394)', () => {
+    const rules: FilterRule[] = [
+      { fieldId: 'status', op: 'is', value: 'todo' },
+      { fieldId: 'count', op: 'gt', value: '5' }
+    ]
+    // AND (default): status todo AND count > 5 → none (Beta is todo but count 2).
+    expect(filterRows(rows, rules, map).map((r) => r.id)).toEqual([])
+    expect(filterRows(rows, rules, map, 'and').map((r) => r.id)).toEqual([])
+    // OR: status todo (Beta) OR count > 5 (Alpha) → both.
+    expect(filterRows(rows, rules, map, 'or').map((r) => r.id)).toEqual(['1', '2'])
+    // A single rule behaves the same under either conjunction.
+    const one: FilterRule[] = [{ fieldId: 'status', op: 'is', value: 'done' }]
+    expect(filterRows(rows, one, map, 'or').map((r) => r.id)).toEqual(['2'])
   })
 
   it('groups into board columns with an EMPTY_GROUP bucket', () => {

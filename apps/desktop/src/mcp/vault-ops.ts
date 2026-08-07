@@ -11,6 +11,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { normalizeBaseUrl } from '../main/remote/connection'
 
 export type NoteFolder = 'inbox' | 'quick' | 'archive' | 'trash'
 const FOLDERS: NoteFolder[] = ['inbox', 'quick', 'archive', 'trash']
@@ -148,9 +149,9 @@ async function folderRoot(root: string, folder: NoteFolder): Promise<string> {
 }
 
 const FENCE_LINE_RE = /^(\s{0,3})(`{3,}|~{3,})/
-// `>` = forwarded to another note (#316) — recognized so forwarded tasks aren't
-// invisible to the MCP scanner. Kept in sync with @shared/tasklists.
-const TASK_LINE_RE = /^\s*[-*+]\s+\[([ xX>])\](.*)$/
+// `>` = forwarded (#316), `-` = cancelled (#450) — both recognized so those
+// tasks aren't invisible to the MCP scanner. Kept in sync with @shared/tasklists.
+const TASK_LINE_RE = /^\s*[-*+]\s+\[([ xX>-])\](.*)$/
 
 export interface NoteMeta {
   path: string
@@ -178,10 +179,20 @@ export interface VaultTask {
   rawText: string
   content: string
   checked: boolean
+  /** True for a `[-]` cancelled task — intentionally abandoned (#450). */
+  cancelled?: boolean
   due?: string
   priority?: 'high' | 'med' | 'low'
   waiting: boolean
   tags: string[]
+  /** How this task is stored. `'file'` is a whole-note task (TaskNotes-style: a
+   *  `.md` file tagged `task`, metadata in frontmatter); `'inline'` (the default
+   *  when absent) is a classic `- [ ]` checkbox line. */
+  kind?: 'inline' | 'file'
+  /** ISO YYYY-MM-DD start/scheduled date (frontmatter `scheduled`). File-tasks. */
+  scheduled?: string
+  /** ISO YYYY-MM-DD completion date (frontmatter `completedDate`). File-tasks. */
+  completedDate?: string
 }
 
 /* ---------- Path + config helpers ------------------------------------ */
@@ -259,6 +270,69 @@ export async function readKnownVaultsFromConfig(): Promise<KnownVault[]> {
   }
 
   out.sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0))
+  return out
+}
+
+export interface KnownRemoteProfile {
+  id: string
+  name: string
+  baseUrl: string
+  authToken: string | null
+  lastConnectedAt: number | null
+}
+
+/**
+ * Every ZenNotes server the app has been connected to, newest first. The
+ * desktop app writes these under `remoteWorkspaceProfiles` when you use
+ * Settings → Vault → "Connect to Server..."; the CLI reads the same list so
+ * `--server <name>` names a server you already set up in the GUI (#493).
+ *
+ * The legacy single-server `remoteWorkspace` key is folded in too, matching
+ * how the main process migrates it, so a config written before profiles
+ * existed still gives the CLI something to name.
+ */
+export async function readRemoteProfilesFromConfig(): Promise<KnownRemoteProfile[]> {
+  const parsed = await readConfigFile()
+  const out: KnownRemoteProfile[] = []
+  const seenBaseUrls = new Set<string>()
+
+  const rawList = Array.isArray(parsed?.remoteWorkspaceProfiles)
+    ? parsed.remoteWorkspaceProfiles
+    : []
+  for (const entry of rawList) {
+    if (!entry || typeof entry !== 'object') continue
+    const { id, name, baseUrl, authToken, lastConnectedAt } = entry as Record<string, unknown>
+    if (typeof baseUrl !== 'string' || !baseUrl.trim()) continue
+    if (typeof name !== 'string' || !name.trim()) continue
+    const normalizedUrl = normalizeBaseUrl(baseUrl)
+    seenBaseUrls.add(normalizedUrl)
+    out.push({
+      id: typeof id === 'string' && id.trim() ? id : normalizedUrl,
+      name: name.trim(),
+      baseUrl: normalizedUrl,
+      authToken: typeof authToken === 'string' && authToken.trim() ? authToken : null,
+      lastConnectedAt: typeof lastConnectedAt === 'number' ? lastConnectedAt : null
+    })
+  }
+
+  const legacy = parsed?.remoteWorkspace
+  if (legacy && typeof legacy === 'object') {
+    const { baseUrl, authToken } = legacy as Record<string, unknown>
+    if (typeof baseUrl === 'string' && baseUrl.trim()) {
+      const normalizedUrl = normalizeBaseUrl(baseUrl)
+      if (!seenBaseUrls.has(normalizedUrl)) {
+        out.push({
+          id: normalizedUrl,
+          name: 'ZenNotes Server',
+          baseUrl: normalizedUrl,
+          authToken: typeof authToken === 'string' && authToken.trim() ? authToken : null,
+          lastConnectedAt: null
+        })
+      }
+    }
+  }
+
+  out.sort((a, b) => (b.lastConnectedAt ?? 0) - (a.lastConnectedAt ?? 0))
   return out
 }
 
@@ -393,10 +467,23 @@ function stripCodeContent(body: string): string {
   return lines.join('\n').replace(/`[^`\n]*`/g, ' ')
 }
 
+/** Frontmatter `tags` plus inline `#tags`. A bare scalar splits on commas and
+ *  whitespace, since `tags: daily, work` is two tags and a tag can contain
+ *  neither. Kept in sync with `frontmatterTags` in
+ *  packages/shared-domain/src/frontmatter.ts (#444). */
 function extractTags(body: string): string[] {
-  const stripped = stripCodeContent(body)
-  const matches = stripped.match(/(?:^|\s)#(\p{L}[\p{L}\d_/-]*)/gu) || []
   const seen = new Set<string>()
+  const fm = body.match(FRONTMATTER_RE)
+  for (const raw of asArray(fm ? parseTaskFrontmatter(fm[1] ?? '').tags : undefined)) {
+    for (const part of raw.trim().split(/[,\s]+/)) {
+      const normalized = part.replace(/^#/, '').trim()
+      if (normalized) seen.add(normalized)
+    }
+  }
+
+  const markdownBody = body.replace(FRONTMATTER_RE, '')
+  const stripped = stripCodeContent(markdownBody)
+  const matches = stripped.match(/(?:^|\s)#(\p{L}[\p{L}\d_/-]*)/gu) || []
   for (const m of matches) seen.add(m.trim().slice(1))
   return [...seen]
 }
@@ -866,7 +953,7 @@ export async function searchText(
 
 /* ---------- Tasks ---------------------------------------------------- */
 
-const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n?/
+const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/
 // Optional whitespace after the colon so a spaced `due: 2026-01-01` parses like
 // `due:2026-01-01` (kept in sync with packages/shared-domain/src/tasks.ts). (#343)
 const INLINE_DUE_RE = /(?:^|\s)due:\s*(\S+)/i
@@ -874,11 +961,24 @@ const INLINE_PRIORITY_RE = /(?:^|\s)!(high|med|medium|low|h|m|l)\b/i
 const INLINE_WAITING_RE = /(?:^|\s)@waiting\b/i
 const INLINE_TAG_RE = /(?:^|\s)#([\p{L}\d][\p{L}\d/_-]*)/gu
 
+function unquote(v: string): string {
+  const trimmed = v.trim()
+  if (trimmed.length >= 2) {
+    const first = trimmed[0]
+    const last = trimmed[trimmed.length - 1]
+    if ((first === '"' || first === "'") && first === last) {
+      return trimmed.slice(1, -1)
+    }
+  }
+  return trimmed
+}
+
 function normalizePriority(raw: string | undefined): 'high' | 'med' | 'low' | undefined {
   if (!raw) return undefined
   const v = raw.toLowerCase().trim()
   if (v === 'high' || v === 'h') return 'high'
-  if (v === 'med' || v === 'medium' || v === 'm') return 'med'
+  // `normal` is the TaskNotes default priority; map it onto ZenNotes' `med`.
+  if (v === 'med' || v === 'medium' || v === 'normal' || v === 'm') return 'med'
   if (v === 'low' || v === 'l') return 'low'
   return undefined
 }
@@ -886,6 +986,12 @@ function normalizePriority(raw: string | undefined): 'high' | 'med' | 'low' | un
 function isValidIsoDate(s: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false
   return Number.isFinite(Date.parse(`${s}T00:00:00Z`))
+}
+
+function normalizeDueDate(raw: string | undefined): string | undefined {
+  if (!raw) return undefined
+  const cleaned = unquote(raw.trim())
+  return isValidIsoDate(cleaned) ? cleaned : undefined
 }
 
 function parseNoteDefaults(body: string): { due?: string; priority?: 'high' | 'med' | 'low' } {
@@ -946,6 +1052,7 @@ function parseTasksFromBody(
     const checkedChar = m[1]
     const tail = m[2]
     const checked = checkedChar === 'x' || checkedChar === 'X'
+    const cancelled = checkedChar === '-'
 
     let due: string | undefined
     let priority: 'high' | 'med' | 'low' | undefined
@@ -985,6 +1092,7 @@ function parseTasksFromBody(
       rawText: line,
       content,
       checked,
+      cancelled,
       due: due ?? defaults.due,
       priority: priority ?? defaults.priority,
       waiting,
@@ -993,6 +1101,150 @@ function parseTasksFromBody(
     taskIndex += 1
   }
   return tasks
+}
+
+/* ---------- File tasks (TaskNotes-style: one task per note) ----------- */
+
+/** The frontmatter tag that marks a whole note as a task (TaskNotes
+ *  convention). Kept in sync with packages/shared-domain/src/tasks.ts. */
+const TASK_FILE_TAG = 'task'
+
+/** Frontmatter `status:` values treated as complete (checked). */
+const DONE_STATUSES = new Set(['done', 'complete', 'completed', 'x'])
+
+/** Frontmatter `status:` values treated as cancelled — abandoned (#450). */
+const CANCELLED_STATUSES = new Set(['cancelled', 'canceled'])
+
+/** Parse a leading frontmatter block into flat fields, handling scalars, inline
+ *  arrays (`tags: [a, b]`) and block lists (`tags:` then `  - a`). Keys are
+ *  lower-cased; values are a string, or string[] for a list. Best-effort and
+ *  never throws — just enough YAML for task files, not a full parser. Kept in
+ *  sync with parseFrontmatterFields in packages/shared-domain/src/frontmatter.ts. */
+function parseTaskFrontmatter(block: string): Record<string, string | string[]> {
+  const data: Record<string, string | string[]> = {}
+  let listKey: string | null = null
+  for (const rawLine of block.split('\n')) {
+    if (!rawLine.trim() || rawLine.trim().startsWith('#')) continue
+    const item = rawLine.match(/^\s*-\s+(.*)$/)
+    if (listKey && /^\s/.test(rawLine) && item) {
+      const arr = data[listKey]
+      if (Array.isArray(arr)) arr.push(unquote(item[1]))
+      continue
+    }
+    const kv = rawLine.match(/^([A-Za-z0-9_][\w-]*)\s*:\s*(.*)$/)
+    if (!kv) {
+      listKey = null
+      continue
+    }
+    const key = kv[1].toLowerCase()
+    const rest = kv[2].trim()
+    if (rest === '') {
+      // Bare key: a block list may follow on indented `- item` lines.
+      listKey = key
+      data[key] = []
+      continue
+    }
+    listKey = null
+    if (rest.startsWith('[') && rest.endsWith(']')) {
+      data[key] = rest
+        .slice(1, -1)
+        .split(',')
+        .map((s) => unquote(s))
+        .filter((s) => s.length > 0)
+    } else {
+      data[key] = unquote(rest)
+    }
+  }
+  return data
+}
+
+function asArray(v: string | string[] | undefined): string[] {
+  if (v == null) return []
+  return Array.isArray(v) ? v : [v]
+}
+
+function firstScalar(v: string | string[] | undefined): string | undefined {
+  if (v == null) return undefined
+  return Array.isArray(v) ? v[0] : v
+}
+
+/**
+ * Parse a whole-note "file task" from `body`, or return null when the note is
+ * not a task file (its frontmatter `tags` don't include `task`). All metadata
+ * comes from frontmatter; the note body is free-form. This is emitted *in
+ * addition* to any inline `- [ ]` checkboxes in the same body.
+ */
+function parseTaskFile(
+  body: string,
+  ctx: { path: string; title: string; folder: NoteFolder }
+): VaultTask | null {
+  const normalized = body.replace(/\r\n/g, '\n')
+  const m = normalized.match(FRONTMATTER_RE)
+  if (!m) return null
+  const fm = parseTaskFrontmatter(m[1])
+
+  const tags = asArray(fm.tags).map((t) => t.replace(/^#/, '').toLowerCase())
+  if (!tags.includes(TASK_FILE_TAG)) return null
+
+  const status = (firstScalar(fm.status) ?? 'open').toLowerCase()
+  const title = firstScalar(fm.title)?.trim() || ctx.title
+
+  return {
+    id: `${ctx.path}#task`,
+    sourcePath: ctx.path,
+    noteTitle: ctx.title,
+    noteFolder: ctx.folder,
+    lineNumber: 0,
+    taskIndex: -1,
+    rawText: '',
+    content: title,
+    checked: DONE_STATUSES.has(status),
+    cancelled: CANCELLED_STATUSES.has(status),
+    due: normalizeDueDate(firstScalar(fm.due)),
+    priority: normalizePriority(firstScalar(fm.priority)),
+    waiting: status === 'waiting',
+    tags: tags.filter((t) => t !== TASK_FILE_TAG),
+    kind: 'file',
+    scheduled: normalizeDueDate(firstScalar(fm.scheduled)),
+    completedDate: normalizeDueDate(firstScalar(fm.completeddate))
+  }
+}
+
+/** Add, update, or remove a top-level scalar `key: value` line inside the note's
+ *  leading `---` frontmatter block, preserving every other line (including block
+ *  lists). `value === null` removes the line. Creates the block when absent.
+ *  Operates on \n-normalized text. */
+function setFrontmatterScalar(body: string, key: string, value: string | null): string {
+  const normalized = body.replace(/\r\n/g, '\n')
+  const lowerKey = key.toLowerCase()
+  const m = normalized.match(FRONTMATTER_RE)
+  if (!m) {
+    if (value === null) return normalized
+    return `---\n${key}: ${value}\n---\n${normalized}`
+  }
+  const rest = normalized.slice(m[0].length)
+  const lines = m[1].split('\n')
+  const idx = lines.findIndex((line) => {
+    const kv = line.match(/^([A-Za-z0-9_][\w-]*)\s*:/)
+    return kv ? kv[1].toLowerCase() === lowerKey : false
+  })
+  if (value === null) {
+    if (idx >= 0) lines.splice(idx, 1)
+  } else if (idx >= 0) {
+    lines[idx] = `${key}: ${value}`
+  } else {
+    lines.push(`${key}: ${value}`)
+  }
+  return `---\n${lines.join('\n')}\n---\n${rest}`
+}
+
+/** Today as a local `YYYY-MM-DD` string, matching the encoding used for `due`. */
+function todayIsoLocal(): string {
+  const d = new Date()
+  const y = d.getFullYear()
+  const mo = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${mo}-${day}`
 }
 
 export async function scanAllTasks(root: string): Promise<VaultTask[]> {
@@ -1007,29 +1259,94 @@ export async function scanAllTasks(root: string): Promise<VaultTask[]> {
       } catch {
         return
       }
-      const parsed = parseTasksFromBody(body, {
+      const ctx = {
         path: meta.path,
         title: meta.title,
         folder: meta.folder
-      })
-      out.push(...parsed)
+      }
+      const fileTask = parseTaskFile(body, ctx)
+      const inline = parseTasksFromBody(body, ctx)
+      // File task first, then any inline `- [ ]` checkboxes acting as subtasks.
+      if (fileTask) out.push(fileTask, ...inline)
+      else out.push(...inline)
     })
   )
   return out
 }
 
-/** Toggle a specific task identified by "<path>#<taskIndex>". */
+/** Toggle a specific task identified by "<path>#<taskIndex>". When the index
+ *  segment is the literal `task`, the id names a whole-note file task and the
+ *  toggle flips its frontmatter `status` (and `completedDate`) instead of an
+ *  inline checkbox. */
 export async function toggleTask(root: string, taskId: string): Promise<VaultTask | null> {
+  const { rel, indexStr } = splitTaskId(taskId)
+
+  // File task: metadata lives in frontmatter, not a `- [ ]` checkbox line.
+  if (indexStr === 'task') {
+    const abs = resolveSafe(root, rel)
+    const body = await fs.readFile(abs, 'utf8')
+    const folder = folderOf(root, abs)
+    if (!folder) throw new Error(`Note not in a known folder: ${rel}`)
+    const ctx = {
+      path: toPosix(path.relative(root, abs)),
+      title: path.basename(abs, path.extname(abs)),
+      folder
+    }
+    const current = parseTaskFile(body, ctx)
+    if (!current) return null
+    const next = toggleFileTaskInBody(body, current.checked)
+    await fs.writeFile(abs, next, 'utf8')
+    return parseTaskFile(next, ctx)
+  }
+
+  const targetIndex = parseTaskIndex(taskId, indexStr)
+  const abs = resolveSafe(root, rel)
+  const body = await fs.readFile(abs, 'utf8')
+  const newBody = toggleTaskInBody(body, targetIndex)
+  if (newBody == null) return null
+  await fs.writeFile(abs, newBody, 'utf8')
+  const folder = folderOf(root, abs)
+  if (!folder) throw new Error(`Note not in a known folder: ${rel}`)
+  const parsed = parseTasksFromBody(newBody, {
+    path: toPosix(path.relative(root, abs)),
+    title: path.basename(abs, path.extname(abs)),
+    folder
+  })
+  return parsed[targetIndex] ?? null
+}
+
+/** Split "<path>#<taskIndex>" into its halves. `indexStr` is the literal
+ *  `task` for a whole-note file task. */
+export function splitTaskId(taskId: string): { rel: string; indexStr: string } {
   const hashIdx = taskId.lastIndexOf('#')
   if (hashIdx < 0) throw new Error(`Malformed task id: ${taskId}`)
-  const rel = taskId.slice(0, hashIdx)
-  const indexStr = taskId.slice(hashIdx + 1)
+  return { rel: taskId.slice(0, hashIdx), indexStr: taskId.slice(hashIdx + 1) }
+}
+
+/** Flip a file task's frontmatter `status` (and its `completedDate`). */
+export function toggleFileTaskInBody(body: string, currentlyChecked: boolean): string {
+  // If it is currently done, reopen it; otherwise mark it done.
+  if (currentlyChecked) {
+    const reopened = setFrontmatterScalar(body, 'status', 'open')
+    return setFrontmatterScalar(reopened, 'completedDate', null)
+  }
+  const done = setFrontmatterScalar(body, 'status', 'done')
+  return setFrontmatterScalar(done, 'completedDate', todayIsoLocal())
+}
+
+/** The `#<n>` half of a task id, validated. Throws the same way for a local
+ *  and a remote vault, so a typo reads identically either side. */
+export function parseTaskIndex(taskId: string, indexStr: string): number {
   const targetIndex = Number.parseInt(indexStr, 10)
   if (!Number.isInteger(targetIndex) || targetIndex < 0) {
     throw new Error(`Malformed task index in id: ${taskId}`)
   }
-  const abs = resolveSafe(root, rel)
-  const body = await fs.readFile(abs, 'utf8')
+  return targetIndex
+}
+
+/** Flip the nth `- [ ]` checkbox in a body, skipping fenced code. Null when
+ *  the body holds no task at that index — the caller reports it as gone. */
+export function toggleTaskInBody(body: string, targetIndex: number): string | null {
   const normalized = body.replace(/\r\n/g, '\n')
   const lines = normalized.split('\n')
   let taskIndex = 0
@@ -1077,16 +1394,7 @@ export async function toggleTask(root: string, taskId: string): Promise<VaultTas
     }
   )
   lines[lineNumber] = toggled
-  const newBody = lines.join('\n') + (body.endsWith('\n') && !normalized.endsWith('\n') ? '\n' : '')
-  await fs.writeFile(abs, newBody, 'utf8')
-  const folder = folderOf(root, abs)
-  if (!folder) throw new Error(`Note not in a known folder: ${rel}`)
-  const parsed = parseTasksFromBody(newBody, {
-    path: toPosix(path.relative(root, abs)),
-    title: path.basename(abs, path.extname(abs)),
-    folder
-  })
-  return parsed[targetIndex] ?? null
+  return lines.join('\n') + (body.endsWith('\n') && !normalized.endsWith('\n') ? '\n' : '')
 }
 
 /* ---------- Convenience edits ---------------------------------------- */
@@ -1095,32 +1403,43 @@ function trimTrailingNewlines(s: string): string {
   return s.replace(/\n+$/g, '')
 }
 
+/* The body transforms below are exported as pure functions so the `zn` CLI's
+ * remote backend can apply the identical edit to a body it fetched over HTTP
+ * (#493). A remote note is read and written through the server's API, but the
+ * edit in between has to be the same one a local note gets, or `zn append`
+ * would mean two different things depending on where the vault lives. */
+
+/** The note body with `text` added after a blank line. */
+export function appendToBody(body: string, text: string): string {
+  const normalized = body.replace(/\r\n/g, '\n')
+  const sep = normalized.endsWith('\n') || normalized.length === 0 ? '' : '\n'
+  return (
+    normalized + sep + (normalized.length > 0 ? '\n' : '') + trimTrailingNewlines(text) + '\n'
+  )
+}
+
 export async function appendToNote(root: string, rel: string, text: string): Promise<NoteMeta> {
   const abs = resolveSafe(root, rel)
   const body = await fs.readFile(abs, 'utf8')
-  const normalized = body.replace(/\r\n/g, '\n')
-  const sep = normalized.endsWith('\n') || normalized.length === 0 ? '' : '\n'
-  const next = normalized + sep + (normalized.length > 0 ? '\n' : '') + trimTrailingNewlines(text) + '\n'
-  await fs.writeFile(abs, next, 'utf8')
+  await fs.writeFile(abs, appendToBody(body, text), 'utf8')
   const folder = folderOf(root, abs)
   if (!folder) throw new Error(`Note not in a known folder: ${rel}`)
   return await readMeta(root, abs, folder)
 }
 
-export async function prependToNote(root: string, rel: string, text: string): Promise<NoteMeta> {
-  const abs = resolveSafe(root, rel)
-  const body = await fs.readFile(abs, 'utf8')
+/** The note body with `text` inserted at the top, below any frontmatter. */
+export function prependToBody(body: string, text: string): string {
   const normalized = body.replace(/\r\n/g, '\n')
   const fm = normalized.match(FRONTMATTER_RE)
   const snippet = trimTrailingNewlines(text) + '\n\n'
-  let next: string
-  if (fm) {
-    const after = normalized.slice(fm[0].length)
-    next = fm[0] + snippet + after
-  } else {
-    next = snippet + normalized
-  }
-  await fs.writeFile(abs, next, 'utf8')
+  if (fm) return fm[0] + snippet + normalized.slice(fm[0].length)
+  return snippet + normalized
+}
+
+export async function prependToNote(root: string, rel: string, text: string): Promise<NoteMeta> {
+  const abs = resolveSafe(root, rel)
+  const body = await fs.readFile(abs, 'utf8')
+  await fs.writeFile(abs, prependToBody(body, text), 'utf8')
   const folder = folderOf(root, abs)
   if (!folder) throw new Error(`Note not in a known folder: ${rel}`)
   return await readMeta(root, abs, folder)
@@ -1184,14 +1503,19 @@ export async function insertAtLine(
 
 export async function backlinks(root: string, rel: string): Promise<NoteMeta[]> {
   const abs = resolveSafe(root, rel)
-  const targetTitle = path.basename(abs, path.extname(abs)).toLowerCase()
   const all = await listNotes(root)
-  const refs: NoteMeta[] = []
-  for (const meta of all) {
-    if (meta.path === toPosix(path.relative(root, abs))) continue
-    if (meta.wikilinks.some((w) => w.toLowerCase() === targetTitle)) {
-      refs.push(meta)
-    }
-  }
-  return refs
+  return backlinksIn(all, toPosix(path.relative(root, abs)))
+}
+
+/** Which of `notes` wikilink to the note at `relPath` (a vault-relative posix
+ *  path), matching on title and never counting the note itself. Pure so the
+ *  CLI's remote backend gets the same answer from a listing it fetched. */
+export function backlinksIn(notes: NoteMeta[], relPath: string): NoteMeta[] {
+  const fileName = relPath.split('/').pop() ?? relPath
+  const dot = fileName.lastIndexOf('.')
+  const targetTitle = (dot > 0 ? fileName.slice(0, dot) : fileName).toLowerCase()
+  return notes.filter(
+    (meta) =>
+      meta.path !== relPath && meta.wikilinks.some((w) => w.toLowerCase() === targetTitle)
+  )
 }

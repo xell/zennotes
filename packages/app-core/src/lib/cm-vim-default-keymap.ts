@@ -3,6 +3,7 @@ import { markdownKeymap } from '@codemirror/lang-markdown'
 import { Prec, type Extension } from '@codemirror/state'
 import { keymap, type EditorView, type KeyBinding } from '@codemirror/view'
 import { getCM } from '@replit/codemirror-vim'
+import { insertNewlineContinueFencedCodeIndent } from './cm-code-fence-indent'
 
 /**
  * macOS-only Vim keymap conflict (`Ctrl-d` deletes instead of half-page-down).
@@ -138,6 +139,17 @@ export function vimAwareDefaultKeymap(vimMode: boolean): readonly KeyBinding[] {
  * per keypress (no-op when Vim is off), so this needs no reconfiguration on
  * Vim toggle.
  */
+// #405: run our fenced-code indent fix before the markdown Enter command, so
+// `` - ```bash `` + Enter indents into the list item instead of escaping to
+// column 0. It returns false (falls through) for every case the default
+// command already handles. Deferral to Vim applies to it too (same key set).
+const fencedCodeIndentEnter: KeyBinding = {
+  key: 'Enter',
+  run: insertNewlineContinueFencedCodeIndent
+}
+
 export const vimAwareMarkdownKeymap: Extension = Prec.high(
-  keymap.of(deferKeysToVim(markdownKeymap, new Set(['Enter', 'Backspace'])))
+  keymap.of(
+    deferKeysToVim([fencedCodeIndentEnter, ...markdownKeymap], new Set(['Enter', 'Backspace']))
+  )
 )

@@ -48,8 +48,21 @@ const markdownSnippetRulesFacet = Facet.define<
   combine: (values) => values.at(-1) ?? defaultMarkdownSnippetRules
 })
 
+// Leading whitespace plus any list/blockquote markers, i.e. everything before a
+// fence's own column. Lets a block open inside a list item or quote (`- ```bash`,
+// `> $$`) and lets its auto-inserted lines align to the fence column. (#405)
+const BLOCK_INDENT_PREFIX_RE = /^[\t ]*(?:(?:[-+*]|\d{1,9}[.)])[\t ]+|>[\t ]?)*/
+
+/** The whitespace to align a block's continuation lines to its fence column:
+ *  the leading indent kept as-is, any list/quote marker turned into spaces. */
+function blockIndentFor(lineText: string): string {
+  const prefix = lineText.match(BLOCK_INDENT_PREFIX_RE)?.[0] ?? ''
+  return prefix.replace(/[^\t ]/g, ' ')
+}
+
 function isBlockOpenerLine(rule: MarkdownSnippetRule, text: string): boolean {
-  const content = text.trimEnd().trimStart()
+  const prefix = text.match(BLOCK_INDENT_PREFIX_RE)?.[0] ?? ''
+  const content = text.slice(prefix.length).trimEnd()
   if (!content.startsWith(rule.open)) return false
   const after = content.slice(rule.open.length)
   if (rule.open === '$$') return after.trim() === ''
@@ -145,8 +158,9 @@ function blockSnippetTransaction(
   if (!isBlockOpenerLine(rule, line.text)) return null
   if (hasUnclosedBlockOpenerAbove(state, line.number, rule)) return null
 
-  const indentMatch = line.text.match(/^[\t ]*/)
-  const indent = indentMatch?.[0] ?? ''
+  // Align to the fence column so a block opened inside a list item keeps its
+  // content and closing fence inside the item instead of escaping to col 0 (#405).
+  const indent = blockIndentFor(line.text)
 
   const insert = `${line.text}\n${indent}\n${indent}${rule.close}`
   const cursor = line.from + line.text.length + 1 + indent.length

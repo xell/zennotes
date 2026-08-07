@@ -25,6 +25,7 @@ import type {
   GitCommitResult,
   GitStatusResult,
   ImportedAsset,
+  LinkMetadata,
   LocalVaultEntry,
   MoveExternalFileResult,
   ListNotesPageRequest,
@@ -373,6 +374,10 @@ const api: ZenBridge = {
     ipcRenderer.invoke(IPC.VAULT_REVEAL_NOTE_TARGET, relPath),
   revealFilePath: (absPath: string): Promise<void> =>
     ipcRenderer.invoke(IPC.VAULT_REVEAL_FILE_PATH, absPath),
+  openExternalFile: (href: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.VAULT_OPEN_EXTERNAL_FILE, href),
+  fetchLinkMetadata: (url: string): Promise<LinkMetadata> =>
+    ipcRenderer.invoke(IPC.VAULT_FETCH_LINK_METADATA, url),
   moveNote: (
     relPath: string,
     targetFolder: NoteFolder,
@@ -486,6 +491,9 @@ const api: ZenBridge = {
     ipcRenderer.invoke(IPC.APP_MOVE_EXTERNAL_FILE_TO_VAULT),
   openMarkdownFile: (absPath: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.APP_OPEN_MARKDOWN_FILE, absPath),
+  openFileDialog: (): Promise<boolean> => ipcRenderer.invoke(IPC.APP_OPEN_FILE_DIALOG),
+  openFolderTemporary: (absPath: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.APP_OPEN_FOLDER_TEMPORARY, absPath),
   toggleQuickCapture: (): Promise<void> =>
     ipcRenderer.invoke(IPC.WINDOW_TOGGLE_QUICK_CAPTURE),
   getQuickCaptureHotkey: (): Promise<string> =>

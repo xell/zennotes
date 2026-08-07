@@ -13,6 +13,7 @@ import (
 type NoteFolder string
 type PrimaryNotesLocation string
 type FolderIconID string
+type FolderColorID string
 
 const (
 	FolderInbox   NoteFolder = "inbox"
@@ -96,12 +97,37 @@ type MonthlyNotesSettings struct {
 	TemplateID     string                    `json:"templateId,omitempty"`
 }
 
+// FileLocationMode mirrors shared/ipc.ts FileLocationMode: where a new
+// drawing / database / task file is created.
+type FileLocationMode string
+
+const (
+	FileLocationPrimary    FileLocationMode = "primary"
+	FileLocationActiveNote FileLocationMode = "active-note"
+	FileLocationFolder     FileLocationMode = "folder"
+)
+
+// FileLocationSetting mirrors shared/ipc.ts FileLocationSetting. Persisted so
+// the web client's Drawings / Databases / Tasks location choices survive a
+// round-trip instead of being silently dropped by the settings struct (#446).
+type FileLocationSetting struct {
+	Mode   FileLocationMode `json:"mode"`
+	Folder string           `json:"folder,omitempty"`
+}
+
 type VaultSettings struct {
 	PrimaryNotesLocation PrimaryNotesLocation    `json:"primaryNotesLocation"`
 	DailyNotes           DailyNotesSettings      `json:"dailyNotes"`
 	WeeklyNotes          WeeklyNotesSettings     `json:"weeklyNotes"`
 	MonthlyNotes         MonthlyNotesSettings    `json:"monthlyNotes"`
+	DrawingsLocation     FileLocationSetting     `json:"drawingsLocation"`
+	DatabasesLocation    FileLocationSetting     `json:"databasesLocation"`
+	TasksLocation        FileLocationSetting     `json:"tasksLocation"`
 	FolderIcons          map[string]FolderIconID `json:"folderIcons"`
+	// FolderColors are per-folder accent colors, keyed by `folder:subpath` (the
+	// same key as FolderIcons). Persisted so the web client's recolors survive a
+	// round-trip instead of being silently dropped. (#379)
+	FolderColors map[string]FolderColorID `json:"folderColors"`
 	// Favorites are note paths or `folder:subpath` keys pinned to the top of
 	// the sidebar. Persisted so the web client's favorites survive a round-trip.
 	Favorites []string `json:"favorites"`
@@ -199,10 +225,21 @@ type Task struct {
 	RawText    string     `json:"rawText"`
 	Content    string     `json:"content"`
 	Checked    bool       `json:"checked"`
-	Due        string     `json:"due,omitempty"`
-	Priority   string     `json:"priority,omitempty"`
-	Waiting    bool       `json:"waiting"`
-	Tags       []string   `json:"tags"`
+	// Cancelled is true for a `[-]` task — intentionally abandoned (#450).
+	Cancelled bool     `json:"cancelled,omitempty"`
+	Due       string   `json:"due,omitempty"`
+	Priority  string   `json:"priority,omitempty"`
+	Waiting   bool     `json:"waiting"`
+	Tags      []string `json:"tags"`
+	// Kind is how the task is stored: "file" for a whole-note task
+	// (TaskNotes-style, tagged `task` with metadata in frontmatter) or
+	// empty/"inline" for a classic `- [ ]` checkbox line. The renderer
+	// branches its toggle logic on this.
+	Kind string `json:"kind,omitempty"`
+	// Scheduled and CompletedDate are file-task-only frontmatter dates
+	// (YYYY-MM-DD). They mirror the TS VaultTask shape.
+	Scheduled     string `json:"scheduled,omitempty"`
+	CompletedDate string `json:"completedDate,omitempty"`
 }
 
 // ChangeEvent — mirrors shared/ipc.ts VaultChangeEvent.

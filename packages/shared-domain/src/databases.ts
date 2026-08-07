@@ -154,6 +154,10 @@ export interface FilterRule {
   value?: string
 }
 
+/** How a view's multiple filter conditions combine. `and` = match all (the
+ *  default, backward-compatible), `or` = match any. (#394) */
+export type FilterConjunction = 'and' | 'or'
+
 export interface SortRule {
   fieldId: string
   direction: 'asc' | 'desc'
@@ -166,6 +170,9 @@ export interface DbView {
   name: string
   type: DbViewType
   filters: FilterRule[]
+  /** How the `filters` combine — `and` (match all, default) or `or` (match
+   *  any). Optional so existing views keep their AND behavior. (#394) */
+  filterConjunction?: FilterConjunction
   sorts: SortRule[]
   // --- table ---
   /** Ordered fieldIds (display order). */

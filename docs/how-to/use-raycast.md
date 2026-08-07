@@ -10,7 +10,7 @@ You need:
 - macOS
 - Raycast
 - ZenNotes desktop 1.3.6 or newer
-- the ZenNotes CLI installed as `zen`
+- the ZenNotes CLI installed as `zn`
 - Node.js 22.14 or newer and npm 7 or newer available from your login shell
 
 Raycast support is macOS-only because Raycast is macOS-only.
@@ -26,14 +26,14 @@ ZenNotes prefers a user-writable PATH directory such as `~/.local/bin`, `~/bin`,
 Verify the install in a new terminal:
 
 ```bash
-zen list
+zn list
 ```
 
 If a note path contains spaces, quote it or use `--path`:
 
 ```bash
-zen read "hellointerview/system design.md"
-zen read --path "hellointerview/system design.md"
+zn read "hellointerview/system design.md"
+zn read --path "hellointerview/system design.md"
 ```
 
 ## 2. Install the Raycast extension from ZenNotes
@@ -83,7 +83,7 @@ Use Raycast's `Search Notes` command.
 The command lists notes from:
 
 ```bash
-zen list --json --limit 2000
+zn list --json --limit 2000
 ```
 
 Selecting a result opens the note in ZenNotes through:
@@ -115,8 +115,8 @@ The search bar dropdown includes folder and tag filters, so you can narrow searc
 
 If Raycast keeps loading:
 
-- run `zen list` in a new terminal and make sure it prints notes
-- open `Settings -> CLI` and reinstall the CLI if Raycast cannot find `zen`
+- run `zn list` in a new terminal and make sure it prints notes
+- open `Settings -> CLI` and reinstall the CLI if Raycast cannot find `zn`
 - open `Settings -> CLI` and reinstall or update the Raycast extension
 - restart Raycast after changing PATH
 
@@ -124,7 +124,7 @@ If the Raycast Extension install button is disabled:
 
 - make sure you are using ZenNotes desktop on macOS
 - install Raycast on this Mac
-- install the `zen` CLI first from `Settings -> CLI`
+- install the `zn` CLI first from `Settings -> CLI`
 - install Node.js 22.14 or newer and npm 7 or newer
 - reopen ZenNotes after changing your shell PATH
 

@@ -5,9 +5,14 @@ import { tablePlugin, tableVimEntry } from './cm-table'
 import { styledTableExtension } from './cm-table-styled'
 import { wysiwygBlocksPlugin } from './cm-wysiwyg-blocks'
 import { hashtagExtension } from './cm-hashtags'
+import { taskMetadataExtension } from './cm-task-metadata'
 import { highlightExtension } from './cm-highlight'
 import { wikilinkRenderExtension } from './cm-wikilink-render'
+import { mathRenderExtension } from './cm-math-render'
+import { embedRenderExtension } from './cm-embed-render'
+import { urlPasteMenuExtension } from './cm-url-paste-menu'
 import type { TableRenderMode } from './table-render-mode'
+import type { MathRenderer } from '@shared/app-config'
 
 /**
  * Live-preview ("WYSIWYG") rendering bundle: the base marker-hiding/inline
@@ -27,7 +32,11 @@ import type { TableRenderMode } from './table-render-mode'
  * frontmatter-properties panel is intentionally excluded — it depends on
  * the PR's breaking database restructure.
  */
-export function wysiwygExtensions(tableMode: TableRenderMode): Extension[] {
+export function wysiwygExtensions(
+  tableMode: TableRenderMode,
+  mathRenderer: MathRenderer,
+  typstPreamble: string
+): Extension[] {
   return [
     livePreviewPlugin,
     codeBlockFlairPlugin,
@@ -42,7 +51,14 @@ export function wysiwygExtensions(tableMode: TableRenderMode): Extension[] {
         : []),
     wysiwygBlocksPlugin,
     ...hashtagExtension,
+    ...taskMetadataExtension,
     ...highlightExtension,
-    ...wikilinkRenderExtension
+    ...wikilinkRenderExtension,
+    // Upstream renders math, URL embeds, and the paste menu in live preview too.
+    // They live here rather than in EditorPane so every surface that composes
+    // this bundle gets them at once, which is the whole point of this module.
+    mathRenderExtension(mathRenderer, typstPreamble),
+    embedRenderExtension,
+    urlPasteMenuExtension
   ]
 }

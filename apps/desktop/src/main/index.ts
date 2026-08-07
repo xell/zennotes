@@ -20,6 +20,7 @@ import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { promises as fsp, createReadStream } from 'node:fs'
 import { Readable } from 'node:stream'
+import { homedir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
@@ -164,8 +165,10 @@ import {
 import type { DatabaseSidecar, DbRow } from '@shared/databases'
 import { VaultWatcher } from './watcher'
 import { WindowVaultRegistry } from './window-vaults'
+import { registerEphemeralRoot, isEphemeralRoot } from './ephemeral-vaults'
 import { renderTikz } from './tikz'
 import { resolveCommandViaLoginShell } from './login-shell-path'
+import { fetchLinkMetadata } from './link-metadata'
 import { RemoteServerClient } from './remote/server-client'
 import {
   getMcpClientStatuses,
@@ -197,7 +200,7 @@ import {
   writeCustomInstructions,
   MCP_SERVER_INSTRUCTIONS
 } from '../mcp/instructions-store'
-import { recordMainPerf } from './perf'
+import { recordBootMark, recordMainPerf } from './perf'
 import {
   parseOpenNoteDeepLink,
   parseQuickCaptureDeepLink,
@@ -205,15 +208,27 @@ import {
 } from './deep-links'
 import {
   isMarkdownFilePath,
-  markdownPathsFromArgv,
+  MARKDOWN_FILE_EXTENSIONS,
+  candidatePathsFromArgv,
   resolveMarkdownOpenTarget
 } from './file-open'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const nodeRequire = createRequire(import.meta.url)
+
+// First point our code runs: everything before this is Electron/Node binary
+// startup (and, on Linux AppImages, the runtime's FUSE mount).
+recordBootMark('main.boot.module-loaded')
 const LOCAL_ASSET_SCHEME = 'zen-asset'
 const THEME_ASSET_SCHEME = 'zen-theme'
 const EXCALIDRAW_ASSET_SCHEME = 'zen-excalidraw'
+// Serves the Typst renderer's bundled assets (the compiler + renderer WASM and
+// the New Computer Modern fonts) to the renderer. On the packaged app the window
+// loads over file://, whose opaque origin makes the CSP `connect-src 'self'`
+// reject a plain fetch of these assets, so the Typst renderer requests them
+// through this scheme instead (added to connect-src in the renderer's
+// index.html). Web keeps fetching the same-origin http assets.
+const TYPST_ASSET_SCHEME = 'zen-typst'
 
 const PRIVILEGED_ASSET_PRIVILEGES = {
   standard: true,
@@ -226,7 +241,8 @@ const PRIVILEGED_ASSET_PRIVILEGES = {
 protocol.registerSchemesAsPrivileged([
   { scheme: LOCAL_ASSET_SCHEME, privileges: PRIVILEGED_ASSET_PRIVILEGES },
   { scheme: THEME_ASSET_SCHEME, privileges: PRIVILEGED_ASSET_PRIVILEGES },
-  { scheme: EXCALIDRAW_ASSET_SCHEME, privileges: PRIVILEGED_ASSET_PRIVILEGES }
+  { scheme: EXCALIDRAW_ASSET_SCHEME, privileges: PRIVILEGED_ASSET_PRIVILEGES },
+  { scheme: TYPST_ASSET_SCHEME, privileges: PRIVILEGED_ASSET_PRIVILEGES }
 ])
 
 let mainWindow: BrowserWindow | null = null
@@ -1208,7 +1224,9 @@ function queueMarkdownFileOpen(rawPath: string, reuseMainWindow: boolean): void 
 }
 
 function handleStartupMarkdownArgs(argv: string[], reuseMainWindow: boolean): void {
-  for (const candidate of markdownPathsFromArgv(argv)) {
+  // Candidates include directories (temporary folder session); the opener stats
+  // each path and ignores anything that isn't a markdown file or a folder.
+  for (const candidate of candidatePathsFromArgv(argv)) {
     queueMarkdownFileOpen(candidate, reuseMainWindow)
   }
 }
@@ -1237,6 +1255,10 @@ async function openMarkdownFileFromOS(absPath: string, reuseMainWindow: boolean)
     stat = await fsp.stat(absPath)
   } catch {
     return false
+  }
+  // A dropped folder opens as a temporary, non-persisted session.
+  if (stat.isDirectory()) {
+    return await openTemporaryFolder(absPath, reuseMainWindow)
   }
   if (!stat.isFile() || !isMarkdownFilePath(absPath)) return false
 
@@ -1270,6 +1292,84 @@ async function openMarkdownFileFromOS(absPath: string, reuseMainWindow: boolean)
 
   openExternalFileWindow(target.absPath)
   return true
+}
+
+/**
+ * In-app "Open File…" (#449) — show a native picker for a markdown file and
+ * route the choice through the same vault-aware opener as the Finder "Open in
+ * ZenNotes" entry and drag-and-drop: a file inside a known vault opens against
+ * that vault, anything else opens in a standalone external-file window.
+ * Resolves true when a file was opened.
+ */
+async function openMarkdownFileViaDialog(
+  parentWindow?: BrowserWindow | null
+): Promise<boolean> {
+  const options: Electron.OpenDialogOptions = {
+    title: 'Open Markdown File',
+    buttonLabel: 'Open',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Markdown', extensions: MARKDOWN_FILE_EXTENSIONS.map((e) => e.replace(/^\./, '')) },
+      { name: 'All Files', extensions: ['*'] }
+    ]
+  }
+  const result =
+    parentWindow && !parentWindow.isDestroyed()
+      ? await dialog.showOpenDialog(parentWindow, options)
+      : await dialog.showOpenDialog(options)
+  if (result.canceled || result.filePaths.length === 0) return false
+  return await openMarkdownFileFromOS(path.resolve(result.filePaths[0]), false)
+}
+
+// A folder dropped on the app icon (or `zn open <dir>`) opens as a temporary
+// session: its markdown is browsable and editable in place, but nothing is
+// written into the folder except the user's own note edits, it is never
+// remembered as a vault, and closing the window (or the next launch) returns to
+// the saved vault. `ephemeralVault` + `persistInitialVault: false` do the work.
+async function openTemporaryFolder(dir: string, reuseMainWindow: boolean): Promise<boolean> {
+  const resolved = path.resolve(dir)
+  const existing = findWindowForVaultRoot(resolved)
+  if (existing) {
+    focusWindow(existing)
+    return true
+  }
+  if (!(await folderHasMarkdown(resolved))) return false
+  const win = await createWindow({
+    initialVaultRoot: resolved,
+    persistInitialVault: false,
+    ephemeralVault: true
+  })
+  if (!reuseMainWindow) focusWindow(win)
+  return true
+}
+
+// Cheap bounded scan for at least one markdown file, so dropping a folder with
+// no docs in it doesn't spin up an empty session. Skips dotfiles/node_modules.
+async function folderHasMarkdown(dir: string): Promise<boolean> {
+  const queue: string[] = [dir]
+  let scanned = 0
+  while (queue.length > 0 && scanned < 4000) {
+    const current = queue.shift()
+    if (!current) break
+    let entries
+    try {
+      entries = await fsp.readdir(current, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      scanned++
+      const name = entry.name
+      if (name.startsWith('.')) continue
+      if (entry.isDirectory()) {
+        if (name === 'node_modules') continue
+        queue.push(path.join(current, name))
+      } else if (isMarkdownFilePath(name)) {
+        return true
+      }
+    }
+  }
+  return false
 }
 
 // Pick a local vault to move an external file into: any open local
@@ -1739,6 +1839,9 @@ interface CreateWindowOptions {
    *  (session restore path, macOS only). The move happens after the window's
    *  window number exists — see the ready-to-show handler. */
   restoreSpaceId?: string | null
+  /** Open initialVaultRoot as a temporary folder session (read a folder without
+   *  turning it into a vault). Implies no persistence and no writes into it. */
+  ephemeralVault?: boolean
 }
 
 async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserWindow> {
@@ -1836,7 +1939,8 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
 
   win.on('ready-to-show', () => {
     recordMainPerf('main.window.ready-to-show', performance.now() - createWindowStartedAt, {
-      restored: !!restoredState
+      restored: !!restoredState,
+      uptimeMs: Math.round(process.uptime() * 1000)
     })
     if (restoredState?.isMaximized) win.maximize()
     // A window being sent to another Space must not become key on the way:
@@ -1863,7 +1967,8 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
   })
   win.webContents.once('did-finish-load', () => {
     recordMainPerf('main.window.did-finish-load', performance.now() - createWindowStartedAt, {
-      restored: !!restoredState
+      restored: !!restoredState,
+      uptimeMs: Math.round(process.uptime() * 1000)
     })
   })
 
@@ -1966,7 +2071,8 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
   } else if (options.initialVaultRoot) {
     try {
       await setVaultForWindow(win, options.initialVaultRoot, {
-        persist: options.persistInitialVault !== false
+        persist: options.persistInitialVault !== false,
+        ephemeral: options.ephemeralVault === true
       })
     } catch (err) {
       if (!win.isDestroyed()) win.destroy()
@@ -2191,10 +2297,18 @@ function startRemoteWatch(client: RemoteServerClient, capabilities: ServerCapabi
 async function setVaultForWindow(
   win: BrowserWindow,
   root: string,
-  options: { persist?: boolean } = {}
+  options: { persist?: boolean; ephemeral?: boolean } = {}
 ): Promise<VaultInfo> {
-  await ensureVaultLayout(root)
-  const vault = vaultInfo(path.resolve(root))
+  // A temporary folder session (drag a folder onto the app to read it) must not
+  // write anything into the folder: skip the vault layout, and register the
+  // root so the settings/tab/cache writers stay hands-off. persist:false keeps
+  // it out of the saved config and the remembered-vaults list.
+  if (options.ephemeral) {
+    registerEphemeralRoot(root)
+  } else {
+    await ensureVaultLayout(root)
+  }
+  const vault = { ...vaultInfo(path.resolve(root)), temporary: options.ephemeral === true }
   windowVaults.setLocalVault(win.id, vault)
   currentVault = vault
   currentWorkspaceMode = 'local'
@@ -3238,6 +3352,8 @@ function registerIpc(): void {
   handle(IPC.WORKSPACE_STATE_READ, async (): Promise<string | null> => {
     if (isRemoteWorkspaceActive()) return null
     const v = requireVault()
+    // Temporary folder session: start fresh, don't read/write .zennotes.
+    if (isEphemeralRoot(v.root)) return null
     try {
       return await fsp.readFile(path.join(v.root, '.zennotes', 'workspace.json'), 'utf8')
     } catch (err) {
@@ -3250,6 +3366,8 @@ function registerIpc(): void {
     if (isRemoteWorkspaceActive()) return
     if (typeof json !== 'string') return
     const v = requireVault()
+    // Temporary folder session: don't write .zennotes/workspace.json into it.
+    if (isEphemeralRoot(v.root)) return
     const dir = path.join(v.root, '.zennotes')
     await fsp.mkdir(dir, { recursive: true })
     await fsp.writeFile(path.join(dir, 'workspace.json'), json, 'utf8')
@@ -3409,6 +3527,9 @@ function registerIpc(): void {
       return await requireRemoteWorkspaceClient().writeNoteComments(relPath, comments)
     }
     const v = requireVault()
+    // Comments live under .zennotes/; skip in a temporary session so the folder
+    // stays pristine (they aren't persisted for a temporary browse).
+    if (isEphemeralRoot(v.root)) return
     return await writeNoteComments(v.root, relPath, comments)
   })
 
@@ -3588,6 +3709,11 @@ function registerIpc(): void {
       return await requireRemoteWorkspaceClient().moveToTrash(relPath)
     }
     const v = requireVault()
+    // Trash would create a `trash/` folder inside a temporary session's folder.
+    // Keep it pristine: refuse rather than litter (edits still save in place).
+    if (isEphemeralRoot(v.root)) {
+      throw new Error('Move to Trash is not available in a temporary folder session.')
+    }
     return await moveToTrash(v.root, relPath)
   })
 
@@ -3662,6 +3788,32 @@ function registerIpc(): void {
 
   handle(IPC.VAULT_REVEAL_FILE_PATH, async (_e, absPath: string) => {
     shell.showItemInFolder(absPath)
+  })
+
+  // Open a file linked from a note but living outside the vault, with the OS
+  // default app. The renderer confirms with the user first (this could launch
+  // an app), so here we only resolve the href to an absolute path and open it.
+  handle(IPC.VAULT_OPEN_EXTERNAL_FILE, async (_e, href: string) => {
+    try {
+      const raw = String(href ?? '').trim()
+      if (!raw) return { ok: false, error: 'Empty path.' }
+      let abs: string
+      if (/^file:\/\//i.test(raw)) {
+        abs = fileURLToPath(raw)
+      } else if (raw === '~' || raw.startsWith('~/')) {
+        abs = path.join(homedir(), raw.slice(1))
+      } else {
+        abs = path.resolve(raw)
+      }
+      const error = await shell.openPath(abs)
+      return error ? { ok: false, error } : { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  handle(IPC.VAULT_FETCH_LINK_METADATA, async (_e, url: string) => {
+    return await fetchLinkMetadata(url)
   })
 
   handle(
@@ -3936,6 +4088,25 @@ function registerIpc(): void {
       return false
     }
     return await openMarkdownFileFromOS(path.resolve(rawPath), false)
+  })
+
+  // In-app "Open File…" (#449): pop a native picker from the focused window and
+  // open the chosen markdown file the same vault-aware way as drag-and-drop.
+  handle(IPC.APP_OPEN_FILE_DIALOG, async (event): Promise<boolean> => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    return await openMarkdownFileViaDialog(win ?? undefined)
+  })
+
+  handle(IPC.APP_OPEN_FOLDER_TEMPORARY, async (_event, rawPath: string): Promise<void> => {
+    if (typeof rawPath !== 'string' || !rawPath.trim()) return
+    let stat
+    try {
+      stat = await fsp.stat(rawPath)
+    } catch {
+      return
+    }
+    if (!stat.isDirectory()) return
+    await openTemporaryFolder(path.resolve(rawPath), false)
   })
 
   handle(IPC.WINDOW_TOGGLE_QUICK_CAPTURE, async () => {
@@ -4671,6 +4842,13 @@ function installAppMenu(): void {
       label: 'File',
       submenu: [
         {
+          label: 'Open File…',
+          accelerator: 'CmdOrCtrl+O',
+          click: () => {
+            void openMarkdownFileViaDialog(BrowserWindow.getFocusedWindow() ?? mainWindow)
+          }
+        },
+        {
           label: 'Open Vault in New Window…',
           accelerator: 'CmdOrCtrl+Shift+O',
           click: () => {
@@ -4929,6 +5107,10 @@ if (process.platform === 'linux') {
 }
 
 app.whenReady().then(async () => {
+  // The gap from `main.boot.module-loaded` to here is Chromium/GTK
+  // initialization — on Linux this is where fontconfig cache rebuilds and
+  // desktop-portal waits land, none of it our code.
+  recordBootMark('main.boot.app-ready')
   // A second launch (e.g. double-clicking a .md on Windows/Linux) hands
   // its argv to the primary instance via 'second-instance' below, then
   // quits here so there's only ever one ZenNotes process.
@@ -5037,6 +5219,32 @@ app.whenReady().then(async () => {
     })
   })
 
+  protocol.handle(TYPST_ASSET_SCHEME, async (request) => {
+    // zen-typst://asset/<file> -> out/renderer/assets/<file> (the renderer's own
+    // bundled assets, next to its JS chunks). The renderer only ever requests
+    // the hashed Typst wasm and .otf fonts it imported, so this is a fixed,
+    // read-only view of the build output, scoped to those two asset kinds.
+    const rel = decodeURIComponent(new URL(request.url).pathname).replace(/^\/+/, '')
+    const root = path.resolve(__dirname, '../renderer/assets')
+    const abs = path.resolve(root, rel)
+    if (abs !== root && !abs.startsWith(root + path.sep)) {
+      throw new Error(`Invalid Typst asset URL: ${request.url}`)
+    }
+    const contentType = /\.wasm$/i.test(abs)
+      ? 'application/wasm'
+      : /\.otf$/i.test(abs)
+        ? 'font/otf'
+        : null
+    if (!contentType) throw new Error(`Invalid Typst asset URL: ${request.url}`)
+    const data = await fsp.readFile(abs)
+    return new Response(data, {
+      headers: {
+        'content-type': contentType,
+        'cache-control': 'public, max-age=31536000, immutable'
+      }
+    })
+  })
+
   // Permissions this app grants to its own renderer (deny everything else —
   // it's our app talking to our own vault, no third-party surface):
   //   - 'local-fonts'   → queryLocalFonts() for the font picker
@@ -5062,6 +5270,28 @@ app.whenReady().then(async () => {
   // async request handler — grant the same set here or they still fail.
   session.defaultSession.setPermissionCheckHandler((_wc, permission) =>
     GRANTED_PERMISSIONS.has(permission as string)
+  )
+
+  // `renderEmbeds` drops YouTube/Vimeo players into iframes. The packaged app
+  // loads over file://, so those requests carry a null Referer/Origin and the
+  // providers reject the embed (YouTube "Error 153"). Give them a valid
+  // same-site referrer so the player loads, matching what a normal web embed
+  // sends. Scoped to the exact embed hosts.
+  const EMBED_REFERERS: Record<string, string> = {
+    'www.youtube-nocookie.com': 'https://zennotes.app/',
+    'player.vimeo.com': 'https://zennotes.app/'
+  }
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ['https://www.youtube-nocookie.com/*', 'https://player.vimeo.com/*'] },
+    (details, callback) => {
+      try {
+        const referer = EMBED_REFERERS[new URL(details.url).hostname]
+        if (referer) details.requestHeaders['Referer'] = referer
+      } catch {
+        /* leave headers unchanged on a malformed URL */
+      }
+      callback({ requestHeaders: details.requestHeaders })
+    }
   )
 
   // macOS dock icon. `BrowserWindow.icon` has no effect on macOS — the

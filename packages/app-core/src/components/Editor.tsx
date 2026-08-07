@@ -26,15 +26,29 @@ import {
   wikilinkHeadingAnchor
 } from '../lib/wikilinks'
 import { openDatabaseFromWikilink, openWikilinkHeading } from '../lib/wikilink-navigation'
-import { classifyLocalAssetHref, resolveAssetVaultRelativePath } from '../lib/local-assets'
-import { externalLinkUrl, extractLinkAtCursor, plannerLinkUrl, resolveInternalNoteHref } from '../lib/internal-links'
+import {
+  classifyLocalAssetHref,
+  hrefFragment,
+  resolveAssetVaultRelativePath
+} from '../lib/local-assets'
+import {
+  externalLinkUrl,
+  extractLinkAtCursor,
+  plannerLinkUrl,
+  resolveInternalNoteHref
+} from '../lib/internal-links'
 import {
   buildMoveNotePrompt,
   parseMoveNoteTarget,
+  parseTemplateDestination,
   validateMoveNoteTarget
 } from '../lib/move-note'
 import { promptApp } from '../lib/prompt-requests'
 import { offerCreateNoteFromLink } from '../lib/create-note-from-link'
+import { externalFileLink, openExternalFileLink } from '../lib/external-file-link'
+// NOTE: upstream also imports `StatusBar` here but never renders it. This fork
+// moved note stats into the header (a72c444), so StatusBar.tsx exports
+// `NoteStats` instead and the footer bar has no mount point. Import omitted.
 import { EditorPane } from './EditorPane'
 import { focusPaneInDirection, focusPaneOrEdgePanel } from '../lib/pane-nav'
 import { requestPaneMode } from '../lib/pane-mode'
@@ -51,6 +65,7 @@ import { listContinuationPrefix } from '../lib/list-continuation'
 import { lookUpDefinitionInView } from '../lib/look-up-definition'
 import { moveCursorToLink } from '../lib/link-navigation'
 import { focusEditorNormalMode } from '../lib/editor-focus'
+import { toVimSequence } from '../lib/vim-key-sequence'
 
 let vimCommandsRegistered = false
 let syncedVimBindings: Partial<Record<KeymapId, string[]>> = {}
@@ -79,54 +94,6 @@ function clearKnownVimMappings(): void {
       /* ignore */
     }
   }
-}
-
-function toVimKeyName(base: string): string {
-  if (base === 'Space') return 'Space'
-  if (base === 'Enter') return 'CR'
-  if (base === 'Esc' || base === 'Escape') return 'Esc'
-  if (base === 'Tab') return 'Tab'
-  if (base === 'ArrowUp') return 'Up'
-  if (base === 'ArrowDown') return 'Down'
-  if (base === 'ArrowLeft') return 'Left'
-  if (base === 'ArrowRight') return 'Right'
-  return base
-}
-
-function toVimSequenceToken(token: string): string | null {
-  const parts = token
-    .split('+')
-    .map((part) => part.trim())
-    .filter(Boolean)
-  if (parts.length === 0) return null
-  const base = parts.pop()
-  if (!base) return null
-  const keyName = toVimKeyName(base)
-  if (parts.length === 0) {
-    if (base.length === 1) return base
-    return `<${keyName}>`
-  }
-  const modifiers = parts
-    .map((part) => {
-      if (part === 'Ctrl') return 'C'
-      if (part === 'Alt') return 'A'
-      if (part === 'Shift') return 'S'
-      if (part === 'Meta' || part === 'Mod') return 'D'
-      return null
-    })
-    .filter(Boolean) as string[]
-  const normalizedKey = base.length === 1 ? base.toLowerCase() : keyName
-  return `<${[...modifiers, normalizedKey].join('-')}>`
-}
-
-function toVimSequence(binding: string): string | null {
-  const tokens = binding
-    .split(/\s+/)
-    .map((token) => token.trim())
-    .filter(Boolean)
-    .map((token) => toVimSequenceToken(token))
-  if (tokens.length === 0 || tokens.some((token) => !token)) return null
-  return tokens.join('')
 }
 
 function paneMapBindings(overrides: KeymapOverrides, actionId: KeymapId): string[] {
@@ -501,6 +468,25 @@ function registerVimCommands(): void {
     void useStore.getState().openTasksView()
   })
 
+  // Quick-add a whole-note task file. `:newtask` (or `:task`) prompts for a
+  // title and creates it at the configured tasks location; `:newtask <folder>`
+  // targets a specific folder so per-project tasks stay organized (e.g.
+  // `:newtask Projects/Website`). Short name `newt` is a prefix of `newtask`.
+  const runNewTaskEx = (
+    _cm: unknown,
+    params: { argString?: string } | undefined
+  ): void => {
+    const arg = (params?.argString ?? '').trim()
+    if (!arg) {
+      void useStore.getState().newTaskFile()
+      return
+    }
+    const dest = parseTemplateDestination(arg)
+    void useStore.getState().newTaskFile({ folder: dest.folder, subpath: dest.subpath })
+  }
+  Vim.defineEx('newtask', 'newt', runNewTaskEx)
+  Vim.defineEx('task', 'task', runNewTaskEx)
+
   // `:template` / `:tmpl` opens the template picker. `:template <name>` skips
   // the picker and creates directly from the best name/id match. CM-Vim
   // requires a short name to be a prefix of the full name, so `tmpl` (not a
@@ -633,7 +619,8 @@ function registerVimCommands(): void {
       if (activePath && vaultRoot) {
         const abs = resolveAssetVaultRelativePath(vaultRoot, activePath, target)
         if (abs) {
-          state.pinAssetReferenceForNote(activePath, abs)
+          const fragment = hrefFragment(target)
+          state.pinAssetReferenceForNote(activePath, abs, fragment || null)
           return
         }
       }
@@ -676,6 +663,12 @@ function registerVimCommands(): void {
     if (openDatabaseFromWikilink(target)) {
       state.setFocusedPanel('editor')
       requestAnimationFrame(() => useStore.getState().editorViewRef?.focus())
+      return
+    }
+
+    // A link to a file outside the vault: open it with the OS default app. (#424)
+    if (externalFileLink(target)) {
+      void openExternalFileLink(target)
       return
     }
 

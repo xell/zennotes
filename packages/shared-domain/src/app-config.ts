@@ -20,6 +20,19 @@ export const CONFIG_VERSION = 1
 export type TimeFormat = '12h' | '24h'
 
 /**
+ * How the text of a completed task (`- [x]`) is styled in the editor and
+ * preview. `none` keeps the original appearance (just the checked box).
+ */
+export type CompletedTaskStyle = 'none' | 'strikethrough' | 'gray' | 'gray-strikethrough'
+
+/**
+ * Which typesetter renders `$…$` / `$$…$$` math. KaTeX (default) parses the
+ * body as LaTeX; Typst parses it as Typst markup, so a note's math is written
+ * for whichever engine is selected, not interchangeable between them.
+ */
+export type MathRenderer = 'katex' | 'typst'
+
+/**
  * The host locale's 12/24-hour convention, used as the `timeFormat` default so a
  * fresh install matches the operating system out of the box. Reads only the
  * resolved format options (no `Date`), so it is safe to evaluate at module load.
@@ -62,7 +75,14 @@ export const PORTABLE_PREF_KEYS = [
   'livePreview',
   'renderTablesInLivePreview',
   'hideActiveLineMarkup',
+  'completedTaskStyle',
+  'mathRenderer',
+  'typstTagPreambles',
+  'looseMathDelimiters',
+  'keepViewModeAcrossNotes',
   'markdownSnippets',
+  'autoPairs',
+  'autoPairQuotesInProse',
   'hideBuiltinTemplates',
   'tabsEnabled',
   'wrapTabs',
@@ -102,7 +122,9 @@ export const PORTABLE_PREF_KEYS = [
   // view
   'systemFolderLabels',
   'noteSortOrder',
+  'assetSortOrder',
   'groupByKind',
+  'nestedTags',
   'autoReveal',
   'pinnedRefMode',
   'quickNoteDateTitle',
@@ -177,9 +199,18 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   ripgrepBinaryPath: null,
   fzfBinaryPath: null,
   livePreview: true,
+  // This fork keeps the 3-way table render mode (off/rich/compatible) for
+  // Grammarly compatibility; upstream still ships a plain boolean here.
   renderTablesInLivePreview: 'rich',
   hideActiveLineMarkup: false,
+  completedTaskStyle: 'none',
+  mathRenderer: 'katex',
+  typstTagPreambles: false,
+  looseMathDelimiters: false,
+  keepViewModeAcrossNotes: false,
   markdownSnippets: true,
+  autoPairs: true,
+  autoPairQuotesInProse: false,
   hideBuiltinTemplates: false,
   tabsEnabled: true,
   wrapTabs: false,
@@ -216,7 +247,9 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   monoFont: null,
   systemFolderLabels: {},
   noteSortOrder: 'none',
+  assetSortOrder: 'name-asc',
   groupByKind: true,
+  nestedTags: true,
   autoReveal: false,
   pinnedRefMode: 'edit',
   quickNoteDateTitle: false,

@@ -24,8 +24,9 @@ import { useStore } from '../store'
 const HASHTAG_RE = /(^|\s)#(\p{L}[\p{L}\d_/-]*)/gu
 
 /** True when `pos` sits inside a code span/block or a heading — contexts where
- *  a `#` isn't a tag (`#include`, `# Heading`, …). */
-function skipContext(state: EditorView['state'], pos: number): boolean {
+ *  a `#` isn't a tag (`#include`, `# Heading`, …). Shared with the hashtag
+ *  autocomplete source so suggestions honor the same exclusions. */
+export function isTagSkippedContext(state: EditorView['state'], pos: number): boolean {
   let node = syntaxTree(state).resolveInner(pos, 1)
   while (node) {
     const n = node.name
@@ -58,7 +59,7 @@ function buildDecorations(view: EditorView): DecorationSet {
       while ((m = HASHTAG_RE.exec(line.text)) !== null) {
         const tagStart = line.from + m.index + m[1].length
         const tagEnd = tagStart + 1 + m[2].length
-        if (skipContext(state, tagStart)) continue
+        if (isTagSkippedContext(state, tagStart)) continue
         // Per-match so the tag name rides along for the click handler.
         builder.add(
           tagStart,

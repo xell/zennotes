@@ -3,7 +3,12 @@
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it } from 'vitest'
-import { setBlockType, toggleWrap, wrapLink } from './cm-format'
+import {
+  formatMarkerBackspaceTransaction,
+  setBlockType,
+  toggleWrap,
+  wrapLink
+} from './cm-format'
 
 const views: EditorView[] = []
 function mount(doc: string, from: number, to: number): EditorView {
@@ -51,6 +56,45 @@ describe('toggleWrap', () => {
     expect(view.state.selection.main.head).toBe(3) // between == and ==
   })
 
+  it('moves past the closing marker when toggling off an active empty-selection wrap', () => {
+    const view = mount('**bold** text', 6, 6) // cursor before closing **
+    toggleWrap(view, '**')
+    expect(view.state.doc.toString()).toBe('**bold** text')
+    expect(view.state.selection.main.empty).toBe(true)
+    expect(view.state.selection.main.head).toBe(8)
+  })
+
+  it('removes an untouched empty pair when pressing the shortcut again', () => {
+    const view = mount('****', 2, 2) // between the opening and closing **
+    toggleWrap(view, '**')
+    expect(view.state.doc.toString()).toBe('')
+    expect(view.state.selection.main.empty).toBe(true)
+    expect(view.state.selection.main.head).toBe(0)
+  })
+
+  it('nests italic inside a fresh bold pair instead of eating its markers', () => {
+    // `**|**` from Ctrl+B, then Ctrl+I: the `*` on each side belongs to the bold
+    // pair, so removing it would destroy the bold the user just started.
+    const view = mount('****', 2, 2)
+    toggleWrap(view, '*')
+    expect(view.state.doc.toString()).toBe('******')
+    expect(view.state.selection.main.head).toBe(3)
+  })
+
+  it('toggles bold off inside a bold+italic pair, leaving the italic', () => {
+    const view = mount('******', 3, 3)
+    toggleWrap(view, '**')
+    expect(view.state.doc.toString()).toBe('**')
+    expect(view.state.selection.main.head).toBe(1)
+  })
+
+  it('does not treat a cursor before a later opening marker as active formatting', () => {
+    const view = mount('**done** **next**', 9, 9) // cursor before the second opening **
+    toggleWrap(view, '**')
+    expect(view.state.doc.toString()).toBe('**done** ******next**')
+    expect(view.state.selection.main.head).toBe(11)
+  })
+
   it('works for the other markers', () => {
     for (const [marker, expected] of [
       ['~~', 'a ~~b~~ c'],
@@ -61,6 +105,47 @@ describe('toggleWrap', () => {
       toggleWrap(view, marker)
       expect(view.state.doc.toString()).toBe(expected)
     }
+  })
+})
+
+// #468: Backspace inside a just-inserted empty formatting snippet (`**|**`)
+// should remove the whole pair, not one marker character.
+describe('formatMarkerBackspaceTransaction', () => {
+  function backspace(doc: string, head: number): { doc: string; head: number } | null {
+    const state = EditorState.create({ doc, selection: EditorSelection.cursor(head) })
+    const tr = formatMarkerBackspaceTransaction(state)
+    if (!tr) return null
+    const next = state.update(tr).state
+    return { doc: next.doc.toString(), head: next.selection.main.head }
+  }
+
+  it('removes the whole pair for every empty formatting snippet', () => {
+    // doc, cursor-between-the-markers
+    expect(backspace('****', 2)).toEqual({ doc: '', head: 0 }) // **|** bold
+    expect(backspace('**', 1)).toEqual({ doc: '', head: 0 }) // *|* italic
+    expect(backspace('~~~~', 2)).toEqual({ doc: '', head: 0 }) // ~~|~~ strike
+    expect(backspace('====', 2)).toEqual({ doc: '', head: 0 }) // ==|== highlight
+    expect(backspace('``', 1)).toEqual({ doc: '', head: 0 }) // `|` inline code
+    expect(backspace('$$', 1)).toEqual({ doc: '', head: 0 }) // $|$ math
+  })
+
+  it('prefers the longest marker so `**|**` deletes all four, not `*|*`', () => {
+    expect(backspace('****', 2)).toEqual({ doc: '', head: 0 })
+  })
+
+  it('deletes only the empty snippet when it is surrounded by text', () => {
+    expect(backspace('x****y', 3)).toEqual({ doc: 'xy', head: 1 })
+  })
+
+  it('leaves a non-empty snippet alone (only one marker char removed by default)', () => {
+    expect(backspace('**b**', 3)).toBeNull() // cursor after the `b`
+    expect(backspace('**b**', 2)).toBeNull() // cursor before the `b`
+  })
+
+  it('does nothing at the start of the document or with a selection', () => {
+    expect(backspace('****', 0)).toBeNull()
+    const state = EditorState.create({ doc: '****', selection: EditorSelection.range(0, 2) })
+    expect(formatMarkerBackspaceTransaction(state)).toBeNull()
   })
 })
 

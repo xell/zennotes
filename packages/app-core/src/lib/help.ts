@@ -56,7 +56,7 @@ export const HELP_QUICK_START: HelpCard[] = [
   {
     title: 'Format a selection',
     body:
-      'Select text to pop up a formatting toolbar — bold, italic, strikethrough, highlight, code, math, link, comment, and a “Turn into” menu that re-types the block (Text, Heading 1–3, lists, quote, code). The same actions have keyboard shortcuts that work on every platform, in or out of Vim mode: Mod+B bold, Mod+I italic, Mod+E code, Mod+K link, Shift+Mod+S strikethrough, Shift+Mod+H highlight, Shift+Mod+M math (Mod is ⌘ on macOS, Ctrl on Windows/Linux). Press Mod+/ to focus the toolbar and walk it with the arrow keys; Enter applies, Esc returns to the text.'
+      'Select text to pop up a formatting toolbar — bold, italic, strikethrough, highlight, code, math, link, comment, and a “Turn into” menu that re-types the block (Text, Heading 1–3, lists, quote, code). The same actions have keyboard shortcuts that work on every platform, in or out of Vim mode: Mod+B bold, Mod+I italic, Mod+E code, Mod+K link, Shift+Mod+S strikethrough, Shift+Mod+H highlight, Shift+Mod+M math (Mod is ⌘ on macOS, Ctrl on Windows/Linux). Press Mod+/ to focus the toolbar and walk it with the arrow keys; Enter applies, Esc returns to the text. Once a formatted word is typed, **Alt+]** steps the cursor past the closing markers so you can keep writing outside them, and **Alt+[** steps back over the previous ones — repeat either to walk the line pair by pair, brackets included. Pressing the format shortcut a second time (Mod+B again) also leaves the span. All three work in Vim mode and out of it, and the two hops can be rebound in Settings → Keymaps.'
   },
   {
     title: 'Switch between write and read modes',
@@ -109,7 +109,7 @@ export const HELP_HOW_TO_GUIDES: HelpCard[] = [
   {
     title: 'Make and edit your own templates',
     body:
-      'Open Settings → Templates. Press "New template" to author one: a template is just markdown with optional YAML frontmatter (`name`, `description`, `category`, `titleTemplate`, `targetFolder`, `targetSubpath`) and a body. Use the variables `{{title}}`, `{{date}}`, `{{date:YYYY-MM-DD}}` (any moment-style format), `{{time}}`, `{{week}}`, and `{{cursor}}` (where the caret lands). Custom templates are saved as plain `.md` files under `.zennotes/templates/`. You can also fork a built-in by pressing Edit on it — that creates an editable copy that shadows the original, and Reset restores the built-in. From any note, the "Save Current Note as Template…" command captures it as a new template.'
+      'Open Settings → Templates. Press "New template" to author one: a template is just markdown with optional YAML frontmatter (`name`, `description`, `category`, `titleTemplate`, `targetFolder`, `targetSubpath`) and a body. Use the variables `{{title}}`, `{{date}}`, `{{date:FORMAT}}` (e.g. `{{date:YYYY-MM-DD}}`), `{{time}}`, `{{week}}`, and `{{cursor}}` (where the caret lands). The date format accepts the same tokens as the daily/weekly note directory and title patterns — `yyyy`/`yy`, `MMMM`/`MMM`/`MM`/`M`, `dd`/`d`, `EEEE`/`EEE` (weekday), `ww`/`w` (ISO week) — as well as moment-style `YYYY`/`DD`/`dddd`; wrap literal letters in `[brackets]`. Custom templates are saved as plain `.md` files under `.zennotes/templates/`. You can also fork a built-in by pressing Edit on it — that creates an editable copy that shadows the original, and Reset restores the built-in. From any note, the "Save Current Note as Template…" command captures it as a new template.'
   },
   {
     title: 'Draw diagrams with Excalidraw',
@@ -160,6 +160,16 @@ export const HELP_HOW_TO_GUIDES: HelpCard[] = [
     title: 'Run the self-hosted web version with Docker',
     body:
       'Prefer ZenNotes in a browser instead of the desktop app? Pull the prebuilt, multi-arch image from Docker Hub with `docker pull adibhanna/zennotes`, generate a login token and keep a copy (`openssl rand -hex 32`), then start the container with your vault mounted:\n`docker run -d -p 127.0.0.1:7878:7878 \\\n  -e ZENNOTES_AUTH_TOKEN=<your-token> \\\n  -v "$HOME/Documents/MyVault:/workspace" \\\n  -v "$HOME/zennotes-data:/data" \\\n  adibhanna/zennotes:latest`\nThe server binds to 0.0.0.0, so it will not start without that token — open http://localhost:7878 and paste the token on first connect. Your notes stay as ordinary .md files on the host, and the desktop app can point at the same server. The full walkthrough, including reverse-proxy and TLS hardening, lives at zennotes.org/docs.'
+  },
+  {
+    title: 'Share Typst definitions across notes with tags',
+    body:
+      'With the **Typst** math renderer, Settings → Editor → **Typst definitions from tags** lets a note\'s tags decide which Typst definitions its formulas compile against — so `vector()` can be an arrow in physics and bold in maths without redefining it in every note. Write a preamble as an ordinary note inside a folder named `typst`, titled with the tag path in dots: `typst/physics.md` applies to `#physics`, `typst/physics.mechanics.md` to `#physics/mechanics`. Nested tags layer general → specific, so the narrower tag wins, and a note carrying several tags gets them in alphabetical order so the same tags always compile the same way. Preamble notes are ordinary notes: they sync, they are searchable, and editing one re-renders every note that uses it. Off by default, and it costs nothing when off.'
+  },
+  {
+    title: 'Connect the desktop app to a self-hosted server',
+    body:
+      'Settings → Vault → Remote workspace takes the server URL and its token. **On macOS**, a server on your own network also needs the system Local Network permission: macOS asks the first time ZenNotes reaches a local address, and if you dismiss that prompt the connection fails with no packets sent and no further warning — it looks exactly like a server that is down. Turn it back on under System Settings → Privacy & Security → Local Network. A server reached over the public internet is unaffected.'
   },
   {
     title: 'Customize the look: themes vs. overrides',
@@ -235,6 +245,11 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
       'Tasks scans every note for checkboxes, Tags lets you browse notes that carry all of the selected tags (toggle Match to Any for a union), Archive gives you a dedicated list of cold-storage notes, and Trash gives you a recovery surface for deleted notes without turning the left rail into a second browser. Selected tags accumulate so you can narrow across several at once; clear them with the Selected strip’s “Clear all”, the `c` key, or a right-click on any tag chip (which also offers “Unselect others” to keep just that one).'
   },
   {
+    title: 'A whole note can be a task (task files)',
+    body:
+      'Besides inline `- [ ]` checkboxes, a whole note can itself be a task: give its frontmatter a `task` tag (`tags: [task]`) and its metadata lives in frontmatter — `status` (open / in-progress / done…), `priority` (high / normal / low), `due` and `scheduled` (`YYYY-MM-DD`), plus any `tags`, while the note body holds free-form detail or sub-checkboxes. These "task files" show up in the Tasks views right alongside inline tasks, so both styles live in one vault. This is the TaskNotes convention, so a vault stays interoperable with TaskForge and Obsidian. Quick-add one from the command palette (**New Task**, or **New Task in Folder…** to choose where it lands), the "+ New task" button in the Tasks header, the `a` key (Vim mode), or the `:newtask` / `:task` ex command — and `:newtask Projects/Website` drops it straight into a folder so multiple projects stay organized. New task files default to your configured tasks location (Settings → New Drawings, Databases & Tasks; the inbox by default), and the folder-picking options override that per task. Checking a task file off rewrites its frontmatter (`status: done` and a `completedDate`) rather than a checkbox character, and rescheduling from the calendar or changing its column on the Kanban board updates the matching frontmatter field. Delete on a task file trashes the whole note (after a confirm).'
+  },
+  {
     title: 'The Tasks calendar schedules and reschedules',
     body:
       "Switch Tasks to Calendar (button or `2`) to see tasks laid out by due date. A task written inside a daily note automatically shows on that day — no `due:` needed — so the day you wrote it on is the day it lands. Type in the box under the grid to add a task to the selected day (it’s created in that day’s daily note, offering to create the note first for a day that has none). Reschedule by dragging a task onto another day, or from the keyboard: `Tab` picks a task in the day list, `<` / `>` shifts it a day earlier/later, and `T` moves it to today."
@@ -242,12 +257,22 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
   {
     title: 'The Tasks Kanban board, custom statuses, and any field',
     body:
-      'Switch Tasks to Kanban (button or `3`) for a column board. "Group by" offers Status (Today / Upcoming / Waiting / Done, derived from due dates and `@waiting`), Priority, Folder, Custom status, and one entry per inline `@field` you use. Any task field works: tag tasks with `@key:value` tokens like `@status:review`, `@sprint:24`, or `@area:backend`, and each key becomes its own board with a column per value (auto-discovered, so it appears the moment you use it). For the status field, list the columns in order in `config.toml` under `[view]`, e.g. `kanban_statuses = ["backlog", "in_progress", "review", "done"]`; other fields sort their columns automatically. A note-level `status:` in frontmatter sets a default for that note’s tasks. Everything is keyboard-first: `h`/`l` move between columns, `j`/`k` between cards, `g` cycles the group-by, `Shift+H` / `Shift+L` send the focused card to the previous/next column (rewriting its `@field` token), and `Space`/`Enter` toggle/open. Drag does the same with the mouse. Rename status columns with `[kanban_column_titles]`.'
+      'Switch Tasks to Kanban (button or `3`) for a column board. "Group by" offers Status (Today / Upcoming / Waiting / Done, derived from due dates and `@waiting`), Priority, Folder, Custom status, and one entry per inline `@field` you use. Any task field works: tag tasks with `@key:value` tokens like `@status:review`, `@sprint:24`, or `@area:backend`, and each key becomes its own board with a column per value (auto-discovered, so it appears the moment you use it). For the status field, list the columns in order in `config.toml` under `[view]`, e.g. `kanban_statuses = ["backlog", "in_progress", "review", "done"]`; other fields sort their columns automatically. A note-level `status:` in frontmatter sets a default for that note’s tasks. Everything is keyboard-first: `h`/`l` move between columns, `j`/`k` between cards, `g` cycles the group-by, `Shift+H` / `Shift+L` send the focused card to the previous/next column (rewriting its `@field` token), `<` / `>` reorder the columns themselves (saved per board), and `Space`/`Enter` toggle/open. Drag does the same with the mouse — including dragging a column header to reorder. Renaming a column (click its title, or `[kanban_column_titles]` in `config.toml`) sets a display label only: the column still shows its underlying `@field:value` beneath the name, and moving a card in writes that value, not the label.'
   },
   {
     title: 'Forward a task to another note',
     body:
       'Forwarding moves a task to a different note while leaving a record behind — the bullet-journal “migrate” gesture. Type `>` inside a task’s checkbox (turning `- [ ]` into `- [>]`) to open a note picker, run “Forward Task to Note…” from the command palette with the cursor on a task, or press `>` on a task in the Tasks list. The original stays as `- [>] … [[Target]]` (a forwarded marker linking to where it went), and a fresh `- [ ] … [[Source]]` copy is added to the note you pick, backlinked home. Forwarded tasks collect under their own “Forwarded” group in the Tasks list, kept out of Today and Done.'
+  },
+  {
+    title: 'Cancel a task',
+    body:
+      'Cancelling marks a task as intentionally abandoned — distinct from done (finished) or forwarded (moved). Write `- [-]` directly, run “Cancel Task” from the command palette with the cursor on a task, or press `c` on a task in the Tasks list (press `c` again to un-cancel). A cancelled task renders with a muted `✕` and struck-through text, and collects under its own “Cancelled” group in the Tasks list, kept out of Today, Done, and the Kanban board. A whole-note task file cancels the same way, writing `status: cancelled` to its frontmatter.'
+  },
+  {
+    title: 'Style completed tasks',
+    body:
+      'By default, checking a task (`- [x]`) just fills its checkbox. Settings → Editor → Completed task style can also dim the text, strike it through, or both, so finished items visually recede in the editor and reading view while the checkbox stays checked. The command palette has direct entries (“Completed Tasks: Strikethrough”, “Gray”, “Strikethrough + Gray”, “No Style”). Nested sub-tasks keep their own state, so a completed parent never strikes an unchecked child.'
   },
   {
     title: 'Moving notes is path-first',
@@ -263,6 +288,11 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
     title: 'Slash commands speed up writing',
     body:
       'When you type `/` at the start of a line or after whitespace, ZenNotes opens an inline insert menu for common markdown structures such as headings, bulleted or numbered lists, to-do items, callouts, code blocks, dividers, tables, math blocks, links, images, and even creating a new note page.'
+  },
+  {
+    title: 'Callouts highlight the important bits',
+    body:
+      'Turn a blockquote into a colored callout (an Obsidian-style admonition) by starting its first line with `> [!type]`, optionally followed by a title: `> [!warning] Heads up`. Typing `[!` inside a blockquote opens an insert menu of the callout types — filter by name (aliases match too, so `warn` finds Warning and `tldr` finds Abstract), move with the arrow keys or the Vim/Emacs completion chords (Ctrl+J / Ctrl+K, Ctrl+N / Ctrl+P), and press Enter, Tab, Ctrl+Y, or click to drop in the syntax. The type sets the color: `note`, `info`, `abstract` / `summary` / `tldr` render blue; `tip` / `hint` / `important` and `success` / `check` / `done` green; `question` / `help` / `faq` and `example` purple; `warning` / `caution` / `attention` yellow; `danger` / `error`, `bug`, and `failure` / `fail` red; and `quote` / `cite` a neutral gray. Types are case-insensitive, and an unrecognized one still renders as a neutral note, so callouts pasted in from Obsidian keep working.'
   },
   {
     title: '@ inserts dates and links notes',
@@ -292,7 +322,7 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
   {
     title: 'Files stay local',
     body:
-      'Drop files into a note to insert local files. By default, ZenNotes keeps them as ordinary files in the vault root, can reveal them from the app, and opens images, SVGs, PDFs, audio, video, and generic files inside ZenNotes tabs or reference panes where possible.'
+      'Drop files into a note to insert local files. ZenNotes copies them into the vault’s `assets/` folder — the same place pasted images land — so they stay together instead of cluttering your notes area, whether you keep notes in `inbox/` or at the vault root. It can reveal them from the app, and opens images, SVGs, PDFs, audio, video, and generic files inside ZenNotes tabs or reference panes where possible. In the sidebar you can drag an image, PDF, or any attachment onto a folder to move it, just like a note, or use its Move… context-menu entry.'
   },
   {
     title: 'Any CSV is a database',
@@ -312,7 +342,7 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
   {
     title: 'Math, diagrams, and plots render from plain fences',
     body:
-      'Inline `$…$` and display `$$…$$` math render via KaTeX. Beyond math, four fenced block languages turn into live diagrams in preview and split mode: `mermaid` for flow, sequence, state, gantt, and graph diagrams; `tikz` for LaTeX-native coordinate systems, commutative diagrams, and figure-quality plots (the TeX engine runs on-device so no network is required); `jsxgraph` for interactive geometry and function plots driven by a small JSON config; and `function-plot` for compact Cartesian function plotting. Each block is ordinary markdown on disk, so the source remains portable and diffable.'
+      'Inline `$…$` and display `$$…$$` math render via KaTeX by default. Settings ▸ Editor ▸ Math renderer switches the typesetter to Typst, which reads the same `$…$` / `$$…$$` blocks as Typst markup instead of LaTeX (a note’s math is written for whichever engine you pick). Beyond math, four fenced block languages turn into live diagrams in preview and split mode: `mermaid` for flow, sequence, state, gantt, and graph diagrams; `tikz` for LaTeX-native coordinate systems, commutative diagrams, and figure-quality plots (the TeX engine runs on-device so no network is required); `jsxgraph` for interactive geometry and function plots driven by a small JSON config; and `function-plot` for compact Cartesian function plotting. Each block is ordinary markdown on disk, so the source remains portable and diffable.'
   },
   {
     title: 'Footer actions expose utility views',
@@ -347,7 +377,8 @@ export const HELP_SHORTCUT_SECTIONS: HelpShortcutSection[] = [
       { keys: 'Mod+2', action: 'Toggle connections', detail: 'Toggle the connections panel for the active editor pane.' },
       { keys: 'Mod+Shift+C', action: 'Toggle comments panel', detail: 'Show or hide the Comments panel for the active pane.' },
       { keys: 'Mod+Alt+M', action: 'Add comment', detail: 'Start a comment on the selected text (or the current line) without reaching for the mouse.' },
-      { keys: 'Alt+H / Alt+J / Alt+K / Alt+L', action: 'Focus pane left / down / up / right', detail: 'Always-on pane-focus motions — they work even with Vim mode off and skip the Ctrl+W prefix some Linux setups intercept. (Ctrl+W h/j/k/l still works in Vim mode.)' },
+      { keys: 'Alt+H / Alt+J / Alt+K / Alt+L', action: 'Focus pane left / down / up / right', detail: 'Always-on pane-focus motions — they work even with Vim mode off and skip the Ctrl+W prefix some Linux setups intercept. (Ctrl+W h/j/k/l still works in Vim mode.) Both walk the same cycle, in the order the panels appear on screen: sidebar → note list → editor → connections → comments → outline → calendar, and back again.' },
+      { keys: '↑ / ↓ / Enter / Esc', action: 'Move inside a focused panel', detail: 'Once a panel has focus, the arrows move its row cursor, Home and End jump to the ends, Enter opens the row under the cursor, and Esc (or ←) returns focus to the editor. These work with Vim mode off; the single-key motions (j / k, gg / G) stay Vim-only.' },
       { keys: 'Mod+.', action: 'Toggle Zen mode', detail: 'Hide or restore the app chrome so only the active editor, preview, or split view stays on screen.' },
       { keys: 'Mod+W', action: 'Close active tab', detail: 'Close the current note or virtual tab.' },
       { keys: 'Shift+Mod+T', action: 'Reopen closed tab', detail: 'Reopen the most recently closed tab, restoring its position and pinned state. Repeat to walk back through your close history.' },
@@ -387,7 +418,7 @@ export const HELP_SHORTCUT_SECTIONS: HelpShortcutSection[] = [
       { keys: 'Space p', action: 'Note outline', detail: 'Jump to any heading in the active note via a searchable overlay.' },
       { keys: 'Space v', action: 'Switch vault', detail: 'Open the command palette directly to the local vault switcher.' },
       { keys: 'Space, then pause', action: 'Show leader hints', detail: 'If enabled in Settings, open a which-key style guide for the next available leader actions. Sticky mode keeps it open until `Space` or `Esc`.' },
-      { keys: 'Mod+3', action: 'Toggle outline panel', detail: 'Show or hide the persistent outline in the active pane.' },
+      { keys: 'Mod+3', action: 'Toggle outline panel', detail: 'Show or hide the persistent outline in the active pane. Once focused (Ctrl+W l or Alt+L from the editor), j / k — or the arrows — walk the headings, gg / G jump to the first and last, Enter jumps the editor to the heading under the cursor, and Esc hands focus back.' },
       { keys: 'zc / zo', action: 'Fold / unfold heading', detail: 'Collapse or expand the section below the heading at the cursor.' },
       { keys: 'zM / zR', action: 'Fold / unfold all', detail: 'Collapse or expand every heading section in the note.' },
       { keys: 'Ctrl-o', action: 'Go back', detail: 'Jump to the previous note location in history.' },
@@ -766,7 +797,7 @@ export const HELP_SETTINGS: HelpSettingsSection[] = [
       { label: 'Theme, mode, and variant', detail: 'Pick a theme family — Apple, Gruvbox, Catppuccin, GitHub, Solarized, One, Nord, Tokyo Night, Kanagawa (Wave / Dragon / Paper Ink (Custom) / Lotus), Rosé Pine (Rosé Pine / Moon / Dawn), or the monochrome, true-black (OLED-friendly) Black Metal — plus light or dark mode and the active flavor or contrast where the theme supports it.' },
       { label: 'Dark sidebar', detail: 'Tint the sidebar slightly darker than the canvas so the chrome reads as a distinct surface.' },
       { label: 'Sidebar arrows', detail: 'Show or hide disclosure arrows for collapsible sidebar folders and sections.' },
-      { label: 'Use theme for PDF export', detail: 'Under Settings → Appearance → PDF export. Off by default, so exported PDFs use a clean light print theme. Turn it on to render the PDF in your current theme instead — colors and dark/light, including custom themes — as a full-bleed page.' }
+      { label: 'Use theme for PDF export', detail: 'Under Settings → Appearance → PDF export. Off by default, so exported PDFs use a clean light print theme. Turn it on to export in your current look instead: your theme (colors and dark/light, including custom themes), plus your enabled CSS snippets and color tweaks, as a full-bleed page. This toggle is the single switch for how the PDF looks; your CSS snippets style the export only while it is on, so you customize the PDF by editing your snippets, not with a separate print stylesheet.' }
     ]
   },
   {
@@ -867,6 +898,11 @@ export const HELP_CLI: HelpCard[] = [
     title: 'No app required',
     body:
       'The CLI reads from the same vault folder the desktop app uses, so it works whether or not ZenNotes is open. When the app is open, file watchers pick up CLI changes automatically — captures and edits show up live in the sidebar.'
+  },
+  {
+    title: 'Point it at a self-hosted server',
+    body:
+      'Every command works against a vault behind a ZenNotes server, not just one on this disk. Once you have connected the desktop app to a server, that server is nameable from the terminal: `zn list --server home`, `zn capture "..." --server home`. `zn vault list` shows local vaults and servers together, and `--vault <name>` resolves either kind, so the short name you already type keeps working. Pass a URL directly for a server you have not saved — `zn list --server 192.168.1.10:7878` — and `--token` for its auth token. For CI or a headless box, set `ZENNOTES_SERVER` and `ZENNOTES_REMOTE_TOKEN` instead of storing anything on disk. `zn open` is the one exception: it hands file paths to the desktop app, so it needs a local vault.'
   },
   {
     title: 'Capture is the gateway drug',

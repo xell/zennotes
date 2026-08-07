@@ -23,14 +23,14 @@ If no vault is open, ZenNotes asks you to open one first, then try again.
 
 ## From the terminal
 
-If you've installed the `zen` CLI (Settings → CLI), you can open files from a shell:
+If you've installed the `zn` CLI (Settings → CLI), you can open files from a shell:
 
 ```bash
-zen open ~/Downloads/notes.md
-zen open inbox/Today.md other.markdown   # one or more files
+zn open ~/Downloads/notes.md
+zn open inbox/Today.md other.markdown   # one or more files
 ```
 
-`zen open` hands the files to the ZenNotes app, which opens each one the same way as a double-click — as a vault note if it's inside a vault, otherwise in a standalone editor window.
+`zn open` hands the files to the ZenNotes app, which opens each one the same way as a double-click — as a vault note if it's inside a vault, otherwise in a standalone editor window.
 
 ## Make ZenNotes the default app for markdown
 

@@ -6,6 +6,7 @@ import { promisify } from 'node:util'
 import { app } from 'electron'
 import { recordMainPerf } from './perf'
 import { resolveCommandViaLoginShell } from './login-shell-path'
+import { isEphemeralRoot } from './ephemeral-vaults'
 import {
   resolveWikilinkTarget,
   rewriteWikilinksForRename,
@@ -49,6 +50,7 @@ import {
   VaultInfo
 } from '@shared/ipc'
 import { DEMO_TOUR_DIR } from '@shared/demo-tour'
+import { FRONTMATTER_BLOCK_RE, frontmatterTags } from '@shared/frontmatter'
 import {
   DATABASE_SIDECAR_SUFFIX,
   databaseCsvPathFor,
@@ -86,7 +88,7 @@ const DELETED_ASSET_META = '.zn-deleted.json'
 const VAULT_SETTINGS_FILE = 'vault.json'
 const MANUAL_ORDER_FILE = 'manual-order-v1.json'
 const NOTE_META_CACHE_FILE = 'note-meta-cache-v1.json'
-const NOTE_META_CACHE_VERSION = 2
+const NOTE_META_CACHE_VERSION = 3
 const NOTE_COMMENTS_DIR = 'comments'
 const NOTE_COMMENTS_SUFFIX = '.comments.json'
 const RESERVED_ROOT_NAMES = new Set<string>([...FOLDERS, ...ATTACHMENTS_DIRS, INTERNAL_VAULT_DIR])
@@ -884,6 +886,13 @@ function cloneVaultViewSettings(view: VaultViewSettings): VaultViewSettings {
   return {
     ...view,
     ...(view.kanbanColumnTitles ? { kanbanColumnTitles: { ...view.kanbanColumnTitles } } : {}),
+    ...(view.kanbanColumnOrder
+      ? {
+          kanbanColumnOrder: Object.fromEntries(
+            Object.entries(view.kanbanColumnOrder).map(([group, ids]) => [group, [...ids]])
+          )
+        }
+      : {}),
     ...(view.systemFolderLabels ? { systemFolderLabels: { ...view.systemFolderLabels } } : {})
   }
 }
@@ -1059,6 +1068,7 @@ function normalizeVaultSettings(
       },
       drawingsLocation: { mode: 'primary' },
       databasesLocation: { mode: 'primary' },
+      tasksLocation: { mode: 'primary' },
       folderIcons: {},
       folderColors: {},
       favorites: []
@@ -1094,6 +1104,7 @@ function normalizeVaultSettings(
     } | null
     drawingsLocation?: unknown
     databasesLocation?: unknown
+    tasksLocation?: unknown
     folderIcons?: Record<string, unknown> | null
     folderColors?: Record<string, unknown> | null
     favorites?: unknown
@@ -1147,6 +1158,7 @@ function normalizeVaultSettings(
     },
     drawingsLocation: normalizeFileLocation(candidate.drawingsLocation),
     databasesLocation: normalizeFileLocation(candidate.databasesLocation),
+    tasksLocation: normalizeFileLocation(candidate.tasksLocation),
     folderIcons,
     folderColors: normalizeFolderColors(candidate.folderColors),
     favorites: normalizeFavorites(candidate.favorites),
@@ -1167,6 +1179,9 @@ function normalizeVaultViewSettings(raw: unknown): VaultViewSettings | undefined
   if (typeof c.kanbanGroupBy === 'string') view.kanbanGroupBy = c.kanbanGroupBy
   if (c.kanbanColumnTitles && typeof c.kanbanColumnTitles === 'object') {
     view.kanbanColumnTitles = c.kanbanColumnTitles as Record<string, string>
+  }
+  if (c.kanbanColumnOrder && typeof c.kanbanColumnOrder === 'object') {
+    view.kanbanColumnOrder = c.kanbanColumnOrder as Record<string, string[]>
   }
   if (typeof c.autoReveal === 'boolean') view.autoReveal = c.autoReveal
   if (c.systemFolderLabels && typeof c.systemFolderLabels === 'object') {
@@ -1351,6 +1366,9 @@ export async function setVaultSettings(
 ): Promise<VaultSettings> {
   const fallbackPrimary = await inferPrimaryNotesLocation(root)
   const normalized = normalizeVaultSettings(next, fallbackPrimary)
+  // Temporary folder session (#): never write .zennotes/vault.json into a
+  // folder the user only dropped in to read. Keep the change in memory.
+  if (isEphemeralRoot(root)) return cloneVaultSettings(normalized)
   await fs.mkdir(path.dirname(vaultSettingsPath(root)), { recursive: true })
   await fs.writeFile(vaultSettingsPath(root), JSON.stringify(normalized, null, 2), 'utf8')
   if (normalized.primaryNotesLocation === 'inbox') {
@@ -1731,13 +1749,20 @@ function localAssetTargetKind(target: string): ImportedAssetKind | null {
   return 'file'
 }
 
-/** Pull unique `#tags` out of markdown text, ignoring fenced/inline code. */
+/** Pull unique tags out of a note: its frontmatter `tags` field plus every
+ *  inline `#tag`, ignoring fenced/inline code. The frontmatter block itself is
+ *  excluded from the inline scan, so a `#` in another field is not a tag.
+ *  `frontmatterTags` is shared with the renderer's live extraction (#444). */
 function extractTags(body: string): string[] {
-  if (!body.includes('#')) return []
-  const stripped = stripCodeContent(body)
-  const matches = stripped.match(/(?:^|\s)#(\p{L}[\p{L}\d_/-]*)/gu) || []
   const seen = new Set<string>()
-  for (const m of matches) seen.add(m.trim().slice(1))
+  for (const tag of frontmatterTags(body)) seen.add(tag)
+
+  const markdownBody = body.replace(FRONTMATTER_BLOCK_RE, '')
+  if (markdownBody.includes('#')) {
+    const stripped = stripCodeContent(markdownBody)
+    const matches = stripped.match(/(?:^|\s)#(\p{L}[\p{L}\d_/-]*)/gu) || []
+    for (const m of matches) seen.add(m.trim().slice(1))
+  }
   return [...seen]
 }
 
@@ -2069,6 +2094,9 @@ async function persistNoteMetaCacheSnapshot(
 
 function schedulePersistNoteMetaCache(root: string, metas: NoteMeta[]): void {
   if (process.env.ZEN_PERF_DISABLE_PERSISTED_META_CACHE === '1') return
+  // Temporary folder session (#): keep the note-meta cache in memory; don't
+  // write .zennotes/ into a folder the user is only browsing.
+  if (isEphemeralRoot(root)) return
   const rootAbs = path.resolve(root)
   clearScheduledPersistNoteMetaCache(rootAbs)
 
@@ -3981,7 +4009,10 @@ export async function importFiles(
   root: string,
   sourcePaths: string[]
 ): Promise<ImportedAsset[]> {
-  // Dropped files land in the unified `assets/` folder, same as pasted images.
+  // Dropped files land in the unified `assets/` folder, matching pasted images
+  // (`importPastedImage`). They used to be copied to the vault root, which in
+  // Vault Root mode dumped them right next to your notes and was inconsistent
+  // with paste. (#377)
   const assetsDir = path.join(root, ASSETS_DIR)
   await fs.mkdir(assetsDir, { recursive: true })
 

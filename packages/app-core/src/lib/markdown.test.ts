@@ -1,9 +1,20 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest'
-import { renderMarkdown } from './markdown'
+import { afterEach, describe, expect, it } from 'vitest'
+import { renderMarkdown, setMarkdownMathRenderer } from './markdown'
 
 describe('renderMarkdown', () => {
+  it('hides leading YAML/TOML frontmatter in preview output', () => {
+    const yaml = renderMarkdown('---\ntitle: Hidden\ntags: [a, b]\n---\n\n# Visible')
+    expect(yaml).toContain('<h1 data-source-line="6">Visible</h1>')
+    expect(yaml).not.toContain('title: Hidden')
+    expect(yaml).not.toContain('<hr')
+
+    const toml = renderMarkdown('+++\ntitle = "Hidden"\n+++\n\nBody')
+    expect(toml).toContain('<p data-source-line="5">Body</p>')
+    expect(toml).not.toContain('title =')
+  })
+
   it('sanitizes raw HTML and javascript URLs', () => {
     const html = renderMarkdown(
       [
@@ -16,6 +27,15 @@ describe('renderMarkdown', () => {
     expect(html).not.toContain('<script')
     expect(html).not.toContain('onerror=')
     expect(html).not.toContain('javascript:alert(1)')
+  })
+
+  it('stamps top-level blocks with data-source-line for split-view scroll sync', () => {
+    // Lines: 1 `# Heading`, 3 `First para.`, 5 `- a`, 8 `Last para.`
+    const html = renderMarkdown('# Heading\n\nFirst para.\n\n- a\n- b\n\nLast para.')
+    expect(html).toContain('data-source-line="1"')
+    expect(html).toContain('data-source-line="3"')
+    expect(html).toContain('data-source-line="5"')
+    expect(html).toContain('data-source-line="8"')
   })
 
   it('preserves GFM table column alignment through render + sanitize', () => {
@@ -108,6 +128,20 @@ describe('renderMarkdown', () => {
     expect(html).not.toContain('<img')
   })
 
+  it('#463: a generic-file Obsidian embed becomes an image node (→ attachment chip)', () => {
+    // `![[file.tldraw]]` flows through the same <img> path as `![](file.tldraw)`
+    // so the asset enhancer denotes it as a chip.
+    const html = renderMarkdown('![[attachments/diagram.tldraw]]')
+    expect(html).toContain('<img')
+    expect(html).toContain('src="attachments/diagram.tldraw"')
+  })
+
+  it('#463: a PDF Obsidian embed stays a link (keeps its rich embed), not an image', () => {
+    const html = renderMarkdown('![[attachments/report.pdf]]')
+    expect(html).not.toContain('<img')
+    expect(html).toContain('attachments/report.pdf')
+  })
+
   it('parses size hints on excalidraw embeds', () => {
     const html = renderMarkdown('![[diagram.excalidraw|600x400]]')
 
@@ -187,5 +221,135 @@ describe('math with raw pipes inside tables (#319)', () => {
     const html = renderMarkdown('Norm is $|x|$ inline.')
     expect(html).toContain('katex')
     expect(html).not.toContain('\\|')
+  })
+})
+
+describe('currency vs inline math (reading view matches the editor)', () => {
+  it('leaves a currency line literal instead of rendering it as math', () => {
+    const html = renderMarkdown('I paid $5 and got $10 back.')
+    expect(html).not.toContain('katex')
+    expect(html).toContain('$5 and got $10 back.')
+  })
+
+  it('handles several currency amounts on one line', () => {
+    const html = renderMarkdown('Prices: $5, $10, and $20 total.')
+    expect(html).not.toContain('katex')
+    expect(html).toContain('$5,')
+    expect(html).toContain('$20 total.')
+  })
+
+  it('reverts a padded span the editor would reject ($ x $)', () => {
+    // Leading/trailing space just inside the `$` means it is not math to the
+    // editor; remark-math strips the padding and would render it, so guard it.
+    const html = renderMarkdown('Range $ 5 $ here.')
+    expect(html).not.toContain('katex')
+    expect(html).toContain('$ 5 $')
+  })
+
+  it('still renders genuine inline math', () => {
+    expect(renderMarkdown('Euler: $e^{i\\pi}+1=0$ is elegant.')).toContain('katex')
+    expect(renderMarkdown('Norm $|x|$ and sum $\\sum_{i=1}^n i$.')).toContain('katex')
+  })
+
+  it('keeps inline math sitting next to a lone currency amount', () => {
+    // `$x$` is math; the trailing `$5.` has no closing `$`, so it stays text.
+    const html = renderMarkdown('The value $x$ costs $5.')
+    expect(html).toContain('katex')
+    expect(html).toContain('$5.')
+  })
+
+  it('still renders block math', () => {
+    expect(renderMarkdown('$$\n\\int_0^1 x\\,dx\n$$')).toContain('katex')
+  })
+})
+
+describe('block math fence normalization (#399, reading view matches the editor)', () => {
+  const text = (html: string): string =>
+    html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+
+  it('closes a block whose $$ trails the last content line', () => {
+    const html = renderMarkdown('$$\n\\frac{a}{b} = c\nx + y = z$$\n\nAfter paragraph.')
+    expect(html).toContain('katex-display')
+    expect(text(html)).toContain('After paragraph.')
+    expect(text(html)).not.toContain('$$')
+  })
+
+  it('accepts content right after the opening $$', () => {
+    const html = renderMarkdown('$$\\frac{a}{b} = c\nx = y\n$$\n\nAfter paragraph.')
+    expect(html).toContain('katex-display')
+    expect(text(html)).toContain('After paragraph.')
+    expect(text(html)).not.toContain('$$')
+  })
+
+  it('renders a single-line $$x^2$$ as a display block, like the editor', () => {
+    const html = renderMarkdown('$$x^2$$\n\nAfter paragraph.')
+    expect(html).toContain('katex-display')
+    expect(text(html)).toContain('After paragraph.')
+  })
+
+  it('leaves canonical fenced blocks byte-identical', () => {
+    const canonical = '$$\n\\int_0^1 x\\,dx\n$$\n\nAfter paragraph.'
+    const html = renderMarkdown(canonical)
+    expect(html).toContain('katex-display')
+    expect(text(html)).toContain('After paragraph.')
+  })
+
+  it('does not touch $$ inside fenced code', () => {
+    const html = renderMarkdown('```\n$$\nx + y = z$$\n```\n\nAfter paragraph.')
+    expect(html).not.toContain('katex')
+    // rehype-highlight may tokenize the code content; compare tag-stripped text.
+    expect(text(html)).toContain('z$$')
+    expect(text(html)).toContain('After paragraph.')
+  })
+
+  it('passes editor-rejected shapes through unchanged', () => {
+    // Mid-line `$$` and empty blocks are not editor-legal blocks; the
+    // normalizer must not invent fences for them.
+    expect(renderMarkdown('$$a$$b$$')).not.toContain('katex-display')
+    expect(renderMarkdown('$$ $$')).not.toContain('katex-display')
+    expect(() => renderMarkdown('$$\nunclosed to the end')).not.toThrow()
+  })
+})
+
+describe('Typst math renderer', () => {
+  // Reset to the default so one test's engine choice can't leak into another
+  // (and into the rest of the suite, which asserts KaTeX output).
+  afterEach(() => setMarkdownMathRenderer('katex'))
+
+  it('emits SVG placeholders instead of KaTeX when Typst is active', () => {
+    setMarkdownMathRenderer('typst')
+    const block = renderMarkdown('$$\nx^2 + y^2\n$$')
+    expect(block).not.toContain('katex')
+    expect(block).toContain('zen-typst-math')
+    expect(block).toContain('zen-typst-display')
+    expect(block).toContain('data-typst-source="x^2 + y^2"')
+    expect(block).toContain('data-typst-display="true"')
+
+    const inline = renderMarkdown('Norm $a^2 + b^2$ inline.')
+    expect(inline).not.toContain('katex')
+    expect(inline).toContain('zen-typst-math')
+    expect(inline).toContain('data-typst-display="false"')
+    expect(inline).not.toContain('zen-typst-display')
+  })
+
+  it('keeps KaTeX as the default and restores it on switch back', () => {
+    // Default: KaTeX, no Typst placeholders.
+    expect(renderMarkdown('$$\nx^2\n$$')).toContain('katex')
+    expect(renderMarkdown('$$\nx^2\n$$')).not.toContain('zen-typst-math')
+
+    setMarkdownMathRenderer('typst')
+    expect(renderMarkdown('$$\nx^2\n$$')).toContain('zen-typst-math')
+
+    setMarkdownMathRenderer('katex')
+    const back = renderMarkdown('$$\nx^2\n$$')
+    expect(back).toContain('katex')
+    expect(back).not.toContain('zen-typst-math')
+  })
+
+  it('still leaves currency alone under Typst (shares the parse guards)', () => {
+    setMarkdownMathRenderer('typst')
+    const html = renderMarkdown('I paid $5 and got $10 back.')
+    expect(html).not.toContain('zen-typst-math')
+    expect(html).toContain('$5 and got $10 back.')
   })
 })

@@ -1,7 +1,7 @@
 {
   "name": "@zennotes/web",
   "private": true,
-  "version": "2.13.1",
+  "version": "2.19.0",
   "type": "module",
   "description": "ZenNotes web client for self-hosted and hosted deployments",
   "homepage": "https://zennotes.org",
@@ -22,6 +22,9 @@
     "@codemirror/state": "^6.5.0",
     "@codemirror/view": "^6.35.3",
     "@lezer/highlight": "^1.2.1",
+    "@myriaddreamin/typst-ts-renderer": "^0.7.0",
+    "@myriaddreamin/typst-ts-web-compiler": "^0.7.0",
+    "@myriaddreamin/typst.ts": "^0.7.0",
     "@replit/codemirror-vim": "^6.3.0",
     "@zennotes/app-core": "*",
     "@zennotes/bridge-contract": "*",

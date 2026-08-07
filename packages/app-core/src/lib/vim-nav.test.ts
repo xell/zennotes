@@ -12,10 +12,15 @@ vi.mock('@replit/codemirror-vim', () => ({
 
 import {
   getVisiblePanels,
+  isEditorVisualMode,
+  jumplistKeepsChord,
+  getVisiblePanelsNow,
   hintTargetOpensNote,
   isVimAwaitingArgument,
   resolveNextPanel,
-  shouldYieldToHomeNav
+  shouldYieldToHomeNav,
+  type Panel,
+  type PanelVisibility
 } from './vim-nav'
 
 function el(html: string): HTMLElement {
@@ -109,34 +114,153 @@ describe('isVimAwaitingArgument (#147 — Space is the Vim arg, not the leader)'
   })
 })
 
-describe('getVisiblePanels — calendar in the focus cycle (#285)', () => {
+describe('getVisiblePanels — the focus cycle (#285, #477)', () => {
+  const visibility = (over: Partial<PanelVisibility> = {}): PanelVisibility => ({
+    sidebarOpen: true,
+    noteListOpen: true,
+    unifiedSidebar: false,
+    connectionsOpen: false,
+    commentsOpen: false,
+    outlineOpen: false,
+    calendarOpen: false,
+    tasksViewOpen: false,
+    ...over
+  })
+
   it('appends the calendar last (after connections/comments) when open', () => {
-    expect(getVisiblePanels(true, true, false, false, false, false, true)).toEqual([
+    expect(getVisiblePanels(visibility({ calendarOpen: true }))).toEqual([
       'sidebar',
       'notelist',
       'editor',
       'calendar'
     ])
-    expect(getVisiblePanels(true, true, false, true, true, false, true)).toEqual([
+    expect(
+      getVisiblePanels(visibility({ connectionsOpen: true, commentsOpen: true, calendarOpen: true }))
+    ).toEqual(['sidebar', 'notelist', 'editor', 'connections', 'comments', 'calendar'])
+  })
+
+  it('omits the calendar when it is closed', () => {
+    expect(getVisiblePanels(visibility())).not.toContain('calendar')
+    expect(getVisiblePanels(visibility({ calendarOpen: false }))).not.toContain('calendar')
+  })
+
+  it('slots the outline between comments and calendar, matching how they render (#477)', () => {
+    expect(
+      getVisiblePanels(
+        visibility({
+          connectionsOpen: true,
+          commentsOpen: true,
+          outlineOpen: true,
+          calendarOpen: true
+        })
+      )
+    ).toEqual([
       'sidebar',
       'notelist',
       'editor',
       'connections',
       'comments',
+      'outline',
       'calendar'
     ])
-  })
-
-  it('omits the calendar when it is closed (default arg)', () => {
-    expect(getVisiblePanels(true, true, false, false, false)).not.toContain('calendar')
-    expect(getVisiblePanels(true, true, false, false, false, false, false)).not.toContain('calendar')
+    expect(getVisiblePanels(visibility())).not.toContain('outline')
   })
 
   it('resolveNextPanel reaches the calendar from the editor and stays at the edge', () => {
-    const panels = getVisiblePanels(true, true, false, false, false, false, true)
+    const panels = getVisiblePanels(visibility({ calendarOpen: true }))
     expect(resolveNextPanel('editor', 'right', panels)).toBe('calendar')
     // Calendar is the right-most panel, so going further right is a no-op.
     expect(resolveNextPanel('calendar', 'right', panels)).toBe('calendar')
     expect(resolveNextPanel('calendar', 'left', panels)).toBe('editor')
+  })
+
+  it('reads the open side panels off the DOM so both navigations see the same list (#477)', () => {
+    document.body.innerHTML = `
+      <div data-connections-panel></div>
+      <div data-outline-panel></div>
+      <div data-calendar-panel></div>
+    `
+    expect(
+      getVisiblePanelsNow({
+        sidebarOpen: true,
+        noteListOpen: false,
+        unifiedSidebar: false,
+        tasksViewOpen: false
+      })
+    ).toEqual(['sidebar', 'editor', 'connections', 'outline', 'calendar'])
+    document.body.innerHTML = ''
+  })
+
+  it('walks every open panel in order, so no panel is a dead end (#477)', () => {
+    const panels = getVisiblePanels(
+      visibility({ connectionsOpen: true, commentsOpen: true, outlineOpen: true, calendarOpen: true })
+    )
+    const walk: Panel[] = ['editor']
+    for (let i = 0; i < 4; i++) {
+      const next = resolveNextPanel(walk[walk.length - 1], 'right', panels)
+      if (!next) break
+      walk.push(next)
+    }
+    expect(walk).toEqual(['editor', 'connections', 'comments', 'outline', 'calendar'])
+    // …and back again.
+    expect(resolveNextPanel('outline', 'left', panels)).toBe('comments')
+    expect(resolveNextPanel('connections', 'left', panels)).toBe('editor')
+  })
+})
+
+describe('isEditorVisualMode (#488 — Ctrl+I italicises a Vim selection)', () => {
+  const view = {} as unknown as EditorView // getCM is mocked, so the view is unused
+
+  it('is true in visual mode, so the format chord can claim Ctrl+I', () => {
+    cmMock.vim = { visualMode: true, insertMode: false }
+    expect(isEditorVisualMode(view, true)).toBe(true)
+  })
+
+  it('is false in normal and insert mode, leaving the jumplist alone', () => {
+    cmMock.vim = { visualMode: false, insertMode: false }
+    expect(isEditorVisualMode(view, false || true)).toBe(false)
+    cmMock.vim = { visualMode: false, insertMode: true }
+    expect(isEditorVisualMode(view, true)).toBe(false)
+  })
+
+  it('is false with Vim mode off, whatever the editor state says', () => {
+    cmMock.vim = { visualMode: true }
+    expect(isEditorVisualMode(view, false)).toBe(false)
+  })
+
+  it('is false with no vim state, and for a null view', () => {
+    cmMock.vim = null
+    expect(isEditorVisualMode(view, true)).toBe(false)
+    expect(isEditorVisualMode(null, true)).toBe(false)
+  })
+})
+
+describe('jumplistKeepsChord (#488 — Ctrl+I italicises a Vim selection)', () => {
+  // On Linux and Windows `Mod` is Ctrl, so Vim's forward jump and the italic
+  // shortcut are the same chord; on macOS they are not.
+  const linux = { chordIsFormatShortcut: true }
+  const mac = { chordIsFormatShortcut: false }
+
+  it('keeps the chord in normal mode, collision or not', () => {
+    expect(jumplistKeepsChord({ vimMode: true, insertMode: false, visualMode: false, ...linux })).toBe(true)
+    expect(jumplistKeepsChord({ vimMode: true, insertMode: false, visualMode: false, ...mac })).toBe(true)
+  })
+
+  it('yields in visual mode where the chord is also the italic shortcut', () => {
+    expect(jumplistKeepsChord({ vimMode: true, insertMode: false, visualMode: true, ...linux })).toBe(false)
+  })
+
+  it('keeps the chord in visual mode where nothing collides (macOS Ctrl+I)', () => {
+    expect(jumplistKeepsChord({ vimMode: true, insertMode: false, visualMode: true, ...mac })).toBe(true)
+  })
+
+  it('yields in insert mode and with Vim off', () => {
+    expect(jumplistKeepsChord({ vimMode: true, insertMode: true, visualMode: false, ...linux })).toBe(false)
+    expect(jumplistKeepsChord({ vimMode: false, insertMode: false, visualMode: false, ...linux })).toBe(false)
+  })
+
+  it('keeps Ctrl+O in visual mode — only the colliding chord yields', () => {
+    // Ctrl+O is never a format shortcut, so it reads as no collision.
+    expect(jumplistKeepsChord({ vimMode: true, insertMode: false, visualMode: true, chordIsFormatShortcut: false })).toBe(true)
   })
 })

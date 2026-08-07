@@ -3,12 +3,12 @@
  * across live notes (excluding trash).
  */
 
-import { listNotes } from '../../mcp/vault-ops.js'
+import type { VaultBackend } from '../backend.js'
 import { getBool, getNumber, getString, type ParsedArgs } from '../args.js'
 import { emitJson, emitLine, pad } from '../format.js'
 
-export async function cmdTagList(vault: string, args: ParsedArgs): Promise<void> {
-  const all = await listNotes(vault)
+export async function cmdTagList(vault: VaultBackend, args: ParsedArgs): Promise<void> {
+  const all = await vault.listNotes()
   const counts = new Map<string, number>()
   for (const n of all) {
     if (n.folder === 'trash') continue
@@ -34,11 +34,11 @@ export async function cmdTagList(vault: string, args: ParsedArgs): Promise<void>
   }
 }
 
-export async function cmdTagFind(vault: string, args: ParsedArgs): Promise<void> {
+export async function cmdTagFind(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const tag = (getString(args, 'tag') ?? args.positionals[0])?.replace(/^#/, '').toLowerCase()
   if (!tag) throw new Error('zn tag find requires a tag name (e.g. `zn tag find idea`).')
   const limit = getNumber(args, 'limit') ?? 200
-  const all = await listNotes(vault)
+  const all = await vault.listNotes()
   const matches = all
     .filter(
       (n) => n.folder !== 'trash' && n.tags.map((x) => x.toLowerCase()).includes(tag)

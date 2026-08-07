@@ -59,13 +59,23 @@ function formatTime(date: Date): string {
 }
 
 // Longest tokens must come first in the alternation so `MMMM` wins over `MM`,
-// `MM` over `M`, etc. `[...]` escapes emit their contents literally.
-const DATE_FORMAT_RE = /\[([^\]]*)\]|YYYY|YY|MMMM|MMM|MM|M|DD|D|dddd|ddd|HH|mm|ss/g
+// `dddd` over `dd`, etc. `[...]` escapes emit their contents literally. Accepts
+// both the moment-style tokens this macro shipped with (YYYY/DD/dddd) and the
+// date-fns-style tokens the daily/weekly/monthly note directory + title patterns
+// use (yyyy/dd/EEEE/ww), so the same variables work in both places. (#411)
+const DATE_FORMAT_RE =
+  /\[([^\]]*)\]|YYYY|YY|yyyy|yy|MMMM|MMM|MM|M|EEEE|EEE|dddd|ddd|dd|d|DD|D|ww|w|HH|mm|ss/g
 
 /**
- * Format a date with a moment-like token string. Supported tokens:
- * YYYY YY MMMM MMM MM M DD D dddd ddd HH mm ss. Wrap literal text in
- * `[brackets]` to protect letters that would otherwise be read as tokens.
+ * Format a date with a token string. Supported tokens (both vocabularies work,
+ * so directory/title-pattern variables can be reused verbatim in templates):
+ *   year     YYYY / yyyy, YY / yy
+ *   month    MMMM (name), MMM (short), MM, M
+ *   day      DD / dd, D / d
+ *   weekday  dddd / EEEE (name), ddd / EEE (short)
+ *   week     ww (ISO, padded), w (ISO)
+ *   time     HH, mm, ss
+ * Wrap literal text in `[brackets]` to protect letters that are tokens.
  */
 export function formatDate(date: Date, format: string): string {
   const year = date.getFullYear()
@@ -74,12 +84,15 @@ export function formatDate(date: Date, format: string): string {
   const hours = date.getHours()
   const minutes = date.getMinutes()
   const seconds = date.getSeconds()
+  const week = getISOWeek(date)
   return format.replace(DATE_FORMAT_RE, (match, escaped: string | undefined) => {
     if (escaped !== undefined) return escaped
     switch (match) {
       case 'YYYY':
+      case 'yyyy':
         return String(year)
       case 'YY':
+      case 'yy':
         return pad2(year % 100)
       case 'MMMM':
         return localeName(date, 'month', 'long')
@@ -90,13 +103,21 @@ export function formatDate(date: Date, format: string): string {
       case 'M':
         return String(month + 1)
       case 'DD':
+      case 'dd':
         return pad2(day)
       case 'D':
+      case 'd':
         return String(day)
       case 'dddd':
+      case 'EEEE':
         return localeName(date, 'weekday', 'long')
       case 'ddd':
+      case 'EEE':
         return localeName(date, 'weekday', 'short')
+      case 'ww':
+        return pad2(week)
+      case 'w':
+        return String(week)
       case 'HH':
         return pad2(hours)
       case 'mm':

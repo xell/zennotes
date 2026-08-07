@@ -24,7 +24,11 @@ import { resolveSystemFolderLabels } from './system-folder-labels'
 import { foldAllHeadings } from './cm-heading-fold'
 import { lookUpDefinitionInView } from './look-up-definition'
 import { moveCursorToLink } from './link-navigation'
-import { normalizeVaultSettings } from './vault-layout'
+import {
+  isCalendarToggleAvailable,
+  noteFolderSubpath,
+  normalizeVaultSettings
+} from './vault-layout'
 import { DEMO_TOUR_START_PATH } from '@shared/demo-tour'
 
 const APP_WEBSITE_URL = 'https://zennotes.org'
@@ -169,6 +173,20 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       run: () => void getState().newDatabase()
     },
     {
+      id: 'task.new',
+      title: 'New Task',
+      category: 'Note',
+      keywords: 'task todo checkbox tasknotes taskforge new add create file due priority',
+      run: () => void getState().newTaskFile()
+    },
+    {
+      id: 'task.new.folder',
+      title: 'New Task in Folder…',
+      category: 'Note',
+      keywords: 'task todo new create folder project location directory organize where place',
+      run: () => void getState().newTaskFileInChosenFolder()
+    },
+    {
       id: 'note.daily.today',
       title: "Open Today's Daily Note",
       category: 'Note',
@@ -285,14 +303,28 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       category: 'Note',
       keywords: 'create add write',
       when: () => {
-        const v = getState().view
-        return v.kind === 'folder' && v.folder !== 'trash' && !isTrashViewActive(getState())
+        const s = getState()
+        if (isTrashViewActive(s)) return false
+        if (s.activeNote && s.activeNote.folder !== 'trash') return true
+        return s.view.kind === 'folder' && s.view.folder !== 'trash'
       },
       run: () => {
-        if (isTrashViewActive(getState())) return
-        const v = getState().view
-        if (v.kind !== 'folder') return
-        return getState().createAndOpen(v.folder, v.subpath, { focusTitle: true })
+        const s = getState()
+        if (isTrashViewActive(s)) return
+        // "Current folder" is the folder of the active note (the one you're
+        // editing), not the sidebar's browse view. Those drift apart when notes
+        // from different folders are open, since switching tabs doesn't move the
+        // view, so reading the view created the note in the wrong directory.
+        // (#403) Fall back to the browsed folder only when no note is open.
+        const active = s.activeNote
+        if (active && active.folder !== 'trash') {
+          return s.createAndOpen(active.folder, noteFolderSubpath(active, s.vaultSettings), {
+            focusTitle: true
+          })
+        }
+        const v = s.view
+        if (v.kind !== 'folder' || v.folder === 'trash') return
+        return s.createAndOpen(v.folder, v.subpath, { focusTitle: true })
       }
     },
     {
@@ -698,10 +730,9 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       category: 'View',
       shortcut: getState().vimMode ? leaderShortcut('vim.leaderCalendar') : undefined,
       keywords: 'calendar daily weekly date navigate month week',
-      when: () => {
-        const s = normalizeVaultSettings(getState().vaultSettings)
-        return s.dailyNotes.enabled || s.weeklyNotes.enabled
-      },
+      // The calendar attaches to a note in the pane, so it's unavailable in the
+      // note-less Tasks/Tags views and the Quick Notes scratchpad. (#413)
+      when: () => isCalendarToggleAvailable(getState().vaultSettings, getState().activeNote),
       run: () => {
         window.dispatchEvent(new Event('zen:toggle-calendar'))
       }
@@ -983,6 +1014,26 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
           return
         }
         await forwardTaskWithPicker(task)
+      }
+    },
+    {
+      id: 'task.cancel',
+      title: 'Cancel Task',
+      category: 'Editor',
+      keywords: 'cancel task abandon drop dropped scrap wontfix strike',
+      when: () => {
+        const view = getState().editorViewRef
+        return !!view && !!getState().activeNote && !!taskAtEditorCursor(view)
+      },
+      run: async () => {
+        const view = getState().editorViewRef
+        if (!view) return
+        const task = taskAtEditorCursor(view)
+        if (!task) {
+          window.alert('Put the cursor on a task line to cancel it.')
+          return
+        }
+        await getState().cancelTaskFromList(task)
       }
     },
     {
@@ -1401,6 +1452,34 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       run: () => getState().setVimMode(!getState().vimMode)
     },
     {
+      id: 'editor.completed-task.none',
+      title: 'Completed Tasks: No Style',
+      category: 'Editor',
+      when: () => getState().completedTaskStyle !== 'none',
+      run: () => getState().setCompletedTaskStyle('none')
+    },
+    {
+      id: 'editor.completed-task.strikethrough',
+      title: 'Completed Tasks: Strikethrough',
+      category: 'Editor',
+      when: () => getState().completedTaskStyle !== 'strikethrough',
+      run: () => getState().setCompletedTaskStyle('strikethrough')
+    },
+    {
+      id: 'editor.completed-task.gray',
+      title: 'Completed Tasks: Gray',
+      category: 'Editor',
+      when: () => getState().completedTaskStyle !== 'gray',
+      run: () => getState().setCompletedTaskStyle('gray')
+    },
+    {
+      id: 'editor.completed-task.gray-strikethrough',
+      title: 'Completed Tasks: Strikethrough + Gray',
+      category: 'Editor',
+      when: () => getState().completedTaskStyle !== 'gray-strikethrough',
+      run: () => getState().setCompletedTaskStyle('gray-strikethrough')
+    },
+    {
       id: 'editor.which-key.toggle',
       title: getState().whichKeyHints
         ? 'Disable Leader Key Hints'
@@ -1716,6 +1795,18 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       shortcut: shortcut('global.gitStatus'),
       when: () => window.zen.getAppInfo().runtime === 'desktop' && !!getState().vault,
       run: () => getState().setGitModalOpen(true)
+    },
+    {
+      id: 'app.file.open',
+      title: 'Open File…',
+      category: 'Vault',
+      keywords: 'open file markdown external outside vault one-off document proofread standalone',
+      when: () =>
+        window.zen.getAppInfo().runtime === 'desktop' &&
+        window.zen.getCapabilities().supportsLocalFilesystemPickers,
+      run: async () => {
+        await window.zen.openFileDialog()
+      }
     },
     {
       id: 'app.vault.close',

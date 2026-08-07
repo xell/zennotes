@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { JSX, SVGProps } from 'react'
 import type { BlockType } from '../lib/cm-format'
-import { formatKeyToken } from '../lib/keymaps'
+import { formatKeyToken, isMacPlatform } from '../lib/keymaps'
+import { isEditorInsertMode } from '../lib/vim-nav'
 import { useStore } from '../store'
 import {
   BoldIcon,
@@ -100,6 +101,14 @@ export function EditorSelectionToolbar({
   // In Vim mode, h/j/k/l navigate the toolbar too (the controls aren't text
   // inputs, so the letters are free to act as motions).
   const vimMode = useStore((s) => s.vimMode)
+  const editorView = useStore((s) => s.editorViewRef)
+  // On Linux/Windows `Mod+I` (the italic chord) resolves to Ctrl+I, which the
+  // Vim jumplist claims for "go forward" in normal/visual mode — the jumplist
+  // wins there, so Ctrl+I won't toggle italic (#373). When the toolbar is shown
+  // over such a selection, don't advertise Ctrl+I for Italic (#419). Italic is
+  // still reachable via the toolbar button itself, via Ctrl+I in insert mode,
+  // and via Cmd+I on macOS (no collision there).
+  const italicShadowed = vimMode && !isMacPlatform() && !isEditorInsertMode(editorView, vimMode)
   // Roving focus over the toolbar's controls in render order: turn-into,
   // formats…, link, comment.
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
@@ -262,24 +271,29 @@ export function EditorSelectionToolbar({
 
       {/* Inline formatting */}
       <div className="flex items-center gap-0.5">
-        {FORMATS.map(({ label, marker, binding, Icon }) => (
-          <button
-            key={marker}
-            ref={ref()}
-            data-toolbar-item
-            type="button"
-            title={`${label} · ${formatKeyToken(binding)}`}
-            aria-label={`${label} (${formatKeyToken(binding)})`}
-            aria-keyshortcuts={binding}
-            className={BTN}
-            onMouseDown={keepSelection}
-            onMouseEnter={() => setHint({ label, binding })}
-            onFocus={() => setHint({ label, binding })}
-            onClick={() => onWrap(marker)}
-          >
-            <Icon width={16} height={16} />
-          </button>
-        ))}
+        {FORMATS.map(({ label, marker, binding, Icon }) => {
+          // Suppress the italic chord hint when it's shadowed by the Vim
+          // jumplist (#419); the button still toggles italic on click/Enter.
+          const shown = marker === '*' && italicShadowed ? undefined : binding
+          return (
+            <button
+              key={marker}
+              ref={ref()}
+              data-toolbar-item
+              type="button"
+              title={shown ? `${label} · ${formatKeyToken(shown)}` : label}
+              aria-label={shown ? `${label} (${formatKeyToken(shown)})` : label}
+              aria-keyshortcuts={shown}
+              className={BTN}
+              onMouseDown={keepSelection}
+              onMouseEnter={() => setHint({ label, binding: shown })}
+              onFocus={() => setHint({ label, binding: shown })}
+              onClick={() => onWrap(marker)}
+            >
+              <Icon width={16} height={16} />
+            </button>
+          )
+        })}
         <button
           ref={ref()}
           data-toolbar-item

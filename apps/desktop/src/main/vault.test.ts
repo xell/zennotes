@@ -12,6 +12,7 @@ import {
   ensureVaultLayout,
   forgetLocalVault,
   getVaultSettings,
+  importFiles,
   importPastedImage,
   invalidateNoteMetaCache,
   listDeletedAssets,
@@ -96,6 +97,32 @@ describe('daily-notes task settings round-trip (#288)', () => {
     const settings = await getVaultSettings(root)
     expect(settings.dailyNotes.tasksDueOnNoteDate).toBe(true)
     expect(settings.dailyNotes.rolloverUnfinishedTasks).toBe(false)
+  })
+})
+
+describe('file-location settings round-trip (#446)', () => {
+  it('persists tasksLocation through set/get (drawings/databases already worked)', async () => {
+    const root = await makeTempDir('zennotes-vault-tasksloc-')
+    await mkdir(root, { recursive: true })
+    const base = await getVaultSettings(root)
+    // Before the fix the main process sanitizer dropped tasksLocation on save
+    // (drawings and databases were kept), so the Tasks-location control snapped
+    // back and every new task landed in the inbox regardless of the choice.
+    await setVaultSettings(root, {
+      ...base,
+      tasksLocation: { mode: 'folder', folder: 'Tasks' },
+      drawingsLocation: { mode: 'active-note' }
+    })
+    const saved = await getVaultSettings(root)
+    expect(saved.tasksLocation).toEqual({ mode: 'folder', folder: 'Tasks' })
+    expect(saved.drawingsLocation).toEqual({ mode: 'active-note' })
+  })
+
+  it('defaults tasksLocation to primary when unset', async () => {
+    const root = await makeTempDir('zennotes-vault-tasksloc-default-')
+    await mkdir(root, { recursive: true })
+    const settings = await getVaultSettings(root)
+    expect(settings.tasksLocation).toEqual({ mode: 'primary' })
   })
 })
 
@@ -239,6 +266,62 @@ describe('importPastedImage', () => {
     expect(imported.path).toBe('assets/Pasted Image 2026-05-13 150405 2.webp')
     expect(imported.markdown).toBe('![[assets/Pasted Image 2026-05-13 150405 2.webp]]')
     await expect(readFile(path.join(root, imported.path))).resolves.toEqual(Buffer.from([1, 2, 3]))
+  })
+})
+
+describe('importFiles', () => {
+  it('copies dropped files into assets/ (not the vault root) for a root-mode note', async () => {
+    const root = await makeTempDir('zennotes-import-files-')
+    await ensureVaultLayout(root)
+    // Source file living outside the vault, as an OS drag would provide.
+    const srcDir = await makeTempDir('zennotes-import-src-')
+    const src = path.join(srcDir, 'Diagram.png')
+    await writeFile(src, Buffer.from([137, 80, 78, 71]))
+
+    const imported = await importFiles(root, [src])
+
+    expect(imported).toHaveLength(1)
+    expect(imported[0]?.path).toBe('assets/Diagram.png')
+    expect(imported[0]?.kind).toBe('image')
+    expect(imported[0]?.markdown).toContain('assets/Diagram.png')
+    await expect(readFile(path.join(root, 'assets/Diagram.png'))).resolves.toEqual(
+      Buffer.from([137, 80, 78, 71])
+    )
+    // Must NOT be dumped in the vault root (the #377 regression).
+    await expect(readFile(path.join(root, 'Diagram.png'))).rejects.toThrow()
+  })
+
+  it('stores in assets/ for an inbox-mode note too, linked relative to the note', async () => {
+    const root = await makeTempDir('zennotes-import-files-inbox-')
+    await ensureVaultLayout(root)
+    const srcDir = await makeTempDir('zennotes-import-src-inbox-')
+    const src = path.join(srcDir, 'Photo.png')
+    await writeFile(src, Buffer.from([1, 2, 3]))
+
+    const imported = await importFiles(root, [src])
+
+    expect(imported[0]?.path).toBe('assets/Photo.png')
+    // This fork emits a vault-relative wikilink (58ea130), not upstream's
+    // note-relative markdown link, so there is no `../` step-up here.
+    expect(imported[0]?.markdown).toBe('![[assets/Photo.png]]')
+    await expect(readFile(path.join(root, 'assets/Photo.png'))).resolves.toEqual(
+      Buffer.from([1, 2, 3])
+    )
+  })
+
+  it('uniquifies names against existing files already in assets/', async () => {
+    const root = await makeTempDir('zennotes-import-files-unique-')
+    await ensureVaultLayout(root)
+    await mkdir(path.join(root, 'assets'), { recursive: true })
+    await writeFile(path.join(root, 'assets/Photo.png'), 'existing', 'utf8')
+    const srcDir = await makeTempDir('zennotes-import-src-unique-')
+    const src = path.join(srcDir, 'Photo.png')
+    await writeFile(src, Buffer.from([9, 9, 9]))
+
+    const imported = await importFiles(root, [src])
+
+    expect(imported[0]?.path).toBe('assets/Photo 2.png')
+    await expect(readFile(path.join(root, 'assets/Photo.png'), 'utf8')).resolves.toBe('existing')
   })
 })
 
@@ -542,6 +625,32 @@ describe('listNotes metadata parsing', () => {
     expect(note?.tags).toEqual(['realtag'])
   })
 
+  it('indexes frontmatter tags as first-class note tags', async () => {
+    const root = await makeTempDir('zennotes-meta-frontmatter-tags-')
+    await ensureVaultLayout(root)
+    const rel = 'inbox/frontmatter.md'
+    await writeFile(
+      path.join(root, rel),
+      '---\ntags: [frontmatter, "#quoted", project/nested]\ntitle: #ignored\n---\n\n#inline\n',
+      'utf8'
+    )
+
+    const notes = await listNotes(root)
+    const note = notes.find((n) => n.path === rel)
+    expect(note?.tags).toEqual(['frontmatter', 'quoted', 'project/nested', 'inline'])
+  })
+
+  it('indexes block-list frontmatter tags', async () => {
+    const root = await makeTempDir('zennotes-meta-frontmatter-tag-list-')
+    await ensureVaultLayout(root)
+    const rel = 'inbox/frontmatter-list.md'
+    await writeFile(path.join(root, rel), '---\ntags:\n  - daily\n  - "#log"\n---\n\nBody\n', 'utf8')
+
+    const notes = await listNotes(root)
+    const note = notes.find((n) => n.path === rel)
+    expect(note?.tags).toEqual(['daily', 'log'])
+  })
+
   it('detects only local asset references as attachments', async () => {
     const root = await makeTempDir('zennotes-meta-assets-')
     await ensureVaultLayout(root)
@@ -651,7 +760,7 @@ describe('listNotes metadata cache', () => {
     await writeFile(
       path.join(root, '.zennotes', 'note-meta-cache-v1.json'),
       `${JSON.stringify({
-        version: 2,
+        version: 3,
         entries: [
           {
             path: rel,

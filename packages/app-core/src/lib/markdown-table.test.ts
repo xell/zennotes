@@ -312,3 +312,46 @@ describe('column-width marker round-trip (#294)', () => {
     expect((out2.match(/zen:cols/g) ?? []).length).toBe(1)
   })
 })
+
+describe('column widths survive table operations (#294 follow-up)', () => {
+  // Every structural op runs through `clone`, which dropped `colWidths`. The
+  // editor extends the replaced range over the `<!-- zen:cols=… -->` line, so a
+  // model without widths doesn't just forget them — it deletes the marker from
+  // the note. Resize a column, then use any menu action, and the widths were
+  // gone.
+  const withWidths = (): MarkdownTable => ({ ...parse(SIMPLE), colWidths: [120, 200] })
+
+  it('keeps widths through an alignment change', () => {
+    const out = setColumnAlign(withWidths(), 0, 'center')
+    expect(out.colWidths).toEqual([120, 200])
+    expect(serializeTable(out)).toContain('<!-- zen:cols=120,200 -->')
+  })
+
+  it('keeps widths through row operations', () => {
+    expect(insertRow(withWidths(), 0).colWidths).toEqual([120, 200])
+    expect(deleteRow(withWidths(), 0).colWidths).toEqual([120, 200])
+    expect(setCell(withWidths(), { row: 0, col: 0 }, 'x').colWidths).toEqual([120, 200])
+  })
+
+  it('does not share the widths array with the original', () => {
+    const original = withWidths()
+    const next = setColumnAlign(original, 0, 'right')
+    next.colWidths![0] = 999
+    expect(original.colWidths).toEqual([120, 200])
+  })
+
+  it('tracks the columns when one is inserted, deleted, duplicated or moved', () => {
+    // A width belongs to a column, so it has to follow that column around —
+    // carrying the array along unchanged would mis-size every column after the
+    // edit, which is worse than losing it.
+    expect(insertColumn(withWidths(), 1).colWidths).toEqual([120, null, 200])
+    expect(deleteColumn(withWidths(), 0).colWidths).toEqual([200])
+    expect(duplicateColumn(withWidths(), 0).colWidths).toEqual([120, 120, 200])
+    expect(moveColumn(withWidths(), 0, 1).colWidths).toEqual([200, 120])
+  })
+
+  it('leaves a table without widths alone', () => {
+    expect(setColumnAlign(parse(SIMPLE), 0, 'left').colWidths).toBeUndefined()
+    expect(serializeTable(insertColumn(parse(SIMPLE), 1))).not.toContain('zen:cols')
+  })
+})

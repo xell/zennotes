@@ -69,6 +69,37 @@ func TestExtractTagsIgnoresIndentedFence(t *testing.T) {
 	}
 }
 
+func TestExtractTagsIncludesFrontmatterTags(t *testing.T) {
+	body := "---\ntags: [frontmatter, \"#quoted\", project/nested]\ntitle: #ignored\n---\n\n#inline"
+
+	tags := ExtractTags(body)
+	want := []string{"frontmatter", "quoted", "project/nested", "inline"}
+	if len(tags) != len(want) {
+		t.Fatalf("ExtractTags() = %#v, want %#v", tags, want)
+	}
+	for i := range want {
+		if tags[i] != want[i] {
+			t.Fatalf("ExtractTags() = %#v, want %#v", tags, want)
+		}
+	}
+}
+
+func TestExtractTagsSplitsBareFrontmatterScalar(t *testing.T) {
+	tags := ExtractTags("---\ntags: daily, work\n---\nbody")
+	if len(tags) != 2 || tags[0] != "daily" || tags[1] != "work" {
+		t.Fatalf("ExtractTags() = %#v, want [daily work]", tags)
+	}
+}
+
+func TestExtractTagsIncludesFrontmatterTagList(t *testing.T) {
+	body := "---\ntags:\n  - daily\n  - \"#log\"\n---\n\nBody"
+
+	tags := ExtractTags(body)
+	if len(tags) != 2 || tags[0] != "daily" || tags[1] != "log" {
+		t.Fatalf("ExtractTags() = %#v, want [daily log]", tags)
+	}
+}
+
 // #205: tags in non-Latin scripts (Cyrillic, CJK, …) must be recognized.
 func TestExtractTagsUnicode(t *testing.T) {
 	body := "Заметки: #тест #ошибка/баг и 笔记 #标签 plus #ascii-1 done"
@@ -81,5 +112,37 @@ func TestExtractTagsUnicode(t *testing.T) {
 		if !want[tag] {
 			t.Fatalf("unexpected tag %q in %#v", tag, got)
 		}
+	}
+}
+
+// #450: `[-]` cancelled tasks must be parsed (not dropped) and flagged cancelled.
+func TestParseTasksRecognizesCancelled(t *testing.T) {
+	body := "- [ ] open\n- [x] done\n- [>] gone\n- [-] scrapped\n"
+	tasks := ParseTasks("inbox/t.md", "t", FolderInbox, body)
+	if len(tasks) != 4 {
+		t.Fatalf("expected 4 tasks (none dropped), got %d", len(tasks))
+	}
+	byContent := map[string]Task{}
+	for _, tk := range tasks {
+		byContent[tk.Content] = tk
+	}
+	if c, ok := byContent["scrapped"]; !ok {
+		t.Fatal("cancelled task line was dropped")
+	} else if !c.Cancelled || c.Checked {
+		t.Errorf("scrapped: Cancelled=%v Checked=%v, want Cancelled=true Checked=false", c.Cancelled, c.Checked)
+	}
+	if byContent["open"].Cancelled || byContent["done"].Cancelled {
+		t.Error("open/done tasks should not be cancelled")
+	}
+}
+
+func TestParseTaskFileCancelledStatus(t *testing.T) {
+	body := "---\ntags: [task]\ntitle: Rewrite\nstatus: cancelled\n---\n\nAbandoned.\n"
+	task, ok := parseTaskFile("inbox/x.md", "x", FolderInbox, body)
+	if !ok {
+		t.Fatal("expected a file task")
+	}
+	if !task.Cancelled || task.Checked {
+		t.Errorf("Cancelled=%v Checked=%v, want Cancelled=true Checked=false", task.Cancelled, task.Checked)
 	}
 }

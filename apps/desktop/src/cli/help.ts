@@ -141,8 +141,8 @@ const SECTIONS: Array<{ heading: string; rows: CommandRow[] }> = [
   {
     heading: 'VAULT',
     rows: [
-      { name: 'vault info', description: 'Vault path + per-folder counts', flags: '--json' },
-      { name: 'vault list', description: 'Known vaults; the default is marked with *', flags: '--json' }
+      { name: 'vault info', description: 'Vault path (or server) + per-folder counts', flags: '--json' },
+      { name: 'vault list', description: 'Known vaults and servers; the default is marked with *', flags: '--json' }
     ]
   },
   {
@@ -154,7 +154,7 @@ const SECTIONS: Array<{ heading: string; rows: CommandRow[] }> = [
   {
     heading: 'OPEN',
     rows: [
-      { name: 'open <file.md>', description: 'Open markdown files in the ZenNotes app, in a vault or not' }
+      { name: 'open <path>', description: 'Open markdown files, or a folder / vault (a focused session), in the app' }
     ]
   },
   {
@@ -166,7 +166,9 @@ const SECTIONS: Array<{ heading: string; rows: CommandRow[] }> = [
 ]
 
 const GLOBAL_FLAGS: CommandRow[] = [
-  { name: '--vault <name|path>', description: 'Target a specific vault (see `zn vault list`)' },
+  { name: '--vault <name|path>', description: 'Target a specific vault or saved server (see `zn vault list`)' },
+  { name: '--server <name|url>', description: 'Target a ZenNotes server; wins over --vault' },
+  { name: '--token <token>', description: 'Auth token for --server (overrides the saved one)' },
   { name: '--json', description: 'Emit machine-readable JSON output' },
   { name: '--no-color', description: 'Disable ANSI color even on a TTY' },
   { name: '--help, -h', description: 'Show this help' },
@@ -175,6 +177,8 @@ const GLOBAL_FLAGS: CommandRow[] = [
 
 const ENVIRONMENT: CommandRow[] = [
   { name: 'ZENNOTES_VAULT', description: 'Default vault root when --vault is not given' },
+  { name: 'ZENNOTES_SERVER', description: 'Default server when neither --vault nor --server is given' },
+  { name: 'ZENNOTES_REMOTE_TOKEN', description: 'Auth token for a server; for CI and headless use' },
   { name: 'ZENNOTES_CONFIG_DIR', description: 'Override the ZenNotes config directory' },
   { name: 'NO_COLOR', description: 'Disable ANSI color (industry standard)' }
 ]
@@ -185,8 +189,11 @@ const EXAMPLES: string[] = [
   'zn search "deadline" --json | jq \'.[].path\'',
   'zn list --tag idea --limit 5',
   'zn list --vault work --limit 5',
+  'zn list --server home                # a self-hosted ZenNotes server',
+  'zn capture "from CI" --server https://notes.example.com',
   'zn task list --unchecked --tag work',
-  'zn open ~/Downloads/notes.md'
+  'zn open ~/Downloads/notes.md',
+  'zn open ~/code/project/docs   # focus a folder as a session'
 ]
 
 function header(width: number): string[] {

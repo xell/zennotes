@@ -4,8 +4,80 @@
  * highlight, `$` math) around the selection, or wrap it as a link. (#201-style
  * quick-format affordance.)
  */
-import { EditorSelection } from '@codemirror/state'
+import { EditorSelection, type EditorState, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
+
+// Symmetric inline markers the formatting shortcuts insert empty (`toggleWrap`
+// drops the cursor between them). Ordered longest-first so `**|**` matches `**`
+// (bold) before `*` (italic), and `~~`/`==` before nothing shorter. (#468)
+const WRAP_MARKERS = ['**', '~~', '==', '*', '`', '$'] as const
+
+/** The cursor sits between an empty `marker` pair, e.g. `**|**` for `**`. */
+function isEmptyPairAt(state: EditorState, at: number, marker: string): boolean {
+  if (at - marker.length < 0 || at + marker.length > state.doc.length) return false
+  return (
+    state.sliceDoc(at - marker.length, at) === marker &&
+    state.sliceDoc(at, at + marker.length) === marker
+  )
+}
+
+/**
+ * A *longer* marker also forms an empty pair here, so the one being toggled is
+ * only the inner slice of it. Guards the empty-pair removal below: in a fresh
+ * `**|**`, Ctrl+I finds a `*` on each side and would otherwise delete the inner
+ * half of the bold pair — destroying the bold the user just started instead of
+ * nesting italic inside it. Same longest-marker-wins rule the Backspace handler
+ * follows (#468).
+ */
+function longerMarkerPairAt(state: EditorState, at: number, marker: string): boolean {
+  return WRAP_MARKERS.some((w) => w.length > marker.length && isEmptyPairAt(state, at, w))
+}
+
+/**
+ * `text` (the line up to the cursor) leaves `marker` open — an odd number of
+ * them, so the cursor is inside a span this marker started. A single `*` skips
+ * any occurrence that touches another `*`, so a `**bold**` earlier on the line
+ * isn't counted as two italics. Deliberately a count rather than a parse: the
+ * question is only which way the shortcut should lean, and a wrong guess just
+ * inserts the pair as before.
+ */
+function isInsideUnclosedMarker(text: string, marker: string): boolean {
+  let count = 0
+  let index = 0
+  while (index < text.length) {
+    const found = text.indexOf(marker, index)
+    if (found === -1) break
+    if (
+      marker !== '*' ||
+      (text[found - 1] !== '*' && text[found + marker.length] !== '*')
+    ) {
+      count++
+    }
+    index = found + marker.length
+  }
+  return count % 2 === 1
+}
+
+/**
+ * When the cursor sits between two identical *empty* formatting markers — e.g.
+ * `**|**` just inserted by Ctrl+B, or `` `|` `` — Backspace should remove the
+ * whole snippet in one press, not a single marker character (#468). Returns the
+ * delete transaction, or null when the cursor isn't between an empty pair.
+ */
+export function formatMarkerBackspaceTransaction(state: EditorState): TransactionSpec | null {
+  const sel = state.selection.main
+  if (!sel.empty) return null
+  const head = sel.head
+  for (const m of WRAP_MARKERS) {
+    if (isEmptyPairAt(state, head, m)) {
+      return {
+        changes: { from: head - m.length, to: head + m.length, insert: '' },
+        selection: EditorSelection.cursor(head - m.length)
+      }
+    }
+  }
+  return null
+}
 
 /**
  * Toggle a symmetric inline marker around each selection range: wrap when it
@@ -18,6 +90,31 @@ export function toggleWrap(view: EditorView, marker: string): boolean {
     view.state.changeByRange((range) => {
       const { from, to } = range
       if (from === to) {
+        const before = view.state.sliceDoc(Math.max(0, from - m.length), from)
+        const after = view.state.sliceDoc(from, Math.min(view.state.doc.length, from + m.length))
+
+        if (after === m) {
+          if (before === m && !longerMarkerPairAt(view.state, from, m)) {
+            // Empty pair: pressing the shortcut again removes the markers.
+            return {
+              changes: { from: from - m.length, to: from + m.length, insert: '' },
+              range: EditorSelection.cursor(from - m.length)
+            }
+          }
+
+          const line = view.state.doc.lineAt(from)
+          const lineBefore = view.state.sliceDoc(line.from, from)
+          if (isInsideUnclosedMarker(lineBefore, m)) {
+            // Cursor is just before the closing marker from a previously inserted
+            // pair. Treat the shortcut as leaving/toggling off formatting instead
+            // of inserting another marker pair inside it.
+            return {
+              changes: [],
+              range: EditorSelection.cursor(from + m.length)
+            }
+          }
+        }
+
         // No selection: insert the pair and drop the cursor between them.
         return {
           changes: { from, insert: m + m },

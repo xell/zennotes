@@ -199,15 +199,15 @@ On desktop, ZenNotes renders the note as Markdown and exports it on a white pape
 
 Open `Settings -> CLI` and click `Install`.
 
-ZenNotes installs the bundled `zen` wrapper into a usable PATH location. It prefers a user-writable directory and only falls back to an admin prompt when no writable PATH location is available.
+ZenNotes installs a `zn` symlink, pointing at the wrapper bundled with the app, into a usable PATH location. It prefers a user-writable directory and only falls back to an admin prompt when no writable PATH location is available.
 
 After install, try:
 
 ```bash
-zen list
-zen read "inbox/Project.md"
-zen read --path "hellointerview/system design.md"
-zen search "deadline" --json
+zn list
+zn read "inbox/Project.md"
+zn read --path "hellointerview/system design.md"
+zn search "deadline" --json
 ```
 
 Quote note paths that contain spaces, or pass them with `--path`.

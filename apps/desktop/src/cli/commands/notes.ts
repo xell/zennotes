@@ -4,24 +4,8 @@
  * round-trip, works whether the desktop app is open or closed.
  */
 
-import {
-  appendToNote,
-  archiveNote,
-  createNote,
-  deleteNote,
-  duplicateNote,
-  listNotes,
-  moveNote,
-  moveToTrash,
-  prependToNote,
-  readNote,
-  renameNote,
-  restoreFromTrash,
-  unarchiveNote,
-  writeNote,
-  type NoteFolder,
-  type NoteMeta
-} from '../../mcp/vault-ops.js'
+import type { NoteFolder, NoteMeta } from '../../mcp/vault-ops.js'
+import type { VaultBackend } from '../backend.js'
 import {
   getBool,
   getMany,
@@ -44,11 +28,11 @@ function parseFolderFlag(value: string | undefined): NoteFolder | undefined {
   return value as NoteFolder
 }
 
-export async function cmdList(vault: string, args: ParsedArgs): Promise<void> {
+export async function cmdList(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const folder = parseFolderFlag(getString(args, 'folder'))
   const tag = getString(args, 'tag')?.toLowerCase()
   const limit = getNumber(args, 'limit') ?? 50
-  let notes = await listNotes(vault)
+  let notes = await vault.listNotes()
   notes = folder
     ? notes.filter((n) => n.folder === folder)
     : notes.filter((n) => n.folder !== 'trash')
@@ -77,9 +61,9 @@ export async function cmdList(vault: string, args: ParsedArgs): Promise<void> {
   }
 }
 
-export async function cmdRead(vault: string, args: ParsedArgs): Promise<void> {
+export async function cmdRead(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const rel = requirePath(args)
-  const note = await readNote(vault, rel)
+  const note = await vault.readNote(rel)
   if (getBool(args, 'json')) {
     emitJson(note)
     return
@@ -93,7 +77,7 @@ export async function cmdRead(vault: string, args: ParsedArgs): Promise<void> {
   if (!note.body.endsWith('\n')) process.stdout.write('\n')
 }
 
-export async function cmdCreate(vault: string, args: ParsedArgs): Promise<void> {
+export async function cmdCreate(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const folder = parseFolderFlag(getString(args, 'folder')) ?? 'inbox'
   if (folder === 'trash') {
     throw new Error('Refusing to create a note directly in trash.')
@@ -103,7 +87,7 @@ export async function cmdCreate(vault: string, args: ParsedArgs): Promise<void> 
   const tags = getMany(args, 'tag').map((t) => t.replace(/^#/, ''))
   const inputBody = await resolveBody(args)
   const composed = composeBody(title, inputBody, tags)
-  const meta = await createNote(vault, folder, title, subpath, composed)
+  const meta = await vault.createNote(folder, title, subpath, composed)
   emitCreated(meta, args)
 }
 
@@ -120,81 +104,81 @@ function composeBody(
   return out.endsWith('\n') ? out : out + '\n'
 }
 
-export async function cmdWrite(vault: string, args: ParsedArgs): Promise<void> {
+export async function cmdWrite(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const rel = requirePath(args)
   const body = await resolveBody(args)
   if (body == null) {
     throw new Error('zn write requires --body, a positional body, or piped stdin.')
   }
-  const meta = await writeNote(vault, rel, body)
+  const meta = await vault.writeNote(rel, body)
   emitWritten(meta, args)
 }
 
-export async function cmdAppend(vault: string, args: ParsedArgs): Promise<void> {
+export async function cmdAppend(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const rel = requirePath(args)
   const body = await resolveBody(args)
   if (body == null || body.trim() === '') {
     throw new Error('zn append requires --body, a positional body, or piped stdin.')
   }
-  const meta = await appendToNote(vault, rel, body)
+  const meta = await vault.appendToNote(rel, body)
   emitWritten(meta, args)
 }
 
-export async function cmdPrepend(vault: string, args: ParsedArgs): Promise<void> {
+export async function cmdPrepend(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const rel = requirePath(args)
   const body = await resolveBody(args)
   if (body == null || body.trim() === '') {
     throw new Error('zn prepend requires --body, a positional body, or piped stdin.')
   }
-  const meta = await prependToNote(vault, rel, body)
+  const meta = await vault.prependToNote(rel, body)
   emitWritten(meta, args)
 }
 
-export async function cmdRename(vault: string, args: ParsedArgs): Promise<void> {
+export async function cmdRename(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const rel = requirePath(args)
   const to = getString(args, 'to')
   if (!to) throw new Error('zn rename requires --to <new title>.')
-  const meta = await renameNote(vault, rel, to)
+  const meta = await vault.renameNote(rel, to)
   emitWritten(meta, args, 'Renamed')
 }
 
-export async function cmdMove(vault: string, args: ParsedArgs): Promise<void> {
+export async function cmdMove(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const rel = requirePath(args)
   const folder = parseFolderFlag(getString(args, 'folder'))
   if (!folder) throw new Error('zn move requires --folder <inbox|quick|archive|trash>.')
   const sub = getString(args, 'subpath') ?? ''
-  const meta = await moveNote(vault, rel, folder, sub)
+  const meta = await vault.moveNote(rel, folder, sub)
   emitWritten(meta, args, 'Moved')
 }
 
-export async function cmdArchive(vault: string, args: ParsedArgs): Promise<void> {
-  const meta = await archiveNote(vault, requirePath(args))
+export async function cmdArchive(vault: VaultBackend, args: ParsedArgs): Promise<void> {
+  const meta = await vault.archiveNote(requirePath(args))
   emitWritten(meta, args, 'Archived')
 }
 
-export async function cmdUnarchive(vault: string, args: ParsedArgs): Promise<void> {
-  const meta = await unarchiveNote(vault, requirePath(args))
+export async function cmdUnarchive(vault: VaultBackend, args: ParsedArgs): Promise<void> {
+  const meta = await vault.unarchiveNote(requirePath(args))
   emitWritten(meta, args, 'Unarchived')
 }
 
-export async function cmdTrash(vault: string, args: ParsedArgs): Promise<void> {
-  const meta = await moveToTrash(vault, requirePath(args))
+export async function cmdTrash(vault: VaultBackend, args: ParsedArgs): Promise<void> {
+  const meta = await vault.moveToTrash(requirePath(args))
   emitWritten(meta, args, 'Moved to trash')
 }
 
-export async function cmdRestore(vault: string, args: ParsedArgs): Promise<void> {
-  const meta = await restoreFromTrash(vault, requirePath(args))
+export async function cmdRestore(vault: VaultBackend, args: ParsedArgs): Promise<void> {
+  const meta = await vault.restoreFromTrash(requirePath(args))
   emitWritten(meta, args, 'Restored')
 }
 
-export async function cmdDelete(vault: string, args: ParsedArgs): Promise<void> {
+export async function cmdDelete(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const rel = requirePath(args)
   if (!getBool(args, 'yes')) {
     throw new Error(
       'zn delete is permanent. Re-run with --yes to confirm, or use `zn trash` for the reversible alternative.'
     )
   }
-  await deleteNote(vault, rel)
+  await vault.deleteNote(rel)
   if (getBool(args, 'json')) {
     emitJson({ ok: true, path: rel })
     return
@@ -202,8 +186,8 @@ export async function cmdDelete(vault: string, args: ParsedArgs): Promise<void> 
   emitOk(`Deleted ${rel}`)
 }
 
-export async function cmdDuplicate(vault: string, args: ParsedArgs): Promise<void> {
-  const meta = await duplicateNote(vault, requirePath(args))
+export async function cmdDuplicate(vault: VaultBackend, args: ParsedArgs): Promise<void> {
+  const meta = await vault.duplicateNote(requirePath(args))
   emitWritten(meta, args, 'Duplicated')
 }
 

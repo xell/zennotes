@@ -1,11 +1,30 @@
 import {
   acceptCompletion,
+  completionKeymap,
   completionStatus,
   moveCompletionSelection,
   selectedCompletion
 } from '@codemirror/autocomplete'
 import { Prec } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
+import { EditorView, type KeyBinding } from '@codemirror/view'
+
+/**
+ * macOS AltGr-style keyboard layouts (custom Ukelele `.keylayout` files, a
+ * common setup for Czech/Polish/German ISO users) emit a printable character
+ * directly with Option held, mirroring Windows/Linux AltGr. `@codemirror/
+ * autocomplete`'s stock `completionKeymap` binds mac-only `` Alt-` `` and
+ * `Alt-i` to `startCompletion`, so on those layouts the Option combo that types
+ * a backtick (or whatever Option+I produces) is matched, `preventDefault`ed, and
+ * never inserted (#429). On Apple stock layouts those combos are dead keys
+ * (`event.key === "Dead"`) so they never match, which is why most users never
+ * see it. Drop the two offenders; `Ctrl-Space` still opens completion, so no
+ * trigger is lost. (Same approach as the mac emacs chords filtered out in
+ * cm-vim-default-keymap.ts.) Use this in place of the raw `completionKeymap`.
+ */
+const MAC_TEXT_ENTRY_CHORDS = new Set(['Alt-`', 'Alt-i'])
+export const completionKeymapForEditor: readonly KeyBinding[] = completionKeymap.filter(
+  (binding) => !(typeof binding.mac === 'string' && MAC_TEXT_ENTRY_CHORDS.has(binding.mac))
+)
 
 /**
  * Direction a Ctrl-based chord should move the autocomplete selection,
@@ -62,6 +81,21 @@ export const completionNavKeymap = Prec.highest(
       }
 
       const noMods = !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+
+      // Enter — accept the highlighted completion whenever the popup is open,
+      // the universal "menu open → Enter selects" behavior. This must run at
+      // `Prec.highest` because the markdown Enter binding
+      // (`insertNewlineContinueMarkup`) outranks the built-in completion accept
+      // inside a blockquote — so without this, Enter in a callout header
+      // (`> [!warn`) continues the quote instead of picking the type. When no
+      // completion is open we bail and Enter keeps its normal meaning.
+      if (event.key === 'Enter' && noMods) {
+        if (completionStatus(view.state) !== 'active') return false
+        if (!acceptCompletion(view)) return false
+        event.preventDefault()
+        event.stopPropagation()
+        return true
+      }
 
       // Ctrl+Y — accept the highlighted completion (Vim-style).
       if (

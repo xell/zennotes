@@ -1,5 +1,6 @@
+import { completionKeymap } from '@codemirror/autocomplete'
 import { describe, expect, it } from 'vitest'
-import { completionNavDirection } from './cm-completion-nav'
+import { completionKeymapForEditor, completionNavDirection } from './cm-completion-nav'
 
 function key(init: Partial<KeyboardEvent>): KeyboardEvent {
   return {
@@ -37,5 +38,25 @@ describe('completionNavDirection', () => {
     expect(completionNavDirection(key({ key: 'a', ctrlKey: true }))).toBeNull()
     expect(completionNavDirection(key({ key: 'ArrowDown' }))).toBeNull()
     expect(completionNavDirection(key({ key: 'ArrowUp' }))).toBeNull()
+  })
+})
+
+describe('completionKeymapForEditor (#429 — mac AltGr text entry)', () => {
+  const macBindings = completionKeymapForEditor.map((b) => b.mac).filter(Boolean)
+
+  it('drops the mac-only Alt-` and Alt-i completion triggers', () => {
+    // They swallow the printable char AltGr-style mac layouts emit on those combos.
+    expect(macBindings).not.toContain('Alt-`')
+    expect(macBindings).not.toContain('Alt-i')
+    // Sanity: the stock keymap really did have them (so the filter is doing work).
+    expect(completionKeymap.map((b) => b.mac)).toContain('Alt-`')
+    expect(completionKeymap.map((b) => b.mac)).toContain('Alt-i')
+  })
+
+  it('keeps Ctrl-Space and every non-Alt binding (only two removed)', () => {
+    expect(completionKeymapForEditor.some((b) => b.key === 'Ctrl-Space')).toBe(true)
+    expect(completionKeymapForEditor.some((b) => b.key === 'Escape')).toBe(true)
+    expect(completionKeymapForEditor.some((b) => b.key === 'Enter')).toBe(true)
+    expect(completionKeymapForEditor).toHaveLength(completionKeymap.length - 2)
   })
 })

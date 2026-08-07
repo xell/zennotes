@@ -17,9 +17,10 @@ interface SlashCmd {
 }
 
 type DecoratedCompletion = Completion & {
-  _kind?: 'slash' | 'wikilink' | 'date'
+  _kind?: 'slash' | 'wikilink' | 'date' | 'callout'
   _icon?: string
   _subtitle?: string
+  _group?: string
 }
 
 const COMMANDS: SlashCmd[] = [
@@ -42,6 +43,22 @@ const COMMANDS: SlashCmd[] = [
   { label: 'Divider', detail: '---', icon: '—', insert: '---\n' },
   { label: 'Table', detail: '|', icon: '⊞', insert: '| Column 1 | Column 2 |\n| --- | --- |\n| | |' },
   { label: 'Math block', detail: '$$', icon: '∑', insert: '$$\n\n$$', cursorOffset: -3 },
+  {
+    label: 'Embed',
+    detail: 'video / iframe',
+    icon: '▶',
+    insert: '```embed\n\n```',
+    cursorOffset: -4,
+    keywords: 'video youtube vimeo iframe embed url'
+  },
+  {
+    label: 'Bookmark',
+    detail: 'link card',
+    icon: '🔖',
+    insert: '```bookmark\n\n```',
+    cursorOffset: -4,
+    keywords: 'link url card preview bookmark web'
+  },
   { label: 'Callout', detail: '>', icon: '!', insert: '> [!note]\n> ' },
   { label: 'Link', detail: '[]', icon: '🔗', insert: '[]()', cursorOffset: -3 },
   { label: 'Image', detail: '![]', icon: '🖼', insert: '![]()', cursorOffset: -3 },
@@ -51,6 +68,31 @@ const COMMANDS: SlashCmd[] = [
 /** Render a custom completion item matching the app theme. */
 function renderCompletion(completion: Completion): HTMLElement {
   const decorated = completion as DecoratedCompletion
+  if (decorated._kind === 'callout') {
+    const el = document.createElement('div')
+    el.className = 'callout-cmd-item'
+
+    const icon = document.createElement('span')
+    icon.className = `callout-cmd-icon callout-cmd-${decorated._group ?? 'note'}`
+    icon.textContent = decorated._icon ?? ''
+
+    const main = document.createElement('div')
+    main.className = 'callout-cmd-main'
+
+    const label = document.createElement('span')
+    label.className = 'callout-cmd-label'
+    label.textContent = completion.displayLabel ?? completion.label
+
+    const desc = document.createElement('span')
+    desc.className = 'callout-cmd-desc'
+    desc.textContent = decorated._subtitle ?? ''
+
+    main.appendChild(label)
+    main.appendChild(desc)
+    el.appendChild(icon)
+    el.appendChild(main)
+    return el
+  }
   if (decorated._kind === 'wikilink') {
     const el = document.createElement('div')
     el.className = 'wikilink-cmd-item'

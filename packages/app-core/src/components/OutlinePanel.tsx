@@ -33,7 +33,11 @@ export function OutlinePanel({ note, activeLine, onJump }: Props): JSX.Element {
   const activeItemRef = useRef<HTMLLIElement | null>(null)
   const width = useStore((s) => s.panelWidths.outline)
   const setPanelWidth = useStore((s) => s.setPanelWidth)
+  const focusedPanel = useStore((s) => s.focusedPanel)
+  const cursorIndex = useStore((s) => s.outlineCursorIndex)
+  const setCursorIndex = useStore((s) => s.setOutlineCursorIndex)
   const { startResize } = usePanelResize(width, (px) => setPanelWidth('outline', px))
+  const isOutlineFocused = focusedPanel === 'outline'
 
   // Reset the filter when the note changes so the outline reflects the
   // new document from the top.
@@ -45,6 +49,14 @@ export function OutlinePanel({ note, activeLine, onJump }: Props): JSX.Element {
     return items.filter((item) => item.text.toLowerCase().includes(q))
   }, [items, query])
 
+  // Keep the row cursor inside the list as headings are added, removed, or
+  // filtered away — same clamp the connections panel does. (#477)
+  useEffect(() => {
+    if (!isOutlineFocused) return
+    const next = filtered.length === 0 ? 0 : Math.min(cursorIndex, filtered.length - 1)
+    if (next !== cursorIndex) setCursorIndex(next)
+  }, [cursorIndex, filtered.length, isOutlineFocused, setCursorIndex])
+
   // Keep the active heading in view as the user scrolls. `nearest`
   // avoids fighting them when the row is already visible.
   useEffect(() => {
@@ -55,6 +67,7 @@ export function OutlinePanel({ note, activeLine, onJump }: Props): JSX.Element {
   return (
     <section
       aria-label="Outline"
+      data-outline-panel
       style={{ width }}
       className="relative flex shrink-0 flex-col border-l border-paper-300/70 bg-paper-50/18"
     >
@@ -84,8 +97,12 @@ export function OutlinePanel({ note, activeLine, onJump }: Props): JSX.Element {
           </div>
         ) : (
           <ul className="flex flex-col">
-            {filtered.map((item) => {
+            {filtered.map((item, rowIndex) => {
               const isActive = activeLine != null && item.line === activeLine
+              // The keyboard cursor is separate from the scroll-position marker:
+              // one says "where you are typing", the other "where you are
+              // about to jump". Only the cursor gets the solid highlight.
+              const isCursor = isOutlineFocused && cursorIndex === rowIndex
               return (
                 <li
                   key={`${item.line}-${item.from}`}
@@ -96,18 +113,23 @@ export function OutlinePanel({ note, activeLine, onJump }: Props): JSX.Element {
                     onClick={() => onJump(item.line)}
                     title={`Jump to line ${item.line}`}
                     aria-current={isActive ? 'true' : undefined}
+                    data-outline-idx={rowIndex}
+                    data-outline-line={item.line}
+                    data-outline-cursor={isCursor ? 'true' : undefined}
                     className={[
                       'flex w-full min-w-0 items-center gap-2 rounded px-2 py-1 text-left text-sm transition-colors',
-                      isActive
-                        ? 'bg-accent/12 font-medium text-accent'
-                        : 'text-ink-700 hover:bg-paper-200 hover:text-ink-900'
+                      isCursor
+                        ? 'bg-accent text-white ring-2 ring-white/45'
+                        : isActive
+                          ? 'bg-accent/12 font-medium text-accent'
+                          : 'text-ink-700 hover:bg-paper-200 hover:text-ink-900'
                     ].join(' ')}
                     style={{ paddingLeft: `${8 + (item.level - 1) * 12}px` }}
                   >
                     <span
                       className={[
                         'shrink-0 text-2xs uppercase tracking-wide',
-                        isActive ? 'text-accent/75' : 'text-ink-400'
+                        isCursor ? 'text-white/75' : isActive ? 'text-accent/75' : 'text-ink-400'
                       ].join(' ')}
                     >
                       H{item.level}

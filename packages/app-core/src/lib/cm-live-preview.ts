@@ -10,13 +10,17 @@ import {
 } from '@codemirror/view'
 import { useStore } from '../store'
 import {
+  buildAttachmentChip,
   classifyLocalAssetHref,
+  hrefFragment,
   resolveAssetVaultRelativePath,
   resolveLocalAssetUrl
 } from './local-assets'
 import { parseImageEmbedLabel } from './embed-size'
 import { setImageBlockDragPayload } from './image-block-dnd'
+import { imageCacheKey, rememberImageOnLoad, takeCachedImage } from './image-element-cache'
 import { assetTabPath } from './asset-tabs'
+import { openExternalFileLink } from './external-file-link'
 import {
   getExcalidrawPreview,
   parseEmbedSizeHint,
@@ -56,6 +60,12 @@ const PREFIX_HIDE_WITH_SPACE = new Set(['HeaderMark', 'QuoteMark'])
 
 const hide = Decoration.replace({})
 const imageSourceHide = Decoration.replace({})
+// Marks the text of a completed task (`- [x] …`) so CSS can strike/gray it,
+// gated by the `data-completed-task-style` setting on the document root.
+const taskDoneMark = Decoration.mark({ class: 'cm-task-done' })
+// Marks the text of a cancelled task (`- [-] …`) so CSS can strike/mute it.
+// Always applied (not gated by a setting) — cancelled always reads as struck. (#450)
+const taskCancelledMark = Decoration.mark({ class: 'cm-task-cancelled' })
 // Stamped on an image line only while its raw source is hidden, so the host
 // line stops reserving a blank text row above/below the block figure (#261).
 const imageEmbedLine = Decoration.line({ class: 'cm-image-embed-line' })
@@ -72,6 +82,8 @@ type ParsedImage = {
   /** Render size from a `|600` / `|600x400` label, if the label was one. */
   width?: number
   height?: number
+  /** Asset mtime, part of the image cache key so an edited file reloads. (#472) */
+  version: number
 }
 
 type ParsedPdf = {
@@ -144,6 +156,37 @@ function enclosingLinkRange(ref: SyntaxNodeRefLike): { from: number; to: number 
   return null
 }
 
+/**
+ * True when a `Link`/`Image` node that ends at `linkTo` is immediately
+ * followed by a `(` whose matching `)` hasn't been typed yet, i.e. the
+ * link target is still being written. (#471)
+ *
+ * The parser ends the `Link` node at the `]` in that state (`[Example](`
+ * gives `Link[0,9]`), so its brackets would otherwise be hidden and the
+ * label would render as `Example(` mid-edit. Parens nest, matching
+ * CommonMark's balanced-paren destinations, so a URL like
+ * `https://en.wikipedia.org/wiki/Foo_(bar` still counts as unterminated.
+ */
+function hasUnterminatedLinkTarget(state: EditorView['state'], linkTo: number): boolean {
+  if (state.doc.sliceString(linkTo, linkTo + 1) !== '(') return false
+  const line = state.doc.lineAt(linkTo)
+  const rest = state.doc.sliceString(linkTo, line.to)
+  let depth = 0
+  for (let i = 0; i < rest.length; i++) {
+    const ch = rest[i]
+    if (ch === '\\') {
+      i += 1
+      continue
+    }
+    if (ch === '(') depth += 1
+    else if (ch === ')') {
+      depth -= 1
+      if (depth === 0) return false
+    }
+  }
+  return true
+}
+
 function createImageDragPreview(title: string): HTMLDivElement {
   const chip = document.createElement('div')
   chip.style.position = 'fixed'
@@ -185,6 +228,25 @@ function createImageDragPreview(title: string): HTMLDivElement {
   return chip
 }
 
+let assetVersionSource: unknown = null
+let assetVersionIndex: Map<string, number> = new Map()
+
+/** Mtime of the vault asset `href` resolves to, or 0 when unknown. (#472) */
+function assetVersionFor(href: string): number {
+  const state = useStore.getState()
+  const root = state.vault?.root
+  const notePath = state.activeNote?.path
+  if (!root || !notePath) return 0
+  const rel = resolveAssetVaultRelativePath(root, notePath, href)
+  if (!rel) return 0
+  const files = state.assetFiles
+  if (files !== assetVersionSource) {
+    assetVersionSource = files
+    assetVersionIndex = new Map(files.map((a) => [a.path, a.updatedAt]))
+  }
+  return assetVersionIndex.get(rel) ?? 0
+}
+
 function parseStandaloneLocalImage(lineText: string): ParsedImage | null {
   const state = useStore.getState()
   const fromMarkdown = lineText.match(STANDALONE_IMAGE_RE)
@@ -195,7 +257,12 @@ function parseStandaloneLocalImage(lineText: string): ParsedImage | null {
     if (!resolvedUrl) return null
     // A trailing `|600` in the alt is a render size, not alt text — same rule
     // the preview renderer applies, so both surfaces agree on what a label means.
-    return { ...parseImageEmbedLabel(fromMarkdown[1]), href, resolvedUrl }
+    return {
+      ...parseImageEmbedLabel(fromMarkdown[1]),
+      href,
+      resolvedUrl,
+      version: assetVersionFor(href)
+    }
   }
 
   const fromEmbed = lineText.match(STANDALONE_OBSIDIAN_EMBED_RE)
@@ -204,7 +271,12 @@ function parseStandaloneLocalImage(lineText: string): ParsedImage | null {
   if (classifyLocalAssetHref(href) !== 'image') return null
   const resolvedUrl = resolveLocalAssetUrl(state.vault?.root, state.activeNote?.path, href)
   if (!resolvedUrl) return null
-  return { ...parseImageEmbedLabel(fromEmbed[2]), href, resolvedUrl }
+  return {
+    ...parseImageEmbedLabel(fromEmbed[2]),
+    href,
+    resolvedUrl,
+    version: assetVersionFor(href)
+  }
 }
 
 function parseStandaloneLocalPdf(lineText: string): ParsedPdf | null {
@@ -235,6 +307,45 @@ function parseStandaloneLocalPdf(lineText: string): ParsedPdf | null {
   }
 }
 
+type ParsedAttachment = {
+  href: string
+  resolvedUrl: string
+  name: string
+}
+
+// A standalone non-previewable attachment embed. Two forms:
+//  - Markdown `![](file.tldraw)` — any non-image, non-excalidraw file (PDFs in
+//    this form have no dedicated widget, so they chip too).
+//  - Obsidian `![[file.tldraw]]` — generic files only; PDF/audio/video keep
+//    their rich widgets/embeds.
+// Images and excalidraw drawings have their own widgets and are excluded. (#463)
+function parseStandaloneLocalAttachment(lineText: string): ParsedAttachment | null {
+  const md = lineText.match(STANDALONE_IMAGE_RE)
+  const embed = md ? null : lineText.match(STANDALONE_OBSIDIAN_EMBED_RE)
+  let href: string
+  let alt: string
+  if (md) {
+    href = (md[2] ?? md[3] ?? '').trim()
+    alt = (md[1] ?? '').trim()
+  } else if (embed) {
+    href = (embed[1] ?? '').trim()
+    alt = (embed[2] ?? '').trim()
+  } else {
+    return null
+  }
+  const kind = classifyLocalAssetHref(href)
+  if (md) {
+    if (!kind || kind === 'image' || kind === 'excalidraw') return null
+  } else if (kind !== 'file') {
+    return null
+  }
+  const state = useStore.getState()
+  const resolvedUrl = resolveLocalAssetUrl(state.vault?.root, state.activeNote?.path, href)
+  if (!resolvedUrl) return null
+  const name = alt || decodeURIComponentSafe(href.split('/').filter(Boolean).pop()) || 'Attachment'
+  return { href, resolvedUrl, name }
+}
+
 class LocalImageWidget extends WidgetType {
   constructor(
     private readonly notePath: string,
@@ -244,8 +355,9 @@ class LocalImageWidget extends WidgetType {
     private readonly alt: string,
     private readonly href: string,
     private readonly resolvedUrl: string,
-    private readonly width?: number,
-    private readonly height?: number
+    private readonly width: number | undefined,
+    private readonly height: number | undefined,
+    private readonly version: number
   ) {
     super()
   }
@@ -262,7 +374,8 @@ class LocalImageWidget extends WidgetType {
       // Without these, editing `|600` to `|300` would reuse the old widget and
       // the image would not resize until something else forced a rebuild.
       other.width === this.width &&
-      other.height === this.height
+      other.height === this.height &&
+      other.version === this.version
     )
   }
 
@@ -304,9 +417,17 @@ class LocalImageWidget extends WidgetType {
     const frame = document.createElement('div')
     frame.className = 'local-image-embed-frame'
 
-    const image = document.createElement('img')
+    // Reuse the decoded element when this image was on screen recently, so
+    // scrolling back paints it immediately instead of refetching and
+    // re-decoding it. (#472)
+    const key = imageCacheKey(this.resolvedUrl, this.version)
+    const cached = takeCachedImage(key)
+    const image = cached ?? document.createElement('img')
     image.className = 'local-image-embed-image'
-    image.src = this.resolvedUrl
+    if (!cached) {
+      image.src = this.resolvedUrl
+      rememberImageOnLoad(key, image)
+    }
     image.alt = this.alt
     image.loading = 'lazy'
     image.draggable = false
@@ -473,7 +594,7 @@ class LocalPdfWidget extends WidgetType {
         const abs = resolveAssetVaultRelativePath(root, notePath, this.href)
         // Default to a per-note pin — the PDF stays attached to this
         // note and quietly disappears when the user navigates away.
-        if (abs) state.pinAssetReferenceForNote(notePath, abs)
+        if (abs) state.pinAssetReferenceForNote(notePath, abs, hrefFragment(this.href) || null)
       })
 
       const icon = document.createElement('span')
@@ -535,7 +656,7 @@ class LocalPdfWidget extends WidgetType {
       const notePath = state.activeNote?.path
       if (!root || !notePath) return
       const abs = resolveAssetVaultRelativePath(root, notePath, this.href)
-      if (abs) state.pinAssetReferenceForNote(notePath, abs)
+      if (abs) state.pinAssetReferenceForNote(notePath, abs, hrefFragment(this.href) || null)
     })
 
     const openButton = document.createElement('button')
@@ -577,7 +698,7 @@ class LocalPdfWidget extends WidgetType {
 
     const frame = document.createElement('iframe')
     frame.className = 'local-pdf-embed-frame'
-    frame.src = this.resolvedUrl
+    frame.src = this.resolvedUrl + hrefFragment(this.href)
     frame.title = this.label || 'PDF'
 
     figure.append(header, frame)
@@ -701,6 +822,46 @@ class LocalExcalidrawWidget extends WidgetType {
   }
 }
 
+/** Renders a non-previewable attachment (`![](file.tldraw)`) as an attachment
+ *  chip — matching the reading preview — instead of leaving the line blank.
+ *  Clicking opens the file the same way the image/PDF widgets do. (#463) */
+class AttachmentChipWidget extends WidgetType {
+  constructor(
+    private readonly href: string,
+    private readonly resolvedUrl: string,
+    private readonly name: string
+  ) {
+    super()
+  }
+
+  eq(other: AttachmentChipWidget): boolean {
+    return (
+      other.href === this.href &&
+      other.resolvedUrl === this.resolvedUrl &&
+      other.name === this.name
+    )
+  }
+
+  toDOM(): HTMLElement {
+    return buildAttachmentChip(this.resolvedUrl, this.href, this.name, () => {
+      const state = useStore.getState()
+      const root = state.vault?.root
+      const notePath = state.activeNote?.path
+      const assetPath =
+        root && notePath ? resolveAssetVaultRelativePath(root, notePath, this.href) : null
+      // Open in the OS default app — an in-app asset tab can't render a
+      // non-previewable file. (#463)
+      if (root && assetPath) {
+        void openExternalFileLink(`${root.replace(/\/+$/, '')}/${assetPath}`)
+      }
+    })
+  }
+
+  ignoreEvent(): boolean {
+    return true
+  }
+}
+
 /** Renders a GFM task-list marker (`[ ]` / `[x]` / `[X]`) as a clickable
  *  checkbox. The widget rewrites the underlying markdown when toggled — the
  *  same single-character mutation the Preview pane uses, so the on-disk
@@ -734,7 +895,9 @@ class TaskCheckboxWidget extends WidgetType {
     if (this.forwarded) {
       const marker = document.createElement('span')
       marker.className = 'cm-task-forwarded'
-      marker.textContent = '→' // → forwarded marker
+      // The arrow glyph is drawn via the `.cm-task-forwarded::before` rule
+      // (absolutely centred), the same as the broken-link path — so no
+      // textContent here, or the two would double up.
       marker.title = 'Forwarded to another note'
       wrap.append(marker)
       return wrap
@@ -785,10 +948,25 @@ class ForwardedMarkerWidget extends WidgetType {
   }
 
   toDOM(): HTMLElement {
+    // The glyph is drawn via CSS `::before` (absolutely centred) so it aligns
+    // with the checkbox column regardless of the arrow glyph's font metrics.
     const span = document.createElement('span')
     span.className = 'cm-task-forwarded'
-    span.textContent = '→'
     span.title = 'Forwarded to another note'
+    span.setAttribute('contenteditable', 'false')
+    return span
+  }
+}
+
+class CancelledMarkerWidget extends WidgetType {
+  eq(): boolean {
+    return true
+  }
+
+  toDOM(): HTMLElement {
+    const span = document.createElement('span')
+    span.className = 'cm-task-cancelled-marker'
+    span.title = 'Cancelled'
     span.setAttribute('contenteditable', 'false')
     return span
   }
@@ -849,7 +1027,8 @@ function computeDecorations(view: EditorView): DecorationSet {
               parsedImage.href,
               parsedImage.resolvedUrl,
               parsedImage.width,
-              parsedImage.height
+              parsedImage.height,
+              parsedImage.version
             )
           })
         })
@@ -950,6 +1129,33 @@ function computeDecorations(view: EditorView): DecorationSet {
           deco: imageSourceHide
         })
       }
+      const parsedAttachment = parseStandaloneLocalAttachment(line.text)
+      if (parsedAttachment && !replacedLines.has(lineNo)) {
+        replacedLines.add(lineNo)
+        pending.push({
+          from: line.to,
+          to: line.to,
+          deco: Decoration.widget({
+            side: 1,
+            widget: new AttachmentChipWidget(
+              parsedAttachment.href,
+              parsedAttachment.resolvedUrl,
+              parsedAttachment.name
+            )
+          })
+        })
+        pending.push({
+          from: line.from,
+          to: line.to,
+          deco: imageSourceHide
+        })
+        // Collapse the now text-less line's strut, like the image embed does.
+        pending.push({
+          from: line.from,
+          to: line.from,
+          deco: imageEmbedLine
+        })
+      }
     }
   }
 
@@ -980,25 +1186,53 @@ function computeDecorations(view: EditorView): DecorationSet {
           }
         }
 
+        // #450: `[-]` at the start of a list item is a cancelled-task marker.
+        // Also parsed as a broken link (not a TaskMarker). Render a `✕` off the
+        // active line and strike the task text (always, like Obsidian's cancel).
+        if (name === 'Link' && state.doc.sliceString(node.from, node.to) === '[-]') {
+          const markerLine = state.doc.lineAt(node.from)
+          const before = state.doc.sliceString(markerLine.from, node.from)
+          if (/^\s*(?:[-+*]|\d+[.)])[ \t]+$/.test(before)) {
+            if (markerLine.to > node.to) {
+              pending.push({ from: node.to, to: markerLine.to, deco: taskCancelledMark })
+            }
+            if (!activeLines.has(markerLine.number) && !replacedLines.has(markerLine.number)) {
+              pending.push({
+                from: node.from,
+                to: node.to,
+                deco: Decoration.replace({ widget: new CancelledMarkerWidget() })
+              })
+            }
+            return false
+          }
+        }
+
         const isPrefix = PREFIX_HIDE_WITH_SPACE.has(name)
         const isSimple = SIMPLE_HIDE.has(name)
         const isUrl = name === URL_NODE
         const isLinkSyntax = name === 'LinkMark' || isUrl
 
         if (name === TASK_MARKER_NODE) {
-          const line = state.doc.lineAt(node.from).number
+          const lineObj = state.doc.lineAt(node.from)
+          const line = lineObj.number
           if (replacedLines.has(line)) return
-          // Reveal the raw `[ ]` / `[x]` on the active line so the whole task
-          // line reads as source — matching Obsidian, and consistent with the
-          // list/quote/heading markers, which also reveal on the active line.
-          // Off the line, render the checkbox.
-          if (activeLines.has(line)) return
           const markerText = state.doc.sliceString(node.from, node.to)
           // `markerText` is `[ ]` / `[x]` / `[X]` / `[>]`; default to unchecked if
           // the parser ever hands us something unexpected.
           const stateChar = markerText[1] ?? ''
           const checked = markerText.length >= 2 && /[xX]/.test(stateChar)
           const forwarded = stateChar === '>'
+          // Mark a completed task's text so CSS can strike/gray it (gated by the
+          // `completedTaskStyle` setting). Applied on the active line too, so it
+          // doesn't flip as the cursor moves; the checkbox itself is untouched.
+          if (checked && lineObj.to > node.to) {
+            pending.push({ from: node.to, to: lineObj.to, deco: taskDoneMark })
+          }
+          // Reveal the raw `[ ]` / `[x]` on the active line so the whole task
+          // line reads as source — matching Obsidian, and consistent with the
+          // list/quote/heading markers, which also reveal on the active line.
+          // Off the line, render the checkbox.
+          if (activeLines.has(line)) return
           pending.push({
             from: node.from,
             to: node.to,
@@ -1013,6 +1247,13 @@ function computeDecorations(view: EditorView): DecorationSet {
         if (isUrl) {
           const prevChar = state.doc.sliceString(node.from - 1, node.from)
           if (prevChar !== '(') return // autolink or label URL → keep visible
+          // A URL that follows `(` but hangs off the paragraph rather than the
+          // `Link`/`Image` is an autolink, not a destination: either a
+          // half-typed target (`[a](https://…` before the `)`) or a
+          // parenthesised bare URL (`(https://…)`). Hiding it made the pasted
+          // URL vanish while the link was still being written. (#471)
+          const urlParent = node.node.parent?.name
+          if (urlParent !== 'Link' && urlParent !== 'Image') return
         }
 
         if (!isPrefix && !isSimple && !isUrl) return
@@ -1033,10 +1274,17 @@ function computeDecorations(view: EditorView): DecorationSet {
         if (isLinkSyntax) {
           const linkRange = enclosingLinkRange(node)
           if (linkRange && selectionTouchesRange(state, linkRange.from, linkRange.to)) return
+          // `[label](` with no closing `)` yet isn't a link, so keep its
+          // brackets visible: the label reads as source while the target is
+          // typed or pasted, and collapses once the syntax is complete. (#471)
+          if (linkRange && hasUnterminatedLinkTarget(state, linkRange.to)) return
         } else if (activeLines.has(line)) {
-          const keepHeadingMarkerHidden =
-            name === 'HeaderMark' && !selectionTouchesRange(state, node.from, node.to)
-          if (!keepHeadingMarkerHidden) return
+          // Reveal every marker on the active line, headings included: the
+          // cursor anywhere in a heading shows its `##` prefix, matching the
+          // list/quote/task markers and the other markdown elements (a heading
+          // used to reveal only when the selection touched the marker itself,
+          // which read as "works differently from everything else").
+          return
         }
 
         let start = node.from

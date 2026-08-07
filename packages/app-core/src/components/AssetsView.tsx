@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AssetMeta } from '@shared/ipc'
-import { useStore } from '../store'
+import { useStore, type AssetSortColumn, type AssetSortOrder } from '../store'
 import { assetTabPath } from '../lib/asset-tabs'
 import { confirmMoveToTrash } from '../lib/confirm-trash'
 import { confirmApp } from '../lib/confirm-requests'
@@ -37,6 +37,69 @@ function formatDate(ms: number): string {
 const ASSET_ROW_GRID =
   'grid grid-cols-[minmax(0,1fr)_6rem_4rem_5rem_5rem_1.75rem] items-center gap-4'
 
+// Which column the Assets list is sorted by. (#460)
+export type AssetSortKey = AssetSortColumn
+export interface AssetSort {
+  key: AssetSortKey
+  dir: 'asc' | 'desc'
+}
+
+/** Split the stored `<column>-<dir>` preference into the shape `sortAssets`
+ *  takes. The value is validated in the store, so a bad split can't reach
+ *  here; fall back to the default anyway rather than sorting by `undefined`. (#473) */
+export function parseAssetSortOrder(order: AssetSortOrder): AssetSort {
+  const at = order.lastIndexOf('-')
+  const key = order.slice(0, at) as AssetSortKey
+  const dir = order.slice(at + 1) as AssetSort['dir']
+  if (!key || (dir !== 'asc' && dir !== 'desc')) return { key: 'name', dir: 'asc' }
+  return { key, dir }
+}
+
+/** Inverse of `parseAssetSortOrder`, for writing the preference back. (#473) */
+export function assetSortOrderOf(sort: AssetSort): AssetSortOrder {
+  return `${sort.key}-${sort.dir}` as AssetSortOrder
+}
+
+/** Display label for a note path in the "used by" menu — its filename. */
+function noteLabel(notePath: string): string {
+  return notePath.split('/').pop()?.replace(/\.md$/i, '') ?? notePath
+}
+
+/**
+ * Sort assets by the chosen column. `used` sorts on how many notes reference
+ * the asset; name is the stable tiebreak for every column so equal rows keep a
+ * predictable order. (#460)
+ */
+export function sortAssets(
+  list: AssetMeta[],
+  usage: Map<string, string[]>,
+  sort: AssetSort
+): AssetMeta[] {
+  const usedCount = (a: AssetMeta): number => usage.get(a.path)?.length ?? 0
+  const dir = sort.dir === 'asc' ? 1 : -1
+  return [...list].sort((a, b) => {
+    let cmp = 0
+    switch (sort.key) {
+      case 'used':
+        cmp = usedCount(a) - usedCount(b)
+        break
+      case 'type':
+        cmp = naturalCompare(a.kind, b.kind)
+        break
+      case 'size':
+        cmp = a.size - b.size
+        break
+      case 'modified':
+        cmp = a.updatedAt - b.updatedAt
+        break
+      default:
+        cmp = 0
+    }
+    if (cmp === 0) cmp = naturalCompare(a.name, b.name)
+    return cmp * dir
+  })
+}
+
 function AssetGlyph({ kind }: { kind: AssetMeta['kind'] }): JSX.Element {
   if (kind === 'image') return <ImageIcon width={15} height={15} />
   if (kind === 'pdf') return <DocumentIcon width={15} height={15} />
@@ -65,14 +128,12 @@ export function AssetsView(): JSX.Element {
   const [locateHighlightPath, setLocateHighlightPath] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const locateHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const assets = useMemo(() => {
-    const q = filter.trim().toLowerCase()
-    const matched = q
-      ? assetFiles.filter((a) => a.name.toLowerCase().includes(q) || a.path.toLowerCase().includes(q))
-      : assetFiles
-    return [...matched].sort((a, b) => naturalCompare(a.name, b.name))
-  }, [assetFiles, filter])
+  const [usageMenu, setUsageMenu] = useState<{ x: number; y: number; notes: string[] } | null>(null)
+  // Sort lives in the store (and config.toml), not local state, so leaving the
+  // view and coming back keeps the column you picked. (#473)
+  const assetSortOrder = useStore((s) => s.assetSortOrder)
+  const setAssetSortOrder = useStore((s) => s.setAssetSortOrder)
+  const sort = useMemo(() => parseAssetSortOrder(assetSortOrder), [assetSortOrder])
 
   // assetPath → note paths that embed it (resolved via relative-path + the
   // unique-basename fallback, matching how embeds render). (#185)
@@ -92,6 +153,25 @@ export function AssetsView(): JSX.Element {
     }
     return map
   }, [notes, vaultRoot, assetFiles])
+
+  // Sorted below `usage`, because the "used by" count is one of the sort keys.
+  const assets = useMemo(() => {
+    const q = filter.trim().toLowerCase()
+    const matched = q
+      ? assetFiles.filter((a) => a.name.toLowerCase().includes(q) || a.path.toLowerCase().includes(q))
+      : assetFiles
+    return sortAssets(matched, usage, sort)
+  }, [assetFiles, filter, sort, usage])
+
+  // Click a header: sort by it, or flip direction if it's already active. Text
+  // columns start ascending; count/size/date start descending (biggest first).
+  const toggleSort = (key: AssetSortKey): void => {
+    const next: AssetSort =
+      sort.key === key
+        ? { key, dir: sort.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: key === 'name' || key === 'type' ? 'asc' : 'desc' }
+    setAssetSortOrder(assetSortOrderOf(next))
+  }
 
   const notesByPath = useMemo(() => new Map(notes.map((n) => [n.path, n])), [notes])
 
@@ -222,6 +302,31 @@ export function AssetsView(): JSX.Element {
     ]
   }
 
+  const sortHeader = (
+    label: string,
+    key: AssetSortKey,
+    align: 'left' | 'right' = 'right'
+  ): JSX.Element => {
+    const active = sort.key === key
+    return (
+      <button
+        type="button"
+        onClick={() => toggleSort(key)}
+        aria-label={active ? `Sort by ${label} (${sort.dir === 'asc' ? 'ascending' : 'descending'})` : `Sort by ${label}`}
+        className={[
+          'flex w-full items-center gap-1 uppercase tracking-wide outline-none transition-colors hover:text-ink-600 focus-visible:text-ink-600',
+          align === 'right' ? 'justify-end' : 'justify-start',
+          active ? 'text-ink-600' : ''
+        ].join(' ')}
+      >
+        <span className="truncate">{label}</span>
+        <span aria-hidden="true" className="text-[0.55rem] leading-none">
+          {active ? (sort.dir === 'asc' ? '▲' : '▼') : ''}
+        </span>
+      </button>
+    )
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-paper-100 text-ink-900">
       <header className="glass-header flex h-12 shrink-0 items-center gap-2 px-4">
@@ -246,12 +351,12 @@ export function AssetsView(): JSX.Element {
           </div>
         ) : (
           <>
-            <div className={`${ASSET_ROW_GRID} sticky top-0 z-10 border-b border-paper-300/60 bg-paper-100 px-3 py-1.5 text-2xs font-medium uppercase tracking-wide text-ink-400`}>
-              <span>Name</span>
-              <span className="text-right">Used</span>
-              <span className="text-right">Type</span>
-              <span className="text-right">Size</span>
-              <span className="text-right">Modified</span>
+            <div className={`${ASSET_ROW_GRID} sticky top-0 z-10 border-b border-paper-300/60 bg-paper-100 px-3 py-1.5 text-2xs font-medium text-ink-400`}>
+              {sortHeader('Name', 'name', 'left')}
+              {sortHeader('Used', 'used')}
+              {sortHeader('Type', 'type')}
+              {sortHeader('Size', 'size')}
+              {sortHeader('Modified', 'modified')}
               <span />
             </div>
             <ul className="flex flex-col py-1">
@@ -288,19 +393,32 @@ export function AssetsView(): JSX.Element {
                         </span>
                         <span className="min-w-0 truncate text-sm text-ink-900">{asset.name}</span>
                       </div>
-                      <span
+                      <button
+                        type="button"
+                        disabled={usedIn === 0}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const notePaths = usage.get(asset.path) ?? []
+                          if (notePaths.length === 1) void openNoteInTab(notePaths[0]!)
+                          else if (notePaths.length > 1)
+                            setUsageMenu({ x: e.clientX, y: e.clientY, notes: notePaths })
+                        }}
                         className={[
-                          'truncate text-right text-2xs',
-                          usedIn === 0 ? 'text-ink-400/70' : 'text-ink-500'
+                          'truncate text-right text-2xs outline-none',
+                          usedIn === 0
+                            ? 'cursor-default text-ink-400/70'
+                            : 'text-ink-500 hover:text-accent hover:underline focus-visible:text-accent'
                         ].join(' ')}
                         title={
                           usedIn === 0
                             ? 'Not referenced by any note'
-                            : (usage.get(asset.path) ?? []).join('\n')
+                            : `Used by:\n${(usage.get(asset.path) ?? [])
+                                .map(noteLabel)
+                                .join('\n')}\n\nClick to open`
                         }
                       >
                         {usedIn === 0 ? 'unused' : `used in ${usedIn}`}
-                      </span>
+                      </button>
                       <span className="text-right text-2xs uppercase tracking-wide text-ink-400">
                         {asset.kind}
                       </span>
@@ -336,6 +454,17 @@ export function AssetsView(): JSX.Element {
           y={menu.y}
           items={menuItems(menu.asset)}
           onClose={() => setMenu(null)}
+        />
+      )}
+      {usageMenu && (
+        <ContextMenu
+          x={usageMenu.x}
+          y={usageMenu.y}
+          items={usageMenu.notes.map((notePath) => ({
+            label: noteLabel(notePath),
+            onSelect: () => void openNoteInTab(notePath)
+          }))}
+          onClose={() => setUsageMenu(null)}
         />
       )}
     </div>

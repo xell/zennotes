@@ -64,6 +64,28 @@ describe('editor and preview typography rhythm', () => {
     )
   })
 
+  it('never transforms heading case in either renderer (#478)', () => {
+    // H5 used to be forced to uppercase in both the editor's live preview and
+    // the rendered preview, so `##### Fifth heading` read "FIFTH HEADING".
+    // A heading is the author's text; only size, weight and colour vary.
+    const headingRules = [
+      /\.cm-editor \.tok-heading5\s*\{[^}]*\}/s,
+      /\.prose-zen h5\s*\{[^}]*\}/s
+    ]
+    for (const rule of headingRules) {
+      const match = stylesSource.match(rule)
+      expect(match).not.toBeNull()
+      expect(match?.[0]).not.toMatch(/text-transform:\s*(uppercase|lowercase|capitalize)/)
+    }
+    // …and no other heading level picked the habit up either.
+    for (const level of [1, 2, 3, 4, 5, 6]) {
+      const preview = stylesSource.match(new RegExp(`\\.prose-zen h${level}\\s*\\{[^}]*\\}`, 's'))
+      expect(preview?.[0] ?? '').not.toMatch(/text-transform:\s*(uppercase|lowercase|capitalize)/)
+      const editor = stylesSource.match(new RegExp(`\\.cm-editor \\.tok-heading${level}\\s*\\{[^}]*\\}`, 's'))
+      expect(editor?.[0] ?? '').not.toMatch(/text-transform:\s*(uppercase|lowercase|capitalize)/)
+    }
+  })
+
   it('keeps search match highlights visible inside code blocks and inline code', () => {
     // Theme-aware background so the match shows against paper/dark themes.
     expect(stylesSource).toMatch(

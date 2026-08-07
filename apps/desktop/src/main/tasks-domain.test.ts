@@ -40,6 +40,11 @@ describe('tasksDueOn', () => {
     // (checked) and other-date tasks are excluded.
     expect(due.map((t) => t.content).sort()).toEqual(['today', 'waiting'])
   })
+
+  it('drops cancelled tasks (#476)', () => {
+    const all = tasks(['- [ ] live  due:2026-04-30', '- [-] scrapped  due:2026-04-30'].join('\n'))
+    expect(tasksDueOn(all, '2026-04-30').map((t) => t.content)).toEqual(['live'])
+  })
 })
 
 describe('bucketTasksByDueDate', () => {
@@ -71,6 +76,19 @@ describe('bucketTasksByDueDate', () => {
     // The done task is dropped; the waiting-with-due task now shows alongside live.
     expect(bucket.length).toBe(2)
     expect(bucket.map((t) => t.content)).toEqual(expect.arrayContaining(['waiting', 'live']))
+  })
+
+  it('drops cancelled tasks from both the day buckets and "unscheduled" (#476)', () => {
+    const all = tasks(
+      [
+        '- [ ] live  due:2026-04-30',
+        '- [-] scrapped  due:2026-04-30',
+        '- [-] scrapped undated'
+      ].join('\n')
+    )
+    const buckets = bucketTasksByDueDate(all)
+    expect(buckets.get('2026-04-30')?.map((t) => t.content)).toEqual(['live'])
+    expect(buckets.get('unscheduled')).toBeUndefined()
   })
 
   it('shows a @waiting + due task on the calendar regardless of token order (#236)', () => {

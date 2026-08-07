@@ -12,7 +12,11 @@ export interface TemplateVariable {
 export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { name: 'title', insert: '{{title}}', detail: 'The note title' },
   { name: 'date', insert: '{{date}}', detail: "Today's date (YYYY-MM-DD)" },
-  { name: 'date:FORMAT', insert: '{{date:YYYY-MM-DD}}', detail: 'Custom date format' },
+  {
+    name: 'date:FORMAT',
+    insert: '{{date:YYYY-MM-DD}}',
+    detail: 'Custom date format — yyyy MM dd EEEE ww (same tokens as note patterns)'
+  },
   { name: 'time', insert: '{{time}}', detail: 'Current time (HH:mm)' },
   { name: 'week', insert: '{{week}}', detail: 'ISO week number' },
   { name: 'cursor', insert: '{{cursor}}', detail: 'Where the caret lands' }

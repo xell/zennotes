@@ -15,7 +15,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { yamlFrontmatter } from '@codemirror/lang-yaml'
 import { syntaxHighlighting, HighlightStyle, defaultHighlightStyle } from '@codemirror/language'
 import { tags as t } from '@lezer/highlight'
-import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
+import { autocompletion } from '@codemirror/autocomplete'
 import { useStore } from '../store'
 import { parseFrontmatter, slugifyTemplateName } from '@shared/template-files'
 import { renderTemplate } from '../lib/template-render'
@@ -25,7 +25,8 @@ import { vimImeControl } from '../lib/cm-vim-ime'
 import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
 import { templateVariableSource, TEMPLATE_VARIABLES } from '../lib/cm-template-variables'
 import { templateSlashCommandSource, slashCommandRender } from '../lib/cm-slash-commands'
-import { completionNavKeymap } from '../lib/cm-completion-nav'
+import { calloutTypeSource } from '../lib/cm-callouts'
+import { completionKeymapForEditor, completionNavKeymap } from '../lib/cm-completion-nav'
 import { Modal } from './ui/Modal'
 import { Button } from './ui/Button'
 
@@ -136,16 +137,22 @@ export function TemplateEditorModal({
         // doesn't clip the slash / variable dropdowns.
         tooltips({ parent: document.body }),
         autocompletion({
-          override: [templateSlashCommandSource, templateVariableSource],
+          // See EditorPane: skip the stock keymap so mac `Alt-`` / `Alt-i`
+          // don't swallow those characters on AltGr-style layouts (#429).
+          defaultKeymap: false,
+          override: [templateSlashCommandSource, calloutTypeSource, templateVariableSource],
           activateOnTyping: true,
           icons: false,
           addToOptions: [{ render: slashCommandRender.render, position: 0 }],
-          optionClass: () => 'slash-cmd-option'
+          optionClass: (completion) =>
+            (completion as { _kind?: string })._kind === 'callout'
+              ? 'callout-cmd-option'
+              : 'slash-cmd-option'
         }),
         completionNavKeymap,
         keymap.of([
           indentWithTab,
-          ...completionKeymap,
+          ...completionKeymapForEditor,
           ...vimAwareDefaultKeymap(vimModeRef.current),
           ...historyKeymap
         ]),

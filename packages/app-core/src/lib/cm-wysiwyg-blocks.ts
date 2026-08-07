@@ -17,6 +17,7 @@ import {
   WidgetType
 } from '@codemirror/view'
 import { useStore } from '../store'
+import { calloutGroupFor } from './callout-types'
 /** Line number (1-based) of the closing `---` of leading YAML frontmatter,
  *  or -1 when there is none. Lets us leave the frontmatter fences to the
  *  frontmatter styling rather than rendering them as horizontal rules.
@@ -77,18 +78,8 @@ const hideInline = Decoration.replace({})
 const CALLOUT_RE = /^(\s*>\s?)\[!(\w+)\]\s?(.*)$/
 
 /** Collapse callout type aliases onto one color group, mirroring the Preview
- *  renderer (markdown.ts). Unknown types fall back to the neutral group. */
-function calloutGroup(type: string): string {
-  const t = type.toLowerCase()
-  if (t === 'note' || t === 'info' || t === 'abstract' || t === 'summary') return 'note'
-  if (t === 'tip' || t === 'hint' || t === 'success' || t === 'check' || t === 'done')
-    return 'tip'
-  if (t === 'warning' || t === 'warn' || t === 'caution' || t === 'attention') return 'warning'
-  if (t === 'danger' || t === 'error' || t === 'bug' || t === 'fail' || t === 'failure')
-    return 'danger'
-  if (t === 'quote' || t === 'cite') return 'quote'
-  return 'note'
-}
+ *  renderer (markdown.ts) via the shared `callout-types` table. */
+const calloutGroup = calloutGroupFor
 
 /** Default title for a callout with no custom title: the capitalized type. */
 function calloutTitle(type: string): string {
@@ -245,12 +236,13 @@ function buildDecorations(view: EditorView): DecorationSet {
           const text = state.doc.sliceString(node.from, node.to)
           // Only unordered bullets become a •; ordered markers (`1.`) stay.
           if (!/^[-*+]$/.test(text)) return
-          // Task-list items render a checkbox (from the live-preview plugin) in
-          // place of the marker, so HIDE the `-`/`*`/`+` (and its trailing
-          // space) rather than bulleting it — the line reads "☐ task" like
-          // Obsidian, not "- ☐ task" or "• ☐ task".
+          // Task-list items render a marker (checkbox for `[ ]`/`[x]`, an arrow
+          // for `[>]` forwarded, a ✕ for `[-]` cancelled — all from the live-
+          // preview plugin) in place of the list marker, so HIDE the `-`/`*`/`+`
+          // (and its trailing space) rather than bulleting it — the line reads
+          // "☐ task" like Obsidian, not "- ☐ task" or "• ☐ task". (#450)
           const afterMark = state.doc.sliceString(node.to, state.doc.lineAt(node.from).to)
-          if (/^\s*\[[ xX]\]/.test(afterMark)) {
+          if (/^\s*\[[ xX>-]\]/.test(afterMark)) {
             let to = node.to
             if (state.doc.sliceString(to, to + 1) === ' ') to += 1
             pending.push({ from: node.from, to, deco: hideInline, line: false })

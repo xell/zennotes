@@ -8,14 +8,17 @@
  * runs Electron in plain-Node mode so users don't need a system Node
  * install.
  *
- * The CLI talks to the vault directly via the same vault-ops module
- * the MCP server uses — works whether or not the desktop app is
+ * For a local vault the CLI talks to it directly via the same vault-ops
+ * module the MCP server uses — works whether or not the desktop app is
  * running. The running app's chokidar watcher picks up file changes
- * automatically.
+ * automatically. For a vault behind a self-hosted server, the same
+ * commands go over the server's HTTP API instead (#493); which one you
+ * get is decided once here and handed to the command as a backend.
  */
 
-import { resolveVaultRoot } from '../mcp/vault-ops.js'
-import { getString, parse, type ParsedArgs } from './args.js'
+import { createBackend, type VaultBackend } from './backend.js'
+import { resolveTarget } from './vault-target.js'
+import { parse, type ParsedArgs } from './args.js'
 import { emitError } from './format.js'
 import { renderHelp, renderVersion } from './help.js'
 import {
@@ -48,10 +51,6 @@ import { cmdCapture } from './commands/capture.js'
 import { cmdOpen } from './commands/open.js'
 import { cmdMcp } from './commands/mcp.js'
 
-// `open` hands a file path to the desktop app; the file can live outside
-// any vault, so it doesn't need the CLI to resolve a vault root.
-const NO_VAULT_COMMANDS = new Set(['help', '--help', '-h', '--version', 'mcp', 'open'])
-
 async function main(argv: string[]): Promise<number> {
   if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') {
     process.stdout.write(renderHelp())
@@ -76,24 +75,30 @@ async function main(argv: string[]): Promise<number> {
 
   const key = subcommand ? `${command} ${subcommand}` : command
 
-  // Every other command needs the vault root. Resolving here lets us
-  // emit a single, clean error if the user hasn't configured one.
-  // `--vault <name|path>` selects among the app's known vaults and
-  // always wins (an invalid selector errors loudly, never falls back).
-  // `open` is special: it works without a vault (arbitrary markdown
-  // files), but uses one when available so the vault-relative paths
-  // `zn list` prints open from any directory. `vault list` enumerates
-  // vaults, so it must work before any vault is configured.
-  const vaultSelector = getString(parsed, 'vault')
-  let vault = ''
-  if (vaultSelector) {
-    vault = await resolveVaultRoot(vaultSelector)
-  } else if (command === 'open') {
-    vault = await resolveVaultRoot().catch(() => '')
-  } else if (!NO_VAULT_COMMANDS.has(command) && key !== 'vault list') {
-    vault = await resolveVaultRoot()
+  // `vault list` enumerates every vault and server, so it must work before
+  // anything is configured — there is nothing to resolve first.
+  if (key === 'vault list') {
+    await cmdVaultList(parsed)
+    return 0
   }
-  const dispatch: Record<string, (v: string, args: ParsedArgs) => Promise<void>> = {
+
+  // `open` is special: it hands file paths to the desktop app, so it works
+  // without a vault (arbitrary markdown files) but uses one when available so
+  // the vault-relative paths `zn list` prints open from any directory. A
+  // remote vault has no local paths to hand over, so say so plainly.
+  if (command === 'open') {
+    const target = await resolveTarget(parsed).catch(() => null)
+    if (target?.kind === 'remote') {
+      throw new Error(
+        'zn open hands file paths to the desktop app, so it needs a local vault. ' +
+          'Use `zn read <path>` to print a note from a server instead.'
+      )
+    }
+    await cmdOpen(target?.root ?? '', parsed)
+    return 0
+  }
+
+  const dispatch: Record<string, (v: VaultBackend, args: ParsedArgs) => Promise<void>> = {
     list: cmdList,
     read: cmdRead,
     create: cmdCreate,
@@ -120,9 +125,7 @@ async function main(argv: string[]): Promise<number> {
     'task list': cmdTaskList,
     'task toggle': cmdTaskToggle,
     'vault info': cmdVaultInfo,
-    'vault list': cmdVaultList,
-    capture: cmdCapture,
-    open: cmdOpen
+    capture: cmdCapture
   }
 
   const handler = dispatch[key]
@@ -130,7 +133,11 @@ async function main(argv: string[]): Promise<number> {
     emitError(`Unknown command: zn ${key}. Run \`zn --help\` for usage.`)
     return 1
   }
-  await handler(vault, parsed)
+
+  // Resolved only once the command is known, so a typo reports the typo rather
+  // than complaining that no vault is configured. Picking the backend here is
+  // what lets no command care whether its vault is a folder or a server.
+  await handler(createBackend(await resolveTarget(parsed)), parsed)
   return 0
 }
 

@@ -12,14 +12,15 @@ import { advanceSequence, getKeymapBinding, matchesSequenceToken } from '../lib/
 import { isImeComposing } from '../lib/ime'
 import { isAppOverlayOpen } from '../lib/overlay-open'
 
-type GroupKey = 'today' | 'upcoming' | 'waiting' | 'forwarded' | 'done'
+type GroupKey = 'today' | 'upcoming' | 'waiting' | 'forwarded' | 'done' | 'cancelled'
 
 const GROUP_LABELS: Record<GroupKey, string> = {
   today: 'Today',
   upcoming: 'Upcoming',
   waiting: 'Waiting',
   forwarded: 'Forwarded',
-  done: 'Done'
+  done: 'Done',
+  cancelled: 'Cancelled'
 }
 
 const VIEW_BUTTONS: Array<{
@@ -49,11 +50,13 @@ export function TasksView(): JSX.Element {
   const refreshTasks = useStore((s) => s.refreshTasks)
   const openTaskAt = useStore((s) => s.openTaskAt)
   const toggleTaskFromList = useStore((s) => s.toggleTaskFromList)
+  const cancelTaskFromList = useStore((s) => s.cancelTaskFromList)
   const applyTaskMutation = useStore((s) => s.applyTaskMutation)
   const moveTaskToDate = useStore((s) => s.moveTaskToDate)
   const addTaskForDate = useStore((s) => s.addTaskForDate)
   const closeTasksView = useStore((s) => s.closeTasksView)
   const reorderTaskInNote = useStore((s) => s.reorderTaskInNote)
+  const newTaskFile = useStore((s) => s.newTaskFile)
 
   // Tasks written inside a daily note inherit that note's date as an implicit
   // due date (a clean line, no `due:` token) so they appear on the calendar.
@@ -80,7 +83,8 @@ export function TasksView(): JSX.Element {
     upcoming: false,
     waiting: false,
     forwarded: true,
-    done: true
+    done: true,
+    cancelled: true
   })
 
   // Keep a just-toggled task in its pre-toggle group for TASK_LINGER_MS so it
@@ -287,6 +291,10 @@ export function TasksView(): JSX.Element {
         case 'r':
           void refreshTasks()
           return
+        case 'new':
+        case 'add':
+          void store.newTaskFile()
+          return
         case 'list':
         case 'ls':
           setViewMode('list')
@@ -336,6 +344,13 @@ export function TasksView(): JSX.Element {
   //      own keyboard handlers in those components.
   // Registered in CAPTURE phase + uses `stopImmediatePropagation` so it
   // beats VimNav's global handler.
+  // Activating the Tasks tab claims panel focus for the Tasks view so pane
+  // navigation and the key handler below agree on where focus is. Fires only on
+  // the activation edge, so a later Ctrl+W to another panel isn't overridden. (#412)
+  useEffect(() => {
+    if (isActivePanel) useStore.getState().setFocusedPanel('tasks')
+  }, [isActivePanel])
+
   useEffect(() => {
     if (!isActivePanel) return
     const handler = (e: KeyboardEvent): void => {
@@ -345,6 +360,13 @@ export function TasksView(): JSX.Element {
       // While the Vim hint overlay is open it owns the keyboard; don't let
       // task navigation (or Esc closing the view) steal its keys. (#151)
       if (document.querySelector('[data-vim-hint-overlay]')) return
+      // The Tasks tab can stay "active" while pane navigation (Ctrl+W h/j/k/l)
+      // moves keyboard focus to another panel. Once focusedPanel is no longer
+      // 'tasks', release the keys so the target panel (e.g. the sidebar) gets
+      // j/k instead of this capture listener beating VimNav to them. A `null`
+      // panel means "no explicit focus yet" — keep handling as before. (#412)
+      const fp = useStore.getState().focusedPanel
+      if (fp != null && fp !== 'tasks') return
       const active = document.activeElement as HTMLElement | null
       if (active) {
         const tag = active.tagName
@@ -386,6 +408,15 @@ export function TasksView(): JSX.Element {
       if (vimMode && key === '3') {
         consume()
         setViewMode('kanban')
+        return
+      }
+
+      // Quick-add a new task file. View-independent (works in list/calendar/
+      // kanban). A single-key shortcut, so it's gated on Vim mode like the rest;
+      // with Vim off, the header "+ New task" button is the way in.
+      if (vimMode && key === 'a') {
+        consume()
+        void newTaskFile()
         return
       }
 
@@ -467,6 +498,12 @@ export function TasksView(): JSX.Element {
         void forwardTaskWithPicker(currentTask)
         return
       }
+      // Cancel / un-cancel the selected task (#450). Vim-gated single key.
+      if (vimMode && key === 'c' && currentTask) {
+        consume()
+        void cancelTaskFromList(currentTask)
+        return
+      }
     }
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
@@ -482,10 +519,12 @@ export function TasksView(): JSX.Element {
     vimMode,
     openTaskAt,
     lingerToggle,
+    cancelTaskFromList,
     closeTasksView,
     setFilter,
     viewMode,
-    setViewMode
+    setViewMode,
+    newTaskFile
   ])
 
   return (
@@ -547,6 +586,14 @@ export function TasksView(): JSX.Element {
               className="w-56 rounded-md border border-paper-300/60 bg-paper-200/60 px-2 py-1 text-xs outline-none focus:border-paper-400/70"
             />
           )}
+          <button
+            type="button"
+            onClick={() => void newTaskFile()}
+            className="rounded-md border border-accent/45 bg-accent/10 px-2 py-1 text-xs font-medium text-accent hover:bg-accent/20"
+            title="New task (a)"
+          >
+            + New task
+          </button>
           <button
             type="button"
             onClick={() => void refreshTasks()}
@@ -677,7 +724,7 @@ export function TasksView(): JSX.Element {
       ) : (
         <div className="border-t border-paper-300/45 px-4 py-1.5 text-xs text-current/40">
           {viewMode === 'list'
-            ? 'j/k move · J/K reorder · drag to reorder · Enter/o open · Space/x toggle · / filter · :q close'
+            ? 'j/k move · J/K reorder · Enter/o open · Space/x toggle · c cancel · / filter · :q close'
             : viewMode === 'calendar'
               ? 'h/j/k/l day · [ ] month · gt today · Tab pick · < > reschedule · drag to move · Enter open · :q'
               : 'h/l column · j/k card · Space toggle · Enter open · 1/2/3 view · : command · :q close'}

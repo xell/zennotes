@@ -42,17 +42,19 @@ import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
 import { syntaxHighlighting, HighlightStyle, defaultHighlightStyle } from '@codemirror/language'
 import { tags as t } from '@lezer/highlight'
 import { editorFindKeymap } from '../lib/editor-search-keymap'
-import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
+import { autocompletion } from '@codemirror/autocomplete'
 import { useStore } from '../store'
 import type { LineNumberMode } from '../store'
 import { wysiwygExtensions } from '../lib/cm-wysiwyg-compose'
 import { headingFolding } from '../lib/cm-heading-fold'
 import { frontmatterStyle } from '../lib/cm-frontmatter'
 import { slashCommandSource, slashCommandRender } from '../lib/cm-slash-commands'
+import { calloutTypeSource } from '../lib/cm-callouts'
 import { dateShortcutSource } from '../lib/cm-date-shortcuts'
 import { wikilinkSource, wikilinkHeadingSource } from '../lib/cm-wikilinks'
-import { completionNavKeymap } from '../lib/cm-completion-nav'
-import { classifyLocalAssetHref, type LocalAssetKind } from '../lib/local-assets'
+import { hashtagSource } from '../lib/cm-hashtag-complete'
+import { completionKeymapForEditor, completionNavKeymap } from '../lib/cm-completion-nav'
+import { classifyLocalAssetHref, hrefFragment, type LocalAssetKind } from '../lib/local-assets'
 import { assetPathFromTab, isAssetTabPath } from '../lib/asset-tabs'
 import { focusEditorNormalMode } from '../lib/editor-focus'
 import { LazyPreview as Preview } from './LazyPreview'
@@ -136,9 +138,14 @@ export function PinnedReferencePane(): JSX.Element | null {
   const globalRefKind = useStore((s) => s.pinnedRefKind)
   const noteRefs = useStore((s) => s.noteRefs)
   const selectedPath = useStore((s) => s.selectedPath)
+  const globalRefFragment = useStore((s) => s.pinnedRefFragment)
   // Per-note pin (if any) overrides the global one.
   const noteRef = selectedPath ? noteRefs[selectedPath] : null
   const pinnedRefPath = noteRef?.path ?? globalRefPath
+  // Tie the fragment to the same pin as the path: a per-note pin without a
+  // fragment must not inherit the global pin's fragment (which belongs to a
+  // different asset), or its PDF would open at the wrong page.
+  const pinnedRefFragment = noteRef ? noteRef.fragment ?? null : globalRefFragment
   const pinnedRefKind = noteRef?.kind ?? globalRefKind
   const isPerNotePin = !!noteRef
   const zenMode = useStore((s) => s.zenMode)
@@ -146,6 +153,7 @@ export function PinnedReferencePane(): JSX.Element | null {
   const pinnedRefWidth = useStore((s) => s.pinnedRefWidth)
   const pinnedRefMode = useStore((s) => s.pinnedRefMode)
   const renderTablesInLivePreview = useStore((s) => s.renderTablesInLivePreview)
+  const mathRenderer = useStore((s) => s.mathRenderer)
   const vaultRoot = useStore((s) => s.vault?.root ?? null)
   const unpinReferenceGlobal = useStore((s) => s.unpinReference)
   const unpinReferenceForNote = useStore((s) => s.unpinReferenceForNote)
@@ -265,18 +273,34 @@ export function PinnedReferencePane(): JSX.Element | null {
           codeBlockFontPlugin,
           syntaxHighlighting(paperHighlight),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-          livePreviewCompartment.of(s0.livePreview ? wysiwygExtensions(s0.renderTablesInLivePreview) : []),
+          livePreviewCompartment.of(
+            s0.livePreview
+              ? wysiwygExtensions(s0.renderTablesInLivePreview, s0.mathRenderer, '')
+              : []
+          ),
           lineNumbersCompartment.of(lineNumberExtension(s0.lineNumberMode)),
           diffCompartment.of([]),
           tooltips({ parent: document.body }),
           autocompletion({
-            override: [slashCommandSource, dateShortcutSource, wikilinkSource, wikilinkHeadingSource],
+            // See EditorPane: skip the stock keymap so mac `Alt-`` / `Alt-i`
+            // don't swallow those characters on AltGr-style layouts (#429).
+            defaultKeymap: false,
+            override: [
+              slashCommandSource,
+              calloutTypeSource,
+              dateShortcutSource,
+              hashtagSource,
+              wikilinkSource,
+              wikilinkHeadingSource
+            ],
             addToOptions: [{ render: slashCommandRender.render, position: 0 }],
             icons: false,
-            optionClass: (completion) =>
-              (completion as { _kind?: string })._kind === 'wikilink'
-                ? 'wikilink-cmd-option'
-                : 'slash-cmd-option'
+            optionClass: (completion) => {
+              const kind = (completion as { _kind?: string })._kind
+              if (kind === 'wikilink') return 'wikilink-cmd-option'
+              if (kind === 'callout') return 'callout-cmd-option'
+              return 'slash-cmd-option'
+            }
           }),
           completionNavKeymap,
           keymap.of([
@@ -292,8 +316,12 @@ export function PinnedReferencePane(): JSX.Element | null {
             indentWithTab,
             ...vimAwareDefaultKeymap(s0.vimMode),
             ...historyKeymap,
+            // This fork's configurable `editor.find` opener wrapping the stock
+            // searchKeymap; upstream's plain `searchKeymap` would drop that.
             ...editorFindKeymap(s0.keymapOverrides),
-            ...completionKeymap
+            // Upstream's #429 replacement for `completionKeymap` (stops the
+            // completion keymap swallowing the backtick on Mac AltGr layouts).
+            ...completionKeymapForEditor
           ]),
           EditorView.updateListener.of((upd) => {
             if (!upd.docChanged) return
@@ -342,8 +370,14 @@ export function PinnedReferencePane(): JSX.Element | null {
     const view = viewRef.current
     const comp = livePreviewCompartmentRef.current
     if (!view || !comp) return
-    view.dispatch({ effects: comp.reconfigure(livePreview ? wysiwygExtensions(renderTablesInLivePreview) : []) })
-  }, [livePreview, renderTablesInLivePreview])
+    view.dispatch({
+      effects: comp.reconfigure(
+        livePreview
+          ? wysiwygExtensions(renderTablesInLivePreview, mathRenderer, '')
+          : []
+      )
+    })
+  }, [livePreview, renderTablesInLivePreview, mathRenderer])
   useEffect(() => {
     const view = viewRef.current
     const comp = lineNumbersCompartmentRef.current
@@ -438,6 +472,7 @@ export function PinnedReferencePane(): JSX.Element | null {
     pinnedRefPath && isAsset && vaultRoot
       ? window.zen.resolveVaultAssetUrl(vaultRoot, pinnedRefPath)
       : null
+  const assetUrlWithFragment = assetUrl ? assetUrl + (pinnedRefFragment ?? '') : null
   const assetKind: LocalAssetKind | null =
     pinnedRefPath && isAsset ? classifyLocalAssetHref(pinnedRefPath) ?? 'file' : null
   // 'text' used to fall under the generic 'file' bucket (still iframe-eligible
@@ -473,15 +508,15 @@ export function PinnedReferencePane(): JSX.Element | null {
 
   const [seenAssetUrls, setSeenAssetUrls] = useState<string[]>([])
   useEffect(() => {
-    if (!assetUrl || !useAssetIframe) return
+    if (!assetUrlWithFragment || !useAssetIframe) return
     setSeenAssetUrls((prev) => {
-      if (prev[prev.length - 1] === assetUrl) return prev
-      const without = prev.filter((u) => u !== assetUrl)
-      const next = [...without, assetUrl]
+      if (prev[prev.length - 1] === assetUrlWithFragment) return prev
+      const without = prev.filter((u) => u !== assetUrlWithFragment)
+      const next = [...without, assetUrlWithFragment]
       while (next.length > 16) next.shift()
       return next
     })
-  }, [assetUrl, useAssetIframe])
+  }, [assetUrlWithFragment, useAssetIframe])
 
   const showEditor = pinnedRefMode !== 'preview'
   const showPreview = pinnedRefMode === 'split' || pinnedRefMode === 'preview'
@@ -789,7 +824,10 @@ export function PinnedReferencePane(): JSX.Element | null {
           <div
             className="absolute inset-0"
             style={{
-              display: isAsset && assetUrl && useAssetIframe && !showPicker ? 'block' : 'none'
+              display:
+                isAsset && assetUrlWithFragment && useAssetIframe && !showPicker
+                  ? 'block'
+                  : 'none'
             }}
           >
             {seenAssetUrls.map((url) => (
@@ -799,7 +837,7 @@ export function PinnedReferencePane(): JSX.Element | null {
                 title={url}
                 className="absolute inset-0 h-full w-full border-0 bg-paper-50"
                 style={{
-                  display: url === assetUrl ? 'block' : 'none'
+                  display: url === assetUrlWithFragment ? 'block' : 'none'
                 }}
               />
             ))}

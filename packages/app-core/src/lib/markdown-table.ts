@@ -256,7 +256,13 @@ function clone(table: MarkdownTable): MarkdownTable {
   return {
     headers: [...table.headers],
     rows: table.rows.map((r) => [...r]),
-    aligns: [...table.aligns]
+    aligns: [...table.aligns],
+    // Persisted column widths ride along. Dropping them here didn't merely
+    // forget the widths: the editor extends the replaced range over the
+    // trailing `<!-- zen:cols=… -->` marker, so a model without widths deletes
+    // that line from the note. Any menu action — even one as unrelated as an
+    // alignment change — undid a column resize. (#294 follow-up)
+    ...(table.colWidths ? { colWidths: [...table.colWidths] } : {})
   }
 }
 
@@ -328,6 +334,9 @@ export function insertColumn(
   const at = Math.max(0, Math.min(index, columnCount(next)))
   next.headers.splice(at, 0, '')
   next.aligns.splice(at, 0, align)
+  // A width belongs to its column, so it follows the column through every
+  // structural edit; a new column starts auto-width (null).
+  next.colWidths?.splice(at, 0, null)
   for (const row of next.rows) row.splice(at, 0, '')
   return next
 }
@@ -338,6 +347,7 @@ export function deleteColumn(table: MarkdownTable, index: number): MarkdownTable
   const next = clone(table)
   next.headers.splice(index, 1)
   next.aligns.splice(index, 1)
+  next.colWidths?.splice(index, 1)
   for (const row of next.rows) row.splice(index, 1)
   return next
 }
@@ -350,6 +360,7 @@ export function duplicateColumn(
   const next = clone(table)
   next.headers.splice(index + 1, 0, next.headers[index])
   next.aligns.splice(index + 1, 0, next.aligns[index])
+  next.colWidths?.splice(index + 1, 0, next.colWidths[index] ?? null)
   for (const row of next.rows) row.splice(index + 1, 0, row[index])
   return next
 }
@@ -368,6 +379,7 @@ export function moveColumn(
   }
   moveItem(next.headers)
   moveItem(next.aligns)
+  if (next.colWidths) moveItem(next.colWidths)
   for (const row of next.rows) moveItem(row)
   return next
 }

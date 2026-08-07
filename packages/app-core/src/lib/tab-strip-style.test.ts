@@ -30,9 +30,22 @@ describe('workspace tab strip overflow styles', () => {
     expect(stylesSource).toMatch(
       /\.workspace-tab-strip::-webkit-scrollbar\s*\{[^}]*display:\s*none/s
     )
+    // Upstream #421 instead keeps a slim 6px bar visible and asserts the
+    // opposite of the rule above. This fork hides the widget outright (both the
+    // standard `scrollbar-width` and the WebKit pseudo-element), which makes
+    // #421's clipping bug unreachable — no visible bar can eat the tab title —
+    // so the hidden-scrollbar design stays and upstream's 6px rule is dropped.
     expect(stylesSource).toMatch(
       /\.workspace-tab-strip[^{]*\{[^}]*scrollbar-width:\s*none/s
     )
+  })
+
+  it('does not force the no-wrap tab to the strip height, so the scrollbar cannot clip it (#421)', () => {
+    // `min-h-8` only belongs in wrap mode (a floor for wrapped rows). In no-wrap
+    // the tab must be free to size to the scroll area so the horizontal scrollbar
+    // never overlaps the title in Compact density.
+    expect(editorPaneSource).toContain("wrapTabs ? 'min-h-8' : ''")
+    expect(editorPaneSource).not.toMatch(/h-full min-h-8 min-w-0/)
   })
 
   it('persists a setting for wrapping tabs onto additional rows', () => {

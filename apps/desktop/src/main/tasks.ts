@@ -1,8 +1,20 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { NoteFolder, NoteMeta } from '@shared/ipc'
-import { parseTasksFromBody, type VaultTask } from '@shared/tasks'
+import { parseTaskFile, parseTasksFromBody, type VaultTask } from '@shared/tasks'
 import { folderForRelativePath, listNotes } from './vault'
+
+/** Emit a note's file-task (if its frontmatter tags it `#task`) plus every
+ *  inline `- [ ]` checkbox in its body. The file-task comes first so it heads
+ *  the note's group in the Tasks list. */
+function parseAllTasks(
+  body: string,
+  ctx: { path: string; title: string; folder: NoteFolder }
+): VaultTask[] {
+  const fileTask = parseTaskFile(body, ctx)
+  const inline = parseTasksFromBody(body, ctx)
+  return fileTask ? [fileTask, ...inline] : inline
+}
 
 // Trash is excluded — trashed notes should never surface as live tasks.
 function includesFolder(folder: NoteFolder): boolean {
@@ -20,7 +32,7 @@ async function readOne(
   } catch {
     return []
   }
-  return parseTasksFromBody(body, {
+  return parseAllTasks(body, {
     path: meta.path,
     title: meta.title,
     folder: meta.folder
@@ -60,5 +72,5 @@ export async function scanTasksForPath(
     return []
   }
   const title = path.basename(posix, path.extname(posix))
-  return parseTasksFromBody(body, { path: posix, title, folder })
+  return parseAllTasks(body, { path: posix, title, folder })
 }
