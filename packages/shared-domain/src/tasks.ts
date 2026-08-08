@@ -100,6 +100,32 @@ interface NoteDefaults {
   due?: string
   priority?: TaskPriority
   status?: string
+  tasksMode: NoteTasksMode
+}
+
+/**
+ * How a note participates in the Tasks system, from its frontmatter `tasks:`
+ * key (#458). `'all'` (the default, and the fallback for any unrecognized
+ * value): file task plus inline checkboxes, the behavior every vault had
+ * before the key existed. `'none'` (`tasks: false` or `tasks: off`): the note
+ * feeds nothing to any Tasks surface; its checkboxes stay plain checkboxes.
+ * `'note-only'` (`tasks: note`): the note's own file task (frontmatter
+ * `tags: [task]`) stays visible, but inline checkboxes are not tasks: a
+ * project note that belongs on the board without its checklist spilling onto
+ * it.
+ *
+ * No runtime in this app types YAML scalars, so `tasks: false` arrives as the
+ * string "false"; matching is exact string comparison after lower-casing.
+ * Mirrored in the MCP and Go parsers; keep the accepted values identical.
+ */
+export type NoteTasksMode = 'all' | 'note-only' | 'none'
+
+export function noteTasksMode(value: string | string[] | undefined): NoteTasksMode {
+  const scalar = Array.isArray(value) ? value[0] : value
+  const v = scalar?.trim().toLowerCase()
+  if (v === 'false' || v === 'off') return 'none'
+  if (v === 'note') return 'note-only'
+  return 'all'
 }
 
 const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n?/
@@ -126,12 +152,12 @@ function normalizeDueDate(raw: string | undefined): string | undefined {
   return isValidIsoDate(cleaned) ? cleaned : undefined
 }
 
-/** Extract just the three keys we care about. Unparseable lines are ignored. */
+/** Extract just the keys we care about. Unparseable lines are ignored. */
 function parseNoteDefaults(body: string): { defaults: NoteDefaults; fmEndOffset: number } {
   const m = body.match(FRONTMATTER_RE)
-  if (!m) return { defaults: {}, fmEndOffset: 0 }
+  if (!m) return { defaults: { tasksMode: 'all' }, fmEndOffset: 0 }
   const block = m[1]
-  const defaults: NoteDefaults = {}
+  const defaults: NoteDefaults = { tasksMode: 'all' }
   for (const rawLine of block.split('\n')) {
     const line = rawLine.trim()
     if (!line || line.startsWith('#')) continue
@@ -147,6 +173,8 @@ function parseNoteDefaults(body: string): { defaults: NoteDefaults; fmEndOffset:
       if (p) defaults.priority = p
     } else if (key === 'status') {
       defaults.status = value.toLowerCase()
+    } else if (key === 'tasks') {
+      defaults.tasksMode = noteTasksMode(value)
     }
   }
   return { defaults, fmEndOffset: m[0].length }
@@ -248,12 +276,28 @@ export interface ParseTasksContext {
   folder: NoteFolder
 }
 
+export interface ParseTasksOptions {
+  /** Scan past the note-level `tasks:` opt-out (#458): the CLI/MCP/HTTP
+   *  "include excluded" escape hatch. UI surfaces never set this. */
+  includeExcluded?: boolean
+}
+
 /** Parse every checkbox in `body`, skipping fenced code. Index counting is
  *  byte-for-byte identical to `toggleTaskAtIndex` so round-trip edits stay
  *  stable.  */
-export function parseTasksFromBody(body: string, ctx: ParseTasksContext): VaultTask[] {
+export function parseTasksFromBody(
+  body: string,
+  ctx: ParseTasksContext,
+  opts?: ParseTasksOptions
+): VaultTask[] {
   const normalized = body.replace(/\r\n/g, '\n')
   const { defaults } = parseNoteDefaults(normalized)
+
+  // A note opted out via frontmatter `tasks:` contributes no inline tasks;
+  // both 'none' and 'note-only' suppress checkboxes (#458). Index counting
+  // below is untouched, so task ids stay stable when includeExcluded
+  // re-reveals them.
+  if (defaults.tasksMode !== 'all' && !opts?.includeExcluded) return []
   const lines = normalized.split('\n')
   const tasks: VaultTask[] = []
 
@@ -367,11 +411,21 @@ function firstScalar(v: string | string[] | undefined): string | undefined {
  * is emitted *in addition* to any inline `- [ ]` checkboxes in the same body
  * (which act as subtasks), each keeping its own id.
  */
-export function parseTaskFile(body: string, ctx: ParseTasksContext): VaultTask | null {
+export function parseTaskFile(
+  body: string,
+  ctx: ParseTasksContext,
+  opts?: ParseTasksOptions
+): VaultTask | null {
   const normalized = body.replace(/\r\n/g, '\n')
   const m = normalized.match(FRONTMATTER_RE)
   if (!m) return null
   const fm = parseFrontmatterFields(m[1])
+
+  // `tasks: false` wins over `tags: [task]`: the note stops being a task on
+  // every surface. `tasks: note` deliberately falls through: it suppresses
+  // only the inline checkboxes (in parseTasksFromBody), keeping this file
+  // task on the board. (#458)
+  if (noteTasksMode(fm.tasks) === 'none' && !opts?.includeExcluded) return null
 
   const tags = asArray(fm.tags).map((t) => t.replace(/^#/, '').toLowerCase())
   if (!tags.includes(TASK_FILE_TAG)) return null

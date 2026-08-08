@@ -1,7 +1,6 @@
 package httpserver
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -194,6 +193,12 @@ func (s *Server) registerProtectedRoutes(r chi.Router) {
 	r.Post("/assets/upload", s.uploadAsset)
 	r.Post("/assets/rename", s.renameAsset)
 	r.Post("/assets/move", s.moveAsset)
+	r.Post("/assets/duplicate", s.duplicateAsset)
+	r.Post("/assets/delete", s.deleteAsset)
+	r.Get("/assets/deleted", s.listDeletedAssets)
+	r.Post("/assets/restore", s.restoreDeletedAsset)
+	r.Post("/assets/purge", s.purgeDeletedAsset)
+	r.Post("/assets/empty-deleted", s.emptyDeletedAssets)
 
 	r.Get("/notes/read", s.readNote)
 	r.Get("/comments/read", s.readComments)
@@ -381,7 +386,15 @@ func (s *Server) capabilities(w http.ResponseWriter, _ *http.Request) {
 		"browseRootsEnforced":       !cfg.AllowUnscopedBrowse,
 		"supportsVaultSelection":    true,
 		"supportsDirectoryBrowsing": true,
-		"supportsWatch":             true,
+		// Honest, not aspirational: the watcher can be a no-op fallback
+		// (inotify-restricted hosts, ZENNOTES_DISABLE_WATCHER, #179), and a
+		// client that believes a dead feed never refreshes on its own.
+		"supportsWatch": s.currentWatcher().Active(),
+		// The full asset mutation family incl. the deleted-assets store
+		// (delete/duplicate/restore/purge). Desktop remote workspaces gate
+		// on this to give older servers a "server needs an update" message
+		// instead of a bare 404.
+		"supportsAssetOps": true,
 		// Says out loud that a missing file answers 404 rather than 500.
 		// Databases are composed from file reads where "absent" and "failed"
 		// mean opposite things (see remote-absence.ts), and a server that
@@ -912,8 +925,10 @@ func (s *Server) duplicateFolder(w http.ResponseWriter, r *http.Request) {
 
 // --- Tasks + Search ---
 
-func (s *Server) allTasks(w http.ResponseWriter, _ *http.Request) {
-	tasks, err := s.currentVault().ScanTasks()
+func (s *Server) allTasks(w http.ResponseWriter, r *http.Request) {
+	tasks, err := s.currentVault().ScanTasksWith(vault.ParseTasksOptions{
+		IncludeExcluded: taskQueryIncludesExcluded(r),
+	})
 	if err != nil {
 		writeError(w, err)
 		return
@@ -923,12 +938,25 @@ func (s *Server) allTasks(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) tasksFor(w http.ResponseWriter, r *http.Request) {
 	rel := r.URL.Query().Get("path")
-	tasks, err := s.currentVault().ScanTasksForPath(rel)
+	tasks, err := s.currentVault().ScanTasksForPathWith(rel, vault.ParseTasksOptions{
+		IncludeExcluded: taskQueryIncludesExcluded(r),
+	})
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, tasks)
+}
+
+// taskQueryIncludesExcluded reads the ?includeExcluded= escape hatch (#458):
+// scan past the vault's excluded-folders list and the note-level `tasks:`
+// opt-out. Accepts the same truthy spellings the config loader does.
+func taskQueryIncludesExcluded(r *http.Request) bool {
+	switch strings.ToLower(r.URL.Query().Get("includeExcluded")) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 func (s *Server) searchCapabilities(w http.ResponseWriter, _ *http.Request) {
@@ -1042,7 +1070,90 @@ func (s *Server) moveAsset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, meta)
 }
 
+func (s *Server) duplicateAsset(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	meta, err := s.currentVault().DuplicateAsset(req.Path)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, meta)
+}
+
+func (s *Server) deleteAsset(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	deleted, err := s.currentVault().DeleteAsset(req.Path)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, deleted)
+}
+
+func (s *Server) listDeletedAssets(w http.ResponseWriter, _ *http.Request) {
+	deleted, err := s.currentVault().ListDeletedAssets()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, deleted)
+}
+
+func (s *Server) restoreDeletedAsset(w http.ResponseWriter, r *http.Request) {
+	var req vault.DeletedAsset
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	meta, err := s.currentVault().RestoreDeletedAsset(req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, meta)
+}
+
+func (s *Server) purgeDeletedAsset(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UndoToken string `json:"undoToken"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.currentVault().PurgeDeletedAsset(req.UndoToken); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) emptyDeletedAssets(w http.ResponseWriter, _ *http.Request) {
+	if err := s.currentVault().EmptyDeletedAssets(); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // --- WebSocket watcher ---
+
+// watchPingInterval is how often watchWS pings a subscriber to detect a dead
+// peer. A var, not a const, so the regression test can shrink it and prove
+// events survive ping cycles without waiting out real 25-second ticks.
+var watchPingInterval = 25 * time.Second
 
 func (s *Server) watchWS(w http.ResponseWriter, r *http.Request) {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
@@ -1062,13 +1173,18 @@ func (s *Server) watchWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer ws.Close(websocket.StatusNormalClosure, "")
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
+	// This connection is write-only, but the library only processes incoming
+	// control frames during a read. Without CloseRead the client's pong is
+	// never seen, so the first keepalive Ping below blocked forever and the
+	// subscriber went silent 25 seconds after connecting — the "changes don't
+	// appear until I refresh" report in the flesh. CloseRead spawns the reader
+	// that keeps pings honest and cancels the context when the peer goes away.
+	ctx := ws.CloseRead(r.Context())
 
 	events, unsubscribe := s.currentWatcher().Subscribe()
 	defer unsubscribe()
 
-	pingTicker := time.NewTicker(25 * time.Second)
+	pingTicker := time.NewTicker(watchPingInterval)
 	defer pingTicker.Stop()
 
 	for {

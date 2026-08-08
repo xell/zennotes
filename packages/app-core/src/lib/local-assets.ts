@@ -1,13 +1,7 @@
 import { useStore } from '../store'
 import { externalLinkUrl } from './internal-links'
-import { openExternalFileLink } from './external-file-link'
+import { openVaultAssetExternally } from './external-file-link'
 import { isExcalidrawPath, isObsidianExcalidrawPath } from '@shared/excalidraw'
-
-/** Absolute on-disk path for a vault-relative asset, for opening it in the OS
- *  default app. `path.resolve` in the desktop handler normalizes the join. */
-function vaultAssetAbsolutePath(vaultRoot: string, assetVaultRel: string): string {
-  return `${vaultRoot.replace(/\/+$/, '')}/${assetVaultRel}`
-}
 
 const IMAGE_EXTENSIONS = new Set([
   '.apng',
@@ -603,10 +597,11 @@ export function enhanceLocalAssetNodes(
       // A non-previewable file opens in the OS default app (a `.tldraw` in its
       // editor, a `.zip` in the archiver) — an in-app asset tab can't render
       // it, which read as "nothing happened" when clicked. (#463)
-      const openAsset =
-        vaultRoot && assetVaultRel
-          ? () => void openExternalFileLink(vaultAssetAbsolutePath(vaultRoot, assetVaultRel))
-          : null
+      // The bridge takes the vault-relative path: a local vault opens the
+      // file in place, a remote workspace downloads it first. Joining the
+      // vault root here handed remote users a server path that does not
+      // exist on their machine.
+      const openAsset = assetVaultRel ? () => void openVaultAssetExternally(assetVaultRel) : null
       const standalone = isStandaloneImageParagraph(img)
       if (standalone && standalone.dataset.assetEmbed !== 'true') {
         standalone.dataset.assetEmbed = 'true'

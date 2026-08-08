@@ -10,9 +10,13 @@ import { emitJson, emitLine, emitOk, pad, truncate } from '../format.js'
 export async function cmdTaskList(vault: VaultBackend, args: ParsedArgs): Promise<void> {
   const showAll = getBool(args, 'all')
   const onlyUnchecked = getBool(args, 'unchecked')
+  // `--all` was taken (it means every STATUS), so the exclusion escape hatch
+  // (#458) gets its own flag: also scan notes opted out via frontmatter
+  // `tasks:` and folders on the vault's excluded list.
+  const includeExcluded = getBool(args, 'include-excluded')
   const tag = getString(args, 'tag')?.replace(/^#/, '').toLowerCase()
 
-  let tasks = await vault.scanAllTasks()
+  let tasks = await vault.scanAllTasks(includeExcluded ? { includeExcluded: true } : undefined)
   if (!showAll) {
     if (onlyUnchecked) tasks = tasks.filter((t) => !t.checked)
     else tasks = tasks.filter((t) => !t.checked && !t.waiting)

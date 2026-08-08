@@ -55,6 +55,7 @@ import {
 } from '../lib/buffer-navigation'
 import { focusEditorNormalMode } from '../lib/editor-focus'
 import { goUpIsolationWithConfirm } from '../lib/sidebar-isolation'
+import { SELF_KEYED_SURFACES } from '../lib/self-keyed-surfaces'
 import { isWorkspaceVirtualTabPath } from '../lib/workspace-tabs'
 import {
   isExcalidrawPath,
@@ -78,33 +79,6 @@ function escapeForAttr(value: string): string {
 // #309: how quickly a Space press+release inside an Excalidraw canvas counts as
 // a "tap" (arm the leader) rather than a hold (let Excalidraw's Hand tool pan).
 // Tuned so a deliberate hold-to-pan clears it while a natural tap stays under it.
-/**
- * Surfaces that run their own keyboard, which this listener must not touch.
- *
- * This handler is CAPTURE-PHASE on window and calls stopImmediatePropagation,
- * so by default it wins every key in the app and routes it into sidebar and
- * note-list navigation. Any panel with its own focus and its own keys has to be
- * excluded here, and forgetting does not look like a routing bug: the panel
- * simply appears to have no keyboard at all. Both Workflows surfaces shipped
- * with exactly that symptom (arrows moved the SIDEBAR cursor, Backspace
- * "focused the left sidebar", m opened the sidebar folder menu), and each was
- * diagnosed from scratch because the previous fix was an anonymous copy of the
- * same three lines.
- *
- * One list and one condition, so a new surface is one entry rather than a
- * fourth near-identical block, and the Ctrl+W passthrough cannot be got wrong
- * per surface. Ctrl+W and its pending direction key always survive, so a panel
- * can still hand off to pane and tab navigation.
- */
-const SELF_KEYED_SURFACES = [
-  // Runs its own vim-style motion grid.
-  '[data-zen-db-grid]',
-  // This fork's seekable media player owns its transport keys.
-  '[data-zen-media-player]',
-  '[data-workflow-list-pane]',
-  '[data-workflow-canvas]'
-].join(', ')
-
 const EXCALIDRAW_LEADER_TAP_MS = 250
 
 export function VimNav(): JSX.Element | null {

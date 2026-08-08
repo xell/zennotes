@@ -20,7 +20,8 @@ import {
   rewriteFavoritesForFolderRename,
   toggleFavorite,
   weeklyNoteLocationForDate,
-  monthlyNoteLocationForDate
+  monthlyNoteLocationForDate,
+  sidebarRevealTarget
 } from './vault-layout'
 
 function note(path: string, title: string): NoteMeta {
@@ -764,5 +765,61 @@ describe('isCalendarToggleAvailable (#413)', () => {
 
   it('is unavailable in the Quick Notes scratchpad', () => {
     expect(isCalendarToggleAvailable(daily, { folder: 'quick' })).toBe(false)
+  })
+})
+
+describe('sidebarRevealTarget (auto-reveal, Kta 2.24)', () => {
+  const inboxMode = normalizeVaultSettings({
+    primaryNotesLocation: 'inbox'
+  } as unknown as VaultSettings)
+  const rootMode = normalizeVaultSettings({
+    primaryNotesLocation: 'root'
+  } as unknown as VaultSettings)
+
+  it('walks ancestors in inbox mode with the folder prefix stripped', () => {
+    const target = sidebarRevealTarget('inbox/Work/Research/Note.md', inboxMode)
+    expect(target).toEqual({
+      folder: 'inbox',
+      parts: ['Work', 'Research', 'Note.md'],
+      ancestors: ['inbox:', 'inbox:Work', 'inbox:Work/Research']
+    })
+  })
+
+  it('classifies a Vault Root mode path (no folder prefix) as inbox', () => {
+    // The reported case: the raw first segment is a user folder, not a
+    // NoteFolder, so the old first-segment keys matched nothing.
+    const target = sidebarRevealTarget('Facturi/Invoice.md', rootMode)
+    expect(target).toEqual({
+      folder: 'inbox',
+      parts: ['Facturi', 'Invoice.md'],
+      ancestors: ['inbox:', 'inbox:Facturi']
+    })
+  })
+
+  it('reaches a database data.csv through its .base folder in root mode', () => {
+    const target = sidebarRevealTarget('Facturi/Facturi 2026.base/data.csv', rootMode)
+    expect(target?.ancestors).toEqual([
+      'inbox:',
+      'inbox:Facturi',
+      'inbox:Facturi/Facturi 2026.base'
+    ])
+  })
+
+  it('follows remapped system folders instead of literal names', () => {
+    const remapped = normalizeVaultSettings({
+      primaryNotesLocation: 'inbox',
+      systemFolderPaths: { trash: 'deleted' }
+    } as unknown as VaultSettings)
+    const target = sidebarRevealTarget('deleted/Old/Note.md', remapped)
+    expect(target).toEqual({
+      folder: 'trash',
+      parts: ['Old', 'Note.md'],
+      ancestors: ['trash:', 'trash:Old']
+    })
+  })
+
+  it('returns null for paths outside the tree', () => {
+    expect(sidebarRevealTarget('.zennotes/vault.json', rootMode)).toBeNull()
+    expect(sidebarRevealTarget('stray.md', inboxMode)).toBeNull()
   })
 })

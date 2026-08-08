@@ -144,6 +144,13 @@ export function invalidateExcalidrawPreview(path: string): void {
   previewCache.delete(path)
 }
 
+/** Drop every cached preview. After a change-feed gap (watch socket
+ *  reconnect) the per-path change events are gone for good, so any drawing
+ *  may be stale; previews re-render lazily from disk. */
+export function invalidateAllExcalidrawPreviews(): void {
+  previewCache.clear()
+}
+
 /**
  * Resolve a raw embed target (e.g. `Drawings/foo.excalidraw`, `foo.excalidraw`,
  * or bare `foo`) to a real vault-relative note path. Excalidraw drawings live in

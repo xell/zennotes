@@ -50,6 +50,14 @@ import { cmdVaultInfo, cmdVaultList } from './commands/vault.js'
 import { cmdCapture } from './commands/capture.js'
 import { cmdOpen } from './commands/open.js'
 import { cmdMcp } from './commands/mcp.js'
+import {
+  cmdBaseAdd,
+  cmdBaseCreate,
+  cmdBaseGet,
+  cmdBaseList,
+  cmdBaseRows,
+  cmdBaseSet
+} from './commands/base.js'
 
 async function main(argv: string[]): Promise<number> {
   if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') {
@@ -125,6 +133,12 @@ async function main(argv: string[]): Promise<number> {
     'task list': cmdTaskList,
     'task toggle': cmdTaskToggle,
     'vault info': cmdVaultInfo,
+    'base list': cmdBaseList,
+    'base create': cmdBaseCreate,
+    'base rows': cmdBaseRows,
+    'base get': cmdBaseGet,
+    'base add': cmdBaseAdd,
+    'base set': cmdBaseSet,
     capture: cmdCapture
   }
 
@@ -149,7 +163,8 @@ function peelSubcommand(
     folder: ['list', 'create', 'rename', 'delete'],
     tag: ['list', 'find'],
     task: ['list', 'toggle'],
-    vault: ['info', 'list']
+    vault: ['info', 'list'],
+    base: ['list', 'create', 'rows', 'get', 'add', 'set']
   }
   const choices = SUBCOMMANDS[command]
   if (!choices) return { subcommand: null, parsed: parse(rest) }

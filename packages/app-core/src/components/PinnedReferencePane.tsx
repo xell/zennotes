@@ -31,7 +31,11 @@ import { history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { vimAwareDefaultKeymap, vimAwareMarkdownKeymap } from '../lib/cm-vim-default-keymap'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
-import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
+import {
+  listIndentGuides as listIndentGuidesExt,
+  listIndentWidth,
+  markdownListIndentPlugin
+} from '../lib/cm-markdown-list-indent'
 import {
   orderedListRenumber,
   skipOrderedListRenumber
@@ -180,6 +184,7 @@ export function PinnedReferencePane(): JSX.Element | null {
   const showHeadingLevelLabels = useStore((s) => s.showHeadingLevelLabels)
   const lineNumberMode = useStore((s) => s.lineNumberMode)
   const editorTabSizeValue = useStore((s) => s.editorTabSize)
+  const listIndentGuidesOn = useStore((s) => s.listIndentGuides)
   const editorFontSize = useStore((s) => s.editorFontSize)
   const editorLineHeight = useStore((s) => s.editorLineHeight)
   const textFont = useStore((s) => s.textFont)
@@ -275,7 +280,11 @@ export function PinnedReferencePane(): JSX.Element | null {
           vimCompartment.of(s0.vimMode ? vim() : []),
           history(),
           drawSelection(),
-          tabSizeCompartment.of(editorTabSize(s0.editorTabSize)),
+          tabSizeCompartment.of([
+            editorTabSize(s0.editorTabSize),
+            listIndentWidth(s0.editorTabSize),
+            listIndentGuidesExt(s0.listIndentGuides)
+          ]),
           highlightActiveLine(),
           EditorView.lineWrapping,
           markdown({ base: markdownLanguage, codeLanguages: resolveCodeLanguage, addKeymap: false }),
@@ -416,8 +425,14 @@ export function PinnedReferencePane(): JSX.Element | null {
     const view = viewRef.current
     const comp = tabSizeCompartmentRef.current
     if (!view || !comp) return
-    view.dispatch({ effects: comp.reconfigure(editorTabSize(editorTabSizeValue)) })
-  }, [editorTabSizeValue])
+    view.dispatch({
+      effects: comp.reconfigure([
+        editorTabSize(editorTabSizeValue),
+        listIndentWidth(editorTabSizeValue),
+        listIndentGuidesExt(listIndentGuidesOn)
+      ])
+    })
+  }, [editorTabSizeValue, listIndentGuidesOn])
 
   /* -------- Diff mode: load the git-index version and diff against it -------- */
   useEffect(() => {

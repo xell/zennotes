@@ -5,11 +5,18 @@ export const DEFAULT_PANE_MODE: PaneMode = 'edit'
 
 export type PaneModesByPath = Record<string, PaneMode>
 
+export function isPaneMode(value: unknown): value is PaneMode {
+  return value === 'edit' || value === 'preview' || value === 'split'
+}
+
 export function paneModeForPath(
   modesByPath: PaneModesByPath,
-  path: string | null
+  path: string | null,
+  // A note the user has not put in a mode yet opens in this; the "Default
+  // view mode" preference feeds it so readers can land in Preview. (#543)
+  fallback: PaneMode = DEFAULT_PANE_MODE
 ): PaneMode {
-  return path ? modesByPath[path] ?? DEFAULT_PANE_MODE : DEFAULT_PANE_MODE
+  return path ? modesByPath[path] ?? fallback : fallback
 }
 
 export function paneModesWithPathMode(

@@ -23,6 +23,7 @@ import {
   resolveFolderPath,
   systemFolderForDirName
 } from '@shared/system-folder-paths'
+import { normalizeTasksExcludedFolders } from '@shared/tasks-excluded-folders'
 import { getISOWeek, getISOWeekYear, mondayOfISOWeek } from './template-render'
 
 // Reserved however the system folders are remapped:
@@ -593,6 +594,9 @@ export function normalizeVaultSettings(
       normalizedFavorites.push(entry)
     }
   }
+  const normalizedTasksExcluded = normalizeTasksExcludedFolders(
+    settings?.tasks?.excludedFolders
+  )
   const primaryNotesLocation =
     settings?.primaryNotesLocation === 'root'
       ? 'root'
@@ -658,7 +662,10 @@ export function normalizeVaultSettings(
     systemFolderPaths: normalizeSystemFolderPaths(settings?.systemFolderPaths),
     // Per-vault view overrides (#292): passed through as-is; the store validates
     // each value when it overlays them onto the live prefs.
-    ...(settings?.view ? { view: settings.view } : {})
+    ...(settings?.view ? { view: settings.view } : {}),
+    ...(normalizedTasksExcluded.length > 0
+      ? { tasks: { excludedFolders: normalizedTasksExcluded } }
+      : {})
   }
 }
 
@@ -1509,6 +1516,35 @@ export function folderForVaultRelativePath(
     return 'inbox'
   }
   return null
+}
+
+/**
+ * What the sidebar must expand (and where it can scroll) to make `relPath`
+ * visible. Classification goes through the same settings-aware helpers the
+ * tree itself uses: deriving the folder from the path's first segment holds
+ * only for unremapped inbox-mode vaults — in Vault Root mode the path has no
+ * folder prefix at all, so naively computed keys match nothing and
+ * auto-reveal silently expands nothing (Kta's report, 2.24).
+ *
+ * `ancestors` are collapse-set keys (`folder:` then `folder:sub/...` per
+ * level); `parts` is the path within the folder, for walking folder rows.
+ * Null when the path has no place in the tree.
+ */
+export function sidebarRevealTarget(
+  relPath: string,
+  settings: VaultSettings | null | undefined
+): { folder: NoteFolder; parts: string[]; ancestors: string[] } | null {
+  const folder = folderForVaultRelativePath(relPath, settings)
+  if (!folder) return null
+  const within = notePathWithinFolder(relPath, folder, settings)
+  const parts = within.split('/').filter(Boolean)
+  const ancestors: string[] = [`${folder}:`]
+  let acc = ''
+  for (let i = 0; i < parts.length - 1; i++) {
+    acc = acc ? `${acc}/${parts[i]}` : parts[i]
+    ancestors.push(`${folder}:${acc}`)
+  }
+  return { folder, parts, ancestors }
 }
 
 export function assetPathWithinFolder(

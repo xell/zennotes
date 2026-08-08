@@ -8,7 +8,7 @@ import {
   type MouseEvent as ReactMouseEvent
 } from 'react'
 import { createPortal } from 'react-dom'
-import type { DatabaseDoc, DbField, DbRow, DbView, FieldType } from '@shared/databases'
+import type { DatabaseDoc, DbField, DbRow, DbView, FieldType, SelectOptionsSource } from '@shared/databases'
 import { filterRows, sortRows } from '@shared/database-transforms'
 import { useStore } from '../store'
 import {
@@ -20,11 +20,14 @@ import {
   moveColumn,
   moveColumnToField,
   ensureSelectOption,
+  setFieldOptionsSource,
   updateView,
   fieldsById,
   formatDate,
   optionLabel,
   splitMultiSelect,
+  splitNoteLinks,
+  joinNoteLinks,
   isCheckboxTrue
 } from '../lib/database-cells'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
@@ -32,6 +35,11 @@ import { IconButton } from './ui/Button'
 import { MoreIcon, TrashIcon, PlusIcon, DocumentIcon, DocumentTextIcon, ArrowUpRightIcon } from './icons'
 import { focusEditorNormalMode } from '../lib/editor-focus'
 import { isImeComposing } from '../lib/ime'
+import { isPaletteNextKey, isPalettePreviousKey } from '../lib/palette-nav'
+import { resolveWikilinkTarget } from '../lib/wikilinks'
+import { followLinkTarget } from '../lib/follow-link'
+import { NoteSuggestRows, stepSuggestIndex, useNoteSuggestions } from './DatabaseNoteSuggest'
+import { PromptModal } from './PromptModal'
 
 const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   text: 'Text',
@@ -39,7 +47,9 @@ const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   checkbox: 'Checkbox',
   date: 'Date',
   select: 'Select',
-  multiSelect: 'Multi-select'
+  multiSelect: 'Multi-select',
+  note: 'Note link',
+  noteMulti: 'Note links'
 }
 
 interface Props {
@@ -65,6 +75,25 @@ export function DatabaseTableView({ csvPath, doc, view, isActive }: Props): JSX.
   const [renamingField, setRenamingField] = useState<string | null>(null)
   const [fieldMenu, setFieldMenu] = useState<{ fieldId: string; x: number; y: number } | null>(null)
   const [rowMenu, setRowMenu] = useState<{ rowId: string; x: number; y: number } | null>(null)
+  // Folder / tag prompt for a select field's options source (#500). Suggestions
+  // read the note list at open time via getState — no store subscription, so
+  // the grid doesn't re-render on every vault change.
+  const [sourcePrompt, setSourcePrompt] = useState<{
+    fieldId: string
+    kind: 'folder' | 'tag'
+  } | null>(null)
+  const sourcePromptSuggestions = useMemo(() => {
+    if (!sourcePrompt) return []
+    const notes = useStore.getState().notes
+    if (sourcePrompt.kind === 'folder') {
+      const dirs = new Set(
+        notes.map((n) => n.path.split('/').slice(0, -1).join('/')).filter(Boolean)
+      )
+      return [...dirs].sort().map((value) => ({ value }))
+    }
+    const tags = new Set(notes.flatMap((n) => n.tags.map((t) => t.toLowerCase())))
+    return [...tags].sort().map((value) => ({ value }))
+  }, [sourcePrompt])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   // #317: header drag-to-reorder columns. Ref holds the field being dragged;
   // state drives the drop-target indicator.
@@ -167,12 +196,17 @@ export function DatabaseTableView({ csvPath, doc, view, isActive }: Props): JSX.
   // a workspace restore (reopening the app), when the window regains focus, and
   // when focus comes back *down* from the tab strip (Ctrl+J / j, which sets
   // focusedPanel to 'editor') — so vim motions work without clicking a row.
-  // Only claims when the grid IS the focused region ('editor') or nothing has
-  // claimed focus yet (null, the first-paint / restore case). Any other panel
-  // owning focus — the tab strip, or the sidebar after a Focus Sidebar
-  // command/shortcut — must be left alone, or this effect re-runs on the
-  // focusedPanel change and immediately yanks focus back, making the grid a
-  // black hole nothing can escape. rAF lets the opening click / restore settle.
+  // Claims ONLY while the store says the content region owns the keyboard:
+  // when another panel holds it (tab strip via Ctrl+K, or the sidebar via
+  // Focus Sidebar / the boot default), stealing focus here re-routed every
+  // key to the grid while the sidebar painted its vim cursor and `m` hint,
+  // and the hinted key opened nothing. A null focusedPanel still claims: the
+  // boot fallback only assigns 'sidebar' when the sidebar is open, so a
+  // workspace restore with the sidebar hidden leaves it null, and bailing
+  // there left the restored grid deaf until a mouse click. Also bails while
+  // an interactive control (a cell editor, a header button) owns focus, so
+  // it never yanks the caret out from under the user. rAF lets the opening
+  // click / restore settle so it can't steal focus back.
   useEffect(() => {
     if (!isActive || (focusedPanel !== 'editor' && focusedPanel !== null)) return
     const claimFocus = (): void => {
@@ -391,6 +425,38 @@ export function DatabaseTableView({ csvPath, doc, view, isActive }: Props): JSX.
       hint: field.type === t ? '●' : undefined,
       onSelect: () => updateDatabaseSchema(csvPath, retypeField(doc, field.id, t))
     })),
+    // Where a select field's popover discovers options beyond the hand-added
+    // list: nowhere (manual), every note, a folder, or a tag. (#500)
+    ...(field.type === 'select' || field.type === 'multiSelect'
+      ? ([
+          { kind: 'separator' },
+          {
+            label: 'Options: manual only',
+            hint: !field.optionsSource ? '●' : undefined,
+            onSelect: () =>
+              updateDatabaseSchema(csvPath, setFieldOptionsSource(doc, field.id, null))
+          },
+          {
+            label: 'Options: all notes',
+            hint: field.optionsSource?.kind === 'notes' ? '●' : undefined,
+            onSelect: () =>
+              updateDatabaseSchema(
+                csvPath,
+                setFieldOptionsSource(doc, field.id, { kind: 'notes' })
+              )
+          },
+          {
+            label: 'Options: notes in folder…',
+            hint: field.optionsSource?.kind === 'folder' ? '●' : undefined,
+            onSelect: () => setSourcePrompt({ fieldId: field.id, kind: 'folder' })
+          },
+          {
+            label: 'Options: notes with tag…',
+            hint: field.optionsSource?.kind === 'tag' ? '●' : undefined,
+            onSelect: () => setSourcePrompt({ fieldId: field.id, kind: 'tag' })
+          }
+        ] as ContextMenuItem[])
+      : []),
     { kind: 'separator' },
     {
       label: 'Delete field',
@@ -694,6 +760,39 @@ export function DatabaseTableView({ csvPath, doc, view, isActive }: Props): JSX.
           onClose={() => setRowMenu(null)}
         />
       )}
+
+      {sourcePrompt && (
+        <PromptModal
+          options={{
+            title:
+              sourcePrompt.kind === 'folder' ? 'Options from folder' : 'Options from tag',
+            description:
+              sourcePrompt.kind === 'folder'
+                ? 'The select popover will suggest notes inside this folder as options.'
+                : 'The select popover will suggest notes carrying this tag as options.',
+            placeholder: sourcePrompt.kind === 'folder' ? 'inbox/projects' : 'project',
+            suggestions: sourcePromptSuggestions,
+            autoHighlightFirst: true
+          }}
+          onSubmit={(value) => {
+            const v = value.trim().replace(/^#/, '').replace(/\/+$/, '')
+            if (v) {
+              updateDatabaseSchema(
+                csvPath,
+                setFieldOptionsSource(
+                  doc,
+                  sourcePrompt.fieldId,
+                  sourcePrompt.kind === 'folder'
+                    ? { kind: 'folder', path: v }
+                    : { kind: 'tag', tag: v }
+                )
+              )
+            }
+            setSourcePrompt(null)
+          }}
+          onCancel={() => setSourcePrompt(null)}
+        />
+      )}
     </div>
   )
 }
@@ -780,7 +879,16 @@ function Cell({ field, value, editing, onStartEdit, onEndEdit, onCommit }: CellP
     )
   }
 
+  if (field.type === 'note' || field.type === 'noteMulti') {
+    return (
+      <NoteCell field={field} value={value} editing={editing} onStartEdit={onStartEdit} onEndEdit={onEndEdit} onCommit={onCommit} />
+    )
+  }
+
   if (editing) {
+    if (field.type === 'text') {
+      return <TextCellInput value={value} onCommit={onCommit} onEndEdit={onEndEdit} />
+    }
     return (
       <input
         autoFocus
@@ -819,6 +927,19 @@ function Cell({ field, value, editing, onStartEdit, onEndEdit, onCommit }: CellP
 
 const SELECT_PANEL_WIDTH = 224
 
+// Portal panels to the body so the table's overflow doesn't clip them; flip
+// above the cell when there isn't room below.
+function cellPanelStyle(rect: DOMRect | null): CSSProperties {
+  if (!rect) return {}
+  const placeAbove = rect.bottom > window.innerHeight - 280
+  return {
+    position: 'fixed',
+    left: Math.max(8, Math.min(rect.left, window.innerWidth - SELECT_PANEL_WIDTH - 8)),
+    width: Math.max(rect.width, SELECT_PANEL_WIDTH),
+    ...(placeAbove ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 })
+  }
+}
+
 function SelectCell({ field, value, editing, onStartEdit, onEndEdit, onCommit }: CellProps): JSX.Element {
   const multi = field.type === 'multiSelect'
   const selected = multi ? splitMultiSelect(value) : value ? [value] : []
@@ -826,9 +947,13 @@ function SelectCell({ field, value, editing, onStartEdit, onEndEdit, onCommit }:
   const panelRef = useRef<HTMLDivElement | null>(null)
   const [rect, setRect] = useState<DOMRect | null>(null)
   const [draft, setDraft] = useState('')
+  // -1 = the typed draft is selected (Enter adds it as an option, as always);
+  // 0..n highlights a row. Same semantic as PromptModal's suggestions.
+  const [activeIdx, setActiveIdx] = useState(-1)
 
   useEffect(() => {
     setRect(editing && triggerRef.current ? triggerRef.current.getBoundingClientRect() : null)
+    if (!editing) setDraft('')
   }, [editing])
 
   useEffect(() => {
@@ -854,6 +979,41 @@ function SelectCell({ field, value, editing, onStartEdit, onEndEdit, onCommit }:
     }
   }
 
+  // The draft doubles as a filter over existing options, and — when the field
+  // has an options source — as the query for live note discovery (#500). A
+  // picked note commits its title through the normal option-minting path, so
+  // boards, filters, and older builds keep seeing ordinary select values.
+  const q = draft.trim().toLowerCase()
+  const options = (field.options ?? []).filter(
+    (opt) =>
+      !q ||
+      opt.value.toLowerCase().includes(q) ||
+      (opt.label ?? '').toLowerCase().includes(q)
+  )
+  const noteSuggestions = useNoteSuggestions(draft, {
+    enabled: editing && !!field.optionsSource,
+    source: field.optionsSource,
+    limit: 6
+  }).filter((c) => !(field.options ?? []).some((o) => o.value === c.label))
+  const rowCount = options.length + noteSuggestions.length
+  useEffect(() => {
+    setActiveIdx(-1)
+  }, [draft, editing])
+
+  const pickRow = (idx: number): void => {
+    if (idx < 0) return
+    if (idx < options.length) return toggle(options[idx].value)
+    const candidate = noteSuggestions[idx - options.length]
+    if (candidate) toggle(candidate.label)
+  }
+
+  // Keep the active row visible as arrows move it (rows live in two groups).
+  useEffect(() => {
+    panelRef.current
+      ?.querySelector<HTMLElement>(`[data-db-suggest-idx="${activeIdx}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [activeIdx])
+
   const chips = (
     <div className="flex flex-wrap gap-1">
       {selected.length === 0 ? (
@@ -870,18 +1030,6 @@ function SelectCell({ field, value, editing, onStartEdit, onEndEdit, onCommit }:
       )}
     </div>
   )
-
-  // Portal the option list to the body so the table's overflow doesn't clip it;
-  // flip above the cell when there isn't room below.
-  const placeAbove = !!rect && rect.bottom > window.innerHeight - 280
-  const panelStyle: CSSProperties = rect
-    ? {
-        position: 'fixed',
-        left: Math.max(8, Math.min(rect.left, window.innerWidth - SELECT_PANEL_WIDTH - 8)),
-        width: Math.max(rect.width, SELECT_PANEL_WIDTH),
-        ...(placeAbove ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 })
-      }
-    : {}
 
   return (
     <>
@@ -901,42 +1049,390 @@ function SelectCell({ field, value, editing, onStartEdit, onEndEdit, onCommit }:
         createPortal(
           <div
             ref={panelRef}
-            style={panelStyle}
+            style={cellPanelStyle(rect)}
             className="z-popover overflow-hidden rounded-lg border border-paper-300 bg-paper-100 py-1 shadow-float"
           >
             <div className="max-h-60 overflow-y-auto">
-              {(field.options ?? []).map((opt) => (
+              {options.map((opt, i) => (
                 <button
                   key={opt.id}
                   type="button"
+                  data-db-suggest-idx={i}
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => toggle(opt.value)}
-                  className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm hover:bg-paper-200"
+                  className={[
+                    'flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm',
+                    i === activeIdx ? 'bg-paper-200 text-ink-900' : 'hover:bg-paper-200'
+                  ].join(' ')}
                 >
                   <span className="truncate text-ink-900">{opt.label ?? opt.value}</span>
                   {selected.includes(opt.value) && <span className="text-accent">✓</span>}
                 </button>
               ))}
-              {(field.options ?? []).length === 0 && (
-                <div className="px-3 py-2 text-xs text-ink-500">No options yet — add one below.</div>
+              {noteSuggestions.length > 0 && (
+                <div className="mt-1 border-t border-paper-300/60 pt-1">
+                  <div className="px-3 py-0.5 text-2xs font-medium uppercase tracking-wide text-ink-400">
+                    Notes
+                  </div>
+                  <NoteSuggestRows
+                    items={noteSuggestions}
+                    activeIndex={activeIdx}
+                    indexOffset={options.length}
+                    onPick={(c) => toggle(c.label)}
+                    checkedValues={new Set(selected)}
+                  />
+                </div>
+              )}
+              {rowCount === 0 && (
+                <div className="px-3 py-2 text-xs text-ink-500">
+                  {field.optionsSource
+                    ? draft
+                      ? 'No matches — Enter adds it as an option.'
+                      : 'Type to search notes or add an option.'
+                    : 'No options yet — add one below.'}
+                </div>
               )}
             </div>
             <div className="border-t border-paper-300/60 p-1.5">
               <input
                 autoFocus
                 value={draft}
-                placeholder="Add option…"
+                placeholder={field.optionsSource ? 'Search notes or add option…' : 'Add option…'}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
                   e.stopPropagation()
-                  if (e.key === 'Enter' && !isImeComposing(e) && draft.trim()) {
-                    toggle(draft.trim().replace(/,/g, ' '))
-                    setDraft('')
-                  } else if (e.key === 'Escape') {
-                    onEndEdit()
+                  if (isPaletteNextKey(e)) {
+                    e.preventDefault()
+                    return setActiveIdx((i) => stepSuggestIndex(i, 1, rowCount))
                   }
+                  if (isPalettePreviousKey(e)) {
+                    e.preventDefault()
+                    return setActiveIdx((i) => stepSuggestIndex(i, -1, rowCount))
+                  }
+                  if (e.key === 'Enter' && !isImeComposing(e)) {
+                    e.preventDefault()
+                    if (activeIdx >= 0) {
+                      pickRow(activeIdx)
+                      setDraft('')
+                      return
+                    }
+                    if (draft.trim()) {
+                      toggle(draft.trim().replace(/,/g, ' '))
+                      setDraft('')
+                    }
+                    return
+                  }
+                  if (e.key === 'Escape') onEndEdit()
                 }}
                 className="w-full rounded border border-paper-300 bg-paper-50 px-2 py-1 text-sm text-ink-900 outline-none focus:border-accent"
               />
+            </div>
+          </div>,
+          document.body
+        )}
+    </>
+  )
+}
+
+/**
+ * Text cell editor with `[[` note discovery (#500): an unclosed `[[query`
+ * before the caret opens the same ranked note list as the editor's wikilink
+ * completion, Enter inserts `[[target]]`, and typing continues. Without an
+ * open `[[`, commit semantics are the classic ones (Enter/blur commit,
+ * Escape cancels).
+ */
+/** The unclosed `[[query` immediately before position `caret`, if any. */
+function wikiOpenAt(text: string, caret: number): { open: number; query: string } | null {
+  const before = text.slice(0, caret)
+  const open = before.lastIndexOf('[[')
+  if (open < 0) return null
+  const inside = before.slice(open + 2)
+  if (inside.includes(']]') || inside.includes('|') || inside.includes('#')) return null
+  return { open, query: inside }
+}
+
+function TextCellInput({
+  value,
+  onCommit,
+  onEndEdit
+}: {
+  value: string
+  onCommit: (value: string) => void
+  onEndEdit: () => void
+}): JSX.Element {
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  const [text, setText] = useState(value)
+  // Caret state only drives the suggestion list; every INSERTION reads the
+  // live DOM value + selection at event time instead, because select events
+  // sync this state asynchronously and a stale caret once re-matched the
+  // just-inserted link and mangled the cell.
+  const [caret, setCaret] = useState(value.length)
+  const [dismissed, setDismissed] = useState(false)
+  const [activeIdx, setActiveIdx] = useState(0)
+  const pendingCaret = useRef<number | null>(null)
+  const selectedOnMount = useRef(false)
+
+  const wiki = useMemo(() => wikiOpenAt(text, caret), [text, caret])
+
+  const suggestions = useNoteSuggestions(wiki?.query ?? '', {
+    enabled: !!wiki && !dismissed,
+    limit: 8
+  })
+  const showList = !!wiki && !dismissed && suggestions.length > 0
+
+  useEffect(() => {
+    setActiveIdx(0)
+  }, [wiki?.query])
+  // Escape dismisses the list for THIS `[[`; a fresh `[[` re-opens it.
+  useEffect(() => {
+    setDismissed(false)
+  }, [wiki?.open])
+
+  useEffect(() => {
+    if (pendingCaret.current == null) return
+    const el = inputRef.current
+    if (el) {
+      el.focus()
+      el.setSelectionRange(pendingCaret.current, pendingCaret.current)
+    }
+    pendingCaret.current = null
+  }, [text])
+
+  /** Insert `[[target]]` over the live `[[query`; false when none is open. */
+  const pick = (candidate: { target: string }, el: HTMLInputElement): boolean => {
+    const liveText = el.value
+    const liveCaret = el.selectionStart ?? liveText.length
+    const live = wikiOpenAt(liveText, liveCaret)
+    if (!live) return false
+    const after = liveText.slice(liveCaret)
+    const rest = after.startsWith(']]') ? after.slice(2) : after
+    const inserted = `[[${candidate.target}]]`
+    const nextCaret = live.open + inserted.length
+    pendingCaret.current = nextCaret
+    setText(`${liveText.slice(0, live.open)}${inserted}${rest}`)
+    setCaret(nextCaret)
+    return true
+  }
+
+  const syncCaret = (el: HTMLInputElement): void =>
+    setCaret(el.selectionStart ?? el.value.length)
+
+  return (
+    <>
+      <input
+        ref={inputRef}
+        autoFocus
+        type="text"
+        value={text}
+        onFocus={(e) => {
+          // Select-all on the opening focus only; a refocus after a pick must
+          // keep the caret where the insertion put it.
+          if (!selectedOnMount.current) {
+            selectedOnMount.current = true
+            e.currentTarget.select()
+          }
+        }}
+        onChange={(e) => {
+          setText(e.currentTarget.value)
+          syncCaret(e.currentTarget)
+        }}
+        onSelect={(e) => syncCaret(e.currentTarget)}
+        onBlur={() => {
+          onCommit(text)
+          onEndEdit()
+        }}
+        onKeyDown={(e) => {
+          e.stopPropagation()
+          if (showList) {
+            if (isPaletteNextKey(e)) {
+              e.preventDefault()
+              return setActiveIdx((i) => Math.min(i + 1, suggestions.length - 1))
+            }
+            if (isPalettePreviousKey(e)) {
+              e.preventDefault()
+              return setActiveIdx((i) => Math.max(i - 1, 0))
+            }
+            if (e.key === 'Enter' && !isImeComposing(e)) {
+              const candidate = suggestions[activeIdx] ?? suggestions[0]
+              if (candidate && pick(candidate, e.currentTarget)) {
+                e.preventDefault()
+                return
+              }
+              // No live [[ at the caret (stale list): fall through to commit.
+            }
+            if (e.key === 'Escape') {
+              e.preventDefault()
+              return setDismissed(true)
+            }
+          }
+          if (e.key === 'Enter' && !isImeComposing(e)) e.currentTarget.blur()
+          else if (e.key === 'Escape') onEndEdit()
+        }}
+        className="w-full bg-paper-50 px-2 py-1.5 text-sm text-ink-900 outline-none ring-1 ring-inset ring-accent"
+      />
+      {showList &&
+        inputRef.current &&
+        createPortal(
+          <div
+            style={cellPanelStyle(inputRef.current.getBoundingClientRect())}
+            className="z-popover overflow-hidden rounded-lg border border-paper-300 bg-paper-100 py-1 shadow-float"
+          >
+            <div className="max-h-60 overflow-y-auto">
+              <NoteSuggestRows
+                items={suggestions}
+                activeIndex={activeIdx}
+                onPick={(c) => {
+                  if (inputRef.current) pick(c, inputRef.current)
+                }}
+              />
+            </div>
+          </div>,
+          document.body
+        )}
+    </>
+  )
+}
+
+/**
+ * Cell editor for `note` / `noteMulti` fields (#500). The cell stores
+ * `[[wikilink]]` targets; editing opens a searchable note picker, display
+ * chips show resolved titles and follow their link on click (the empty cell
+ * area starts the edit). Unresolvable targets render muted, not broken.
+ */
+function NoteCell({ field, value, editing, onStartEdit, onEndEdit, onCommit }: CellProps): JSX.Element {
+  const multi = field.type === 'noteMulti'
+  const targets = splitNoteLinks(value)
+  const notes = useStore((s) => s.notes)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  const [rect, setRect] = useState<DOMRect | null>(null)
+  const [query, setQuery] = useState('')
+  const [activeIdx, setActiveIdx] = useState(0)
+
+  const suggestions = useNoteSuggestions(query, { enabled: editing, limit: 8 })
+
+  useEffect(() => {
+    setRect(editing && triggerRef.current ? triggerRef.current.getBoundingClientRect() : null)
+    if (!editing) setQuery('')
+  }, [editing])
+
+  useEffect(() => {
+    setActiveIdx(0)
+  }, [query, editing])
+
+  useEffect(() => {
+    if (!editing) return
+    const onDown = (e: MouseEvent): void => {
+      const t = e.target as Node
+      if (triggerRef.current?.contains(t) || panelRef.current?.contains(t)) return
+      onEndEdit()
+    }
+    window.addEventListener('mousedown', onDown, true)
+    return () => window.removeEventListener('mousedown', onDown, true)
+  }, [editing, onEndEdit])
+
+  const pick = (candidate: { target: string }): void => {
+    const target = candidate.target
+    if (multi) {
+      const next = targets.includes(target)
+        ? targets.filter((t) => t !== target)
+        : [...targets, target]
+      onCommit(joinNoteLinks(next))
+    } else {
+      onCommit(targets[0] === target ? '' : joinNoteLinks([target]))
+      onEndEdit()
+    }
+  }
+
+  const chips = (
+    <div className="flex flex-wrap gap-1">
+      {targets.length === 0 ? (
+        <span className="text-ink-400">—</span>
+      ) : (
+        targets.map((target) => {
+          const note = resolveWikilinkTarget(notes, target)
+          return (
+            <span
+              key={target}
+              role="link"
+              title={note ? `Open ${note.title}` : `No note matches "${target}"`}
+              onClick={(e) => {
+                e.stopPropagation()
+                followLinkTarget(target)
+              }}
+              className={[
+                'cursor-pointer rounded-full px-2 py-0.5 text-2xs font-medium ring-1',
+                note
+                  ? 'bg-accent/15 text-accent ring-accent/30 hover:bg-accent/25'
+                  : 'bg-paper-200/70 text-ink-400 ring-paper-300'
+              ].join(' ')}
+            >
+              {note?.title ?? target}
+            </span>
+          )
+        })
+      )}
+    </div>
+  )
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={onStartEdit}
+        className={[
+          'block h-full w-full px-2 py-1.5 text-left',
+          editing ? 'ring-1 ring-inset ring-accent' : ''
+        ].join(' ')}
+      >
+        {chips}
+      </button>
+      {editing &&
+        rect &&
+        createPortal(
+          <div
+            ref={panelRef}
+            style={cellPanelStyle(rect)}
+            className="z-popover overflow-hidden rounded-lg border border-paper-300 bg-paper-100 py-1 shadow-float"
+          >
+            <div className="border-b border-paper-300/60 p-1.5">
+              <input
+                autoFocus
+                value={query}
+                placeholder={multi ? 'Link notes…' : 'Link a note…'}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  e.stopPropagation()
+                  if (isPaletteNextKey(e)) {
+                    e.preventDefault()
+                    return setActiveIdx((i) => Math.min(i + 1, suggestions.length - 1))
+                  }
+                  if (isPalettePreviousKey(e)) {
+                    e.preventDefault()
+                    return setActiveIdx((i) => Math.max(i - 1, 0))
+                  }
+                  if (e.key === 'Enter' && !isImeComposing(e)) {
+                    e.preventDefault()
+                    const candidate = suggestions[activeIdx] ?? suggestions[0]
+                    if (candidate) pick(candidate)
+                    return
+                  }
+                  if (e.key === 'Escape') onEndEdit()
+                }}
+                className="w-full rounded border border-paper-300 bg-paper-50 px-2 py-1 text-sm text-ink-900 outline-none focus:border-accent"
+              />
+            </div>
+            <div className="max-h-60 overflow-y-auto">
+              <NoteSuggestRows
+                items={suggestions}
+                activeIndex={activeIdx}
+                onPick={pick}
+                checkedValues={new Set(targets)}
+              />
+              {suggestions.length === 0 && (
+                <div className="px-3 py-2 text-xs text-ink-500">No matching notes.</div>
+              )}
             </div>
           </div>,
           document.body

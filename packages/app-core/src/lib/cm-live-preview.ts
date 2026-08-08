@@ -20,7 +20,7 @@ import { parseImageEmbedLabel } from './embed-size'
 import { setImageBlockDragPayload } from './image-block-dnd'
 import { imageCacheKey, rememberImageOnLoad, takeCachedImage } from './image-element-cache'
 import { assetTabPath } from './asset-tabs'
-import { openExternalFileLink } from './external-file-link'
+import { openVaultAssetExternally } from './external-file-link'
 import {
   getExcalidrawPreview,
   parseEmbedSizeHint,
@@ -850,9 +850,11 @@ class AttachmentChipWidget extends WidgetType {
       const assetPath =
         root && notePath ? resolveAssetVaultRelativePath(root, notePath, this.href) : null
       // Open in the OS default app — an in-app asset tab can't render a
-      // non-previewable file. (#463)
-      if (root && assetPath) {
-        void openExternalFileLink(`${root.replace(/\/+$/, '')}/${assetPath}`)
+      // non-previewable file. (#463) The bridge resolves the vault-relative
+      // path itself: prefixing the root here produced a server path that
+      // does not exist on this machine for remote workspaces.
+      if (assetPath) {
+        void openVaultAssetExternally(assetPath)
       }
     })
   }

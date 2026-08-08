@@ -1566,13 +1566,26 @@ textarea,
   padding: 0;
   line-height: var(--z-editor-line-height, 1.7);
 }
+/* Nested lists: the hanging indent aligns wrapped lines under their text, and
+ * the pad widens shallow source indents so every level steps the configured
+ * width (#491). The pad shifts the whole first line right while the negative
+ * text-indent still pulls the literal markup back, so the caret and columns
+ * stay honest. Guide lines are per-line background layers set inline by
+ * cm-markdown-list-indent; only their color lives here, per theme. */
 .cm-editor .cm-line.cm-markdown-list-line {
   /* --z-list-hanging-indent = the content column (depth step + own prefix);
      --z-list-marker-indent = the item's own prefix (marker + gap). The negative
      text-indent pulls the first line back so the marker sits at the nesting
-     column and wrapped lines hang under the content. */
+     column and wrapped lines hang under the content.
+     Upstream's `--z-list-indent-pad` is not used: it widens a shallow source
+     indent to a fixed `ch` step, which this fork does not need because the step
+     is measured from the rendered marker instead (see cm-markdown-list-indent).
+     The guide colour below is upstream's, kept as-is — the guide layers
+     themselves are set inline per line, positioned in px off that measured
+     step so they land on the indent this actually applies. */
   padding-left: var(--z-list-hanging-indent, 0);
   text-indent: calc(var(--z-list-marker-indent, var(--z-list-hanging-indent, 0)) * -1);
+  --z-list-guide-color: rgb(var(--z-grey-0) / 0.16);
 }
 .cm-editor .cm-cursor,
 .cm-editor .cm-dropCursor {
@@ -3739,11 +3752,22 @@ html[data-completed-task-style="gray-strikethrough"] .prose-zen li.task-list-ite
   background: theme("colors.paper.50");
 }
 .prose-zen .callout-title {
-  display: flex;
-  align-items: center;
-  gap: 0.5em;
+  /* Normal inline flow, not flex: the title carries real inline markup
+     (links, math, emphasis) since #549, and flex would gap-separate every
+     node and break natural wrapping. */
   font-weight: 600;
   margin-bottom: 0.35em;
+}
+/* A link in the title line keeps the callout color, like the editor's
+   colored head line; the underline stays as the link affordance. */
+.prose-zen .callout-title a {
+  color: inherit;
+  border-bottom-color: currentColor;
+}
+/* Body lines sit close under the title, like the editor's compact card.
+   Paragraph-sized gaps inside the box read as broken rendering. (#549) */
+.prose-zen .callout > p {
+  margin: 0.35em 0 0;
 }
 /* Callout color groups — the `data-callout` lists mirror the alias→group table
    in `lib/callout-types.ts` (kept in sync by hand; CSS can't import it). */

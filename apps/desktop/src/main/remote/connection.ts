@@ -65,6 +65,18 @@ export function requestErrorMessage(
   return `Remote server request failed (${response.status} ${response.statusText}) for ${path}${text ? `: ${text}` : ''}`
 }
 
+/** A non-2xx server answer, with the HTTP status attached so callers can
+ *  tell a 404 (absent file) from a real failure (#556 absence handling). */
+export class RemoteRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
+    super(message)
+    this.name = 'RemoteRequestError'
+  }
+}
+
 /** One JSON request against a server, with auth and both error shapes. */
 export async function remoteJsonRequest<T>(
   path: string,
@@ -91,7 +103,10 @@ export async function remoteJsonRequest<T>(
   }
   if (!response.ok) {
     const text = await response.text().catch(() => '')
-    throw new Error(requestErrorMessage(options.baseUrl, path, response, text))
+    throw new RemoteRequestError(
+      requestErrorMessage(options.baseUrl, path, response, text),
+      response.status
+    )
   }
   if (response.status === 204) return undefined as T
   return (await response.json()) as T

@@ -641,6 +641,11 @@ const TOOLS: ToolDef[] = [
             type: 'array',
             items: { type: 'string' },
             description: 'Alternative to tag: require ALL of these tags.'
+          },
+          includeExcluded: {
+            type: 'boolean',
+            description:
+              'Also scan notes opted out of Tasks (frontmatter `tasks: false` / `tasks: note`) and folders on the vault\'s excluded list. Default false: excluded tasks are invisible.'
           }
         }
       }
@@ -652,6 +657,7 @@ const TOOLS: ToolDef[] = [
         | 'waiting'
         | 'all'
         | undefined) ?? 'open'
+      const includeExcluded = args.includeExcluded === true
       const priority = optionalString(args, 'priority') as 'high' | 'med' | 'low' | undefined
       const dueBefore = optionalString(args, 'dueBefore')
       const dueAfter = optionalString(args, 'dueAfter')
@@ -660,7 +666,7 @@ const TOOLS: ToolDef[] = [
       const folder = args.folder
         ? (requireFolder(args, 'folder') as 'inbox' | 'quick' | 'archive')
         : null
-      const all = await scanAllTasks(vault)
+      const all = await scanAllTasks(vault, includeExcluded ? { includeExcluded: true } : undefined)
       return all.filter((t) => {
         if (folder && t.noteFolder !== folder) return false
         if (status === 'open' && (t.checked || t.waiting)) return false

@@ -268,6 +268,14 @@ export interface ZenBridge {
    */
   openExternalFile(href: string): Promise<{ ok: boolean; error?: string }>
   /**
+   * Open a VAULT asset (vault-relative path) with the OS default app. Unlike
+   * `openExternalFile` this resolves against the vault the host actually has:
+   * a local vault opens the file in place, a remote workspace downloads the
+   * asset to a temp file first — the server's absolute path does not exist on
+   * this machine. Returns `{ ok: false, error }` on the web or on failure.
+   */
+  openAssetExternally(relPath: string): Promise<{ ok: boolean; error?: string }>
+  /**
    * Fetch open-graph metadata for a URL to render a bookmark card. Desktop
    * fetches and parses the page in the main process; the web build returns a
    * minimal record. Never throws — `ok: false` on failure.

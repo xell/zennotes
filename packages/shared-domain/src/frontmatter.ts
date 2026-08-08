@@ -95,10 +95,25 @@ export function frontmatterTags(body: string): string[] {
   return out
 }
 
-function yamlValue(value: string): string {
-  // Quote when the value could be misread as YAML structure or has edge
-  // whitespace; JSON.stringify yields a valid double-quoted, escaped scalar.
-  if (/[:#"'\n]/.test(value) || value.trim() !== value || value === '') {
+/**
+ * Quote a scalar for a frontmatter `key: value` line whenever a YAML reader
+ * could misread it bare. Beyond structure characters and edge whitespace, a
+ * leading indicator turns a plain scalar into structure: `[[Note]]` reads as
+ * a nested array (our own `parseFrontmatterFields` takes anything [bracketed]
+ * as an inline list), `- x` as a sequence entry, `>` and `|` as block
+ * scalars, `&` `*` `!` `%` as anchor, alias, tag, directive. Mid-value
+ * brackets and commas stay bare on purpose: they are valid in block-context
+ * plain scalars, and over-quoting would churn every existing record page on
+ * its next mirror. JSON.stringify yields a valid double-quoted YAML scalar.
+ */
+export function yamlValue(value: string): string {
+  if (
+    /[:#"'\n]/.test(value) ||
+    /^[[\]{},>|&*!%@`]/.test(value) ||
+    /^[-?](\s|$)/.test(value) ||
+    value.trim() !== value ||
+    value === ''
+  ) {
     return JSON.stringify(value)
   }
   return value

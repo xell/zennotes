@@ -161,6 +161,11 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
     tomlKey: 'tab_size',
     comment: 'tab width in columns, from 1 through 8'
   },
+  listIndentGuides: {
+    section: 'editor',
+    tomlKey: 'list_indent_guides',
+    comment: 'vertical guide lines at each nested list level'
+  },
   editorScrollOff: {
     section: 'editor',
     tomlKey: 'scroll_off',
@@ -200,6 +205,11 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
     section: 'editor',
     tomlKey: 'loose_math_delimiters',
     comment: 'render $$…$$ display math even with text before/after the fences'
+  },
+  defaultPaneMode: {
+    section: 'editor',
+    tomlKey: 'default_view_mode',
+    comment: 'edit | split | preview — the mode a note opens in before it has a remembered one'
   },
   lineNumberMode: {
     section: 'editor',

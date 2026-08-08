@@ -316,6 +316,26 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
   // Sync to external changes (file watcher broadcasts to all windows).
   useEffect(() => {
     const off = window.zen.onVaultChange((ev: VaultChangeEvent) => {
+      // A resync fires after a change-feed gap (a reconnected watch socket)
+      // and carries no path: this note's own events, if any, were swallowed
+      // by the gap, so re-read unconditionally. Bailing on the path filter
+      // below left the window rendering the pre-gap body forever, and a
+      // save from it would overwrite what another device wrote meanwhile.
+      if (ev.scope === 'resync') {
+        void window.zen
+          .readNote(notePath)
+          .then((c) => {
+            if (lastWrittenBodyRef.current === c.body) return
+            dirtyBodyRef.current = c.body
+            setContent(c)
+          })
+          .catch(() => {
+            // Unreadable right after a reconnect: could be deleted on the
+            // server, could be a blip. Keep the window open; closing it
+            // would drop unsaved keystrokes on a guess.
+          })
+        return
+      }
       if (ev.path !== notePath) return
       if (ev.kind === 'unlink') {
         // Note deleted — close the window.

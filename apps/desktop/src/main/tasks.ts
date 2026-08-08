@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { NoteFolder, NoteMeta } from '@shared/ipc'
 import { parseTaskFile, parseTasksFromBody, type VaultTask } from '@shared/tasks'
+import { isPathExcludedFromTasks } from '@shared/tasks-excluded-folders'
 import { folderForRelativePath, getVaultSettings, listNotes } from './vault'
 
 /** Emit a note's file-task (if its frontmatter tags it `#task`) plus every
@@ -41,9 +42,13 @@ async function readOne(
 
 /** Walk the whole vault and parse every task out of every live (non-trash)
  *  note. Parallelized with `Promise.all` so a 500-note vault is IO-bound,
- *  not sequentially latent. */
+ *  not sequentially latent. Folders on the vault's `tasks.excludedFolders`
+ *  list (#458) are skipped before any file is read. */
 export async function scanAllTasks(root: string): Promise<VaultTask[]> {
-  const metas = (await listNotes(root)).filter((m) => includesFolder(m.folder))
+  const excluded = (await getVaultSettings(root)).tasks?.excludedFolders ?? []
+  const metas = (await listNotes(root)).filter(
+    (m) => includesFolder(m.folder) && !isPathExcludedFromTasks(m.path, excluded)
+  )
   const batches = await Promise.all(metas.map((m) => readOne(root, m)))
   const out: VaultTask[] = []
   for (const b of batches) out.push(...b)
@@ -64,8 +69,12 @@ export async function scanTasksForPath(
   // Settings-aware: with remapped system folders (vault.json
   // `systemFolderPaths`) the bare classifier would file a remapped Trash's
   // notes under inbox and leak their checkboxes into the Tasks view.
-  const folder = folderForRelativePath(posix, await getVaultSettings(root))
+  const settings = await getVaultSettings(root)
+  const folder = folderForRelativePath(posix, settings)
   if (!folder || !LIVE_FOLDERS.has(folder)) return []
+  // Same exclusion the full scan applies (#458), or a single-note rescan
+  // would resurrect an excluded folder's tasks on every edit.
+  if (isPathExcludedFromTasks(posix, settings.tasks?.excludedFolders ?? [])) return []
 
   const abs = path.join(root, posix.split('/').join(path.sep))
   let body: string

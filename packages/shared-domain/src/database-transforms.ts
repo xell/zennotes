@@ -24,6 +24,26 @@ export function isCheckboxTrue(cell: string): boolean {
   return TRUE_VALUES.has(cell.trim().toLowerCase())
 }
 
+/**
+ * Extract the `[[wikilink]]` targets of a note / noteMulti cell, in order.
+ * Bracket-delimited on purpose: unlike multiSelect's comma joins, a target
+ * (a note title or path) may itself contain commas. Text outside brackets is
+ * ignored, so a hand-edited cell degrades to "whatever links it contains".
+ */
+export function splitNoteLinks(cell: string): string[] {
+  const out: string[] = []
+  for (const m of cell.matchAll(/\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g)) {
+    const target = m[1].trim()
+    if (target) out.push(target)
+  }
+  return out
+}
+
+/** Compose a note / noteMulti cell from targets: `[[A]] [[B]]`. */
+export function joinNoteLinks(targets: string[]): string {
+  return targets.map((t) => `[[${t}]]`).join(' ')
+}
+
 function cell(row: DbRow, fieldId: string): string {
   return row.cells[fieldId] ?? ''
 }

@@ -283,6 +283,17 @@ type VaultSettings struct {
 	// Per-system-folder on-disk path overrides (#115). Maps internal folder IDs
 	// to vault-relative directory names. Absent entries fall back to the default.
 	SystemFolderPaths map[string]string `json:"systemFolderPaths,omitempty"`
+	// Tasks-system settings (#458). Mirrors shared/ipc.ts VaultSettings.tasks;
+	// persisted as a first-class field so a web client's settings write never
+	// drops a desktop-written exclusion list (the #446/#379 round-trip rule).
+	Tasks *TasksSettings `json:"tasks,omitempty"`
+}
+
+// TasksSettings mirrors shared/ipc.ts VaultSettings.tasks (#458).
+type TasksSettings struct {
+	// ExcludedFolders lists vault-relative directory paths (as they exist on
+	// disk) whose notes never feed the Tasks surfaces.
+	ExcludedFolders []string `json:"excludedFolders,omitempty"`
 }
 
 // NoteMeta — vault-relative note metadata. Mirrors shared/ipc.ts NoteMeta.
@@ -334,6 +345,17 @@ type AssetMeta struct {
 	SiblingOrder int    `json:"siblingOrder"`
 	Size         int64  `json:"size"`
 	UpdatedAt    int64  `json:"updatedAt"`
+}
+
+// DeletedAsset — mirrors shared/ipc.ts DeletedAsset. The meta file it is
+// read from (.zn-deleted.json) is shared with the desktop app: a vault can be
+// served remotely today and opened locally tomorrow, so the field set must
+// stay byte-compatible with desktop vault.ts.
+type DeletedAsset struct {
+	Path      string `json:"path"`
+	Name      string `json:"name"`
+	UndoToken string `json:"undoToken"`
+	DeletedAt string `json:"deletedAt,omitempty"`
 }
 
 // ImportedAsset — mirrors shared/ipc.ts ImportedAsset.

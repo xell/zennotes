@@ -52,7 +52,11 @@ import {
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { isImeComposing } from '../lib/ime'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
-import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
+import {
+  listIndentGuides as listIndentGuidesExt,
+  listIndentWidth,
+  markdownListIndentPlugin
+} from '../lib/cm-markdown-list-indent'
 import { vimImeControl } from '../lib/cm-vim-ime'
 import { forwardOnCheckboxArrow } from '../lib/cm-forward-task'
 import { hopMarkerBackward, hopMarkerForward } from '../lib/cm-marker-hop'
@@ -839,6 +843,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const editorFontSize = useStore((s) => s.editorFontSize)
   const editorLineHeight = useStore((s) => s.editorLineHeight)
   const editorTabSizeValue = useStore((s) => s.editorTabSize)
+  const listIndentGuidesOn = useStore((s) => s.listIndentGuides)
   const editorScrollOff = useStore((s) => s.editorScrollOff)
   const lineNumberMode = useStore((s) => s.lineNumberMode)
   const textFont = useStore((s) => s.textFont)
@@ -865,14 +870,16 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const modesByPath = useStore((s) => s.paneModes[paneId]) ?? EMPTY_PANE_MODES
   const setPaneModeForPath = useStore((s) => s.setPaneModeForPath)
   const keepViewModeAcrossNotes = useStore((s) => s.keepViewModeAcrossNotes)
+  const defaultPaneMode = useStore((s) => s.defaultPaneMode)
   const paneStickyMode = useStore((s) => s.paneStickyModes[paneId])
   // With "keep view mode across notes" on, every note in this pane follows the
   // pane's current mode instead of its own remembered one (falls back to the
-  // per-note mode until a mode has been picked in this pane).
+  // per-note mode until a mode has been picked in this pane). A note with no
+  // remembered mode opens in the Default view mode preference. (#543)
   const mode =
     keepViewModeAcrossNotes && paneStickyMode
       ? paneStickyMode
-      : paneModeForPath(modesByPath, activeTab)
+      : paneModeForPath(modesByPath, activeTab, defaultPaneMode)
   const [connectionsOpen, setConnectionsOpen] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
   const [activeOutlineLine, setActiveOutlineLine] = useState<number | null>(null)
@@ -939,6 +946,10 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   // lets us tell our own restore scroll apart from a user scroll, so we never
   // yank a reader who scrolled during the render window.
   const previewRestoreTargetRef = useRef<{ path: string; top: number } | null>(null)
+  // Set when the user switches Edit/Split → Preview: the reading view opens on
+  // the line the cursor was on, instead of the top of the note. Applied (and
+  // cleared) once the preview has rendered blocks to anchor against. (#543)
+  const pendingPreviewCursorLineRef = useRef<{ path: string; line: number } | null>(null)
   const lastProgrammaticPreviewTopRef = useRef<number | null>(null)
   const lastRestoredPathRef = useRef<string | null>(null)
   const vimCompartmentRef = useRef<Compartment | null>(null)
@@ -1085,6 +1096,22 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       // which resets the compartment and re-collapses all expanded sections.
       setDiffRefreshKey((k) => k + 1)
       return
+    }
+    // Capture the cursor's line NOW, while the editor is still mounted:
+    // preview-only mode tears the editor down, and "continue reading where I
+    // was editing" needs this anchor to land the preview there. (#543)
+    const view = viewRef.current
+    if (
+      nextMode === 'preview' &&
+      modeRef.current !== 'preview' &&
+      activeTab &&
+      view &&
+      viewPathRef.current === activeTab
+    ) {
+      pendingPreviewCursorLineRef.current = {
+        path: activeTab,
+        line: view.state.doc.lineAt(view.state.selection.main.head).number
+      }
     }
     setPaneModeForPath(paneId, activeTab, nextMode)
     setActivePane(paneId)
@@ -1335,6 +1362,31 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     })
   }, [lockOutlinePreviewSync, mode, scrollPreviewToOutlineLine])
 
+  // Scroll the preview so the rendered block for `line` sits near the top:
+  // the nearest data-source-line block at or above the line, like the split
+  // sync's anchor walk, but from a bare line number (no live editor needed).
+  const scrollPreviewToSourceLine = useCallback((line: number): boolean => {
+    const previewEl = previewScrollRef.current
+    if (!previewEl) return false
+    const blocks = previewEl.querySelectorAll<HTMLElement>('[data-source-line]')
+    if (blocks.length === 0) return false
+    let anchor: HTMLElement | null = null
+    for (const el of blocks) {
+      const ln = Number(el.dataset.sourceLine)
+      if (Number.isFinite(ln) && ln <= line) {
+        anchor = el
+      } else if (ln > line) {
+        break
+      }
+    }
+    const nextTop = anchor
+      ? scrollTopForElementRelativeTop(previewEl, anchor, OUTLINE_JUMP_TOP_MARGIN)
+      : 0
+    previewEl.scrollTop = nextTop
+    lastProgrammaticPreviewTopRef.current = previewEl.scrollTop
+    return true
+  }, [])
+
   const handlePreviewRendered = useCallback((): void => {
     if (previewIsStaleRef.current) return
     const pendingLine = pendingPreviewOutlineJumpLineRef.current
@@ -1343,6 +1395,17 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
         pendingPreviewOutlineJumpLineRef.current = null
       }
       return
+    }
+    // A mode switch out of editing carries the cursor's line into the
+    // reading view; the live editing position outranks a remembered
+    // preview offset from an earlier visit. (#543)
+    const cursorTarget = pendingPreviewCursorLineRef.current
+    if (cursorTarget && cursorTarget.path === content?.path) {
+      if (scrollPreviewToSourceLine(cursorTarget.line)) {
+        pendingPreviewCursorLineRef.current = null
+        previewRestoreTargetRef.current = null
+        return
+      }
     }
     // Re-apply a remembered scroll now that the preview has reached full
     // height — async diagrams grow the page after first paint, which would
@@ -1366,7 +1429,8 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     content?.path,
     mode,
     syncPreviewToEditorScroll,
-    scrollPreviewToOutlineLine
+    scrollPreviewToOutlineLine,
+    scrollPreviewToSourceLine
   ])
 
   useEffect(() => {
@@ -1753,7 +1817,11 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
           drawSelectionCompartment.of(
             drawSelection({ cursorBlinkRate: s0.cursorBlink ? 1200 : 0 })
           ),
-          tabSizeCompartment.of(editorTabSize(s0.editorTabSize)),
+          tabSizeCompartment.of([
+            editorTabSize(s0.editorTabSize),
+            listIndentWidth(s0.editorTabSize),
+            listIndentGuidesExt(s0.listIndentGuides)
+          ]),
           highlightActiveLine(),
           taskJumpHighlightField,
           yankHighlightExtension,
@@ -2294,8 +2362,14 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     const view = viewRef.current
     const comp = tabSizeCompartmentRef.current
     if (!view || !comp) return
-    view.dispatch({ effects: comp.reconfigure(editorTabSize(editorTabSizeValue)) })
-  }, [editorTabSizeValue])
+    view.dispatch({
+      effects: comp.reconfigure([
+        editorTabSize(editorTabSizeValue),
+        listIndentWidth(editorTabSizeValue),
+        listIndentGuidesExt(listIndentGuidesOn)
+      ])
+    })
+  }, [editorTabSizeValue, listIndentGuidesOn])
 
   // Re-measure CM on prefs that change line geometry.
   useEffect(() => {

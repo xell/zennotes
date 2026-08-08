@@ -206,6 +206,9 @@ when the folder is \`Linear Algebra/\`), synonyms, and feeling tags
 - Before rename_note, run backlinks.
 - Task ids from list_tasks (\`path#index\`) are stable \u2014 pass
   them to toggle_task.
+- list_tasks omits notes opted out of Tasks (frontmatter
+  \`tasks: false\`/\`note\`, excluded folders). Pass
+  includeExcluded: true only when the user asks for everything.
 
 ## Self-check before every write
 

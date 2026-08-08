@@ -108,7 +108,23 @@ export function formTitleFromCsvPath(csvPath: string): string {
   return dir ? formTitleFromDir(dir) : csvPath
 }
 
-export type FieldType = 'text' | 'number' | 'checkbox' | 'date' | 'select' | 'multiSelect'
+/**
+ * `note` / `noteMulti` cells store `[[wikilink]]` targets — `[[A]]`, or
+ * `[[A]] [[B]]` space-joined for multi (bracket-delimited, so titles with
+ * commas survive where multiSelect's comma-joined encoding cannot). Older
+ * builds neither validate nor migrate unknown types: they render such cells
+ * as plain text and round-trip the schema untouched, which is the intended
+ * degradation. (#500)
+ */
+export type FieldType =
+  | 'text'
+  | 'number'
+  | 'checkbox'
+  | 'date'
+  | 'select'
+  | 'multiSelect'
+  | 'note'
+  | 'noteMulti'
 
 export interface SelectOption {
   id: string
@@ -120,6 +136,18 @@ export interface SelectOption {
   color?: string
 }
 
+/**
+ * Where a select / multiSelect field discovers pickable values beyond its
+ * hand-added options: every note, a folder subtree (vault-relative path
+ * prefix), or a #tag. Discovery is a picker convenience only — a picked note
+ * still commits as a plain option through the normal path, so boards,
+ * filters, and older builds see ordinary select values. Absent = manual. (#500)
+ */
+export type SelectOptionsSource =
+  | { kind: 'notes' }
+  | { kind: 'folder'; path: string }
+  | { kind: 'tag'; tag: string }
+
 export interface DbField {
   /** Stable uuid referenced by rows/views — NOT the CSV header. */
   id: string
@@ -128,6 +156,8 @@ export interface DbField {
   type: FieldType
   /** For `select` / `multiSelect`. */
   options?: SelectOption[]
+  /** For `select` / `multiSelect`: auto-discover options from notes. */
+  optionsSource?: SelectOptionsSource
   /** Table column width in px. */
   width?: number
   /** Hidden in the Table view by default (e.g. the id field). */

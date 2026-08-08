@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { EditorView } from '@codemirror/view'
 import { DEFAULT_VAULT_SETTINGS } from '@shared/ipc'
 import { resolveFolderPath } from '@shared/system-folder-paths'
+import { normalizeTasksExcludedFolder } from '@shared/tasks-excluded-folders'
 import type {
   AssetMeta,
   DateNotePatternSettings,
@@ -83,7 +84,10 @@ import {
   assetTabPath,
   withAssetTabRewrite
 } from './lib/asset-tabs'
-import { invalidateExcalidrawPreview } from './lib/excalidraw-preview'
+import {
+  invalidateAllExcalidrawPreviews,
+  invalidateExcalidrawPreview
+} from './lib/excalidraw-preview'
 import {
   FENCE_RE,
   TASK_LINE_RE,
@@ -170,6 +174,7 @@ import {
   rewriteFolderIconsForRename,
   vaultRelativeFolderPath
 } from './lib/vault-layout'
+import { releaseSelfKeyedSurfaceFocus } from './lib/self-keyed-surfaces'
 import { renderTemplate, renderTitle } from './lib/template-render'
 import type { NoteTemplate } from '@bridge-contract/templates'
 import type { WorkflowRunReceipt, WorkflowUndoResult } from '@bridge-contract/workflows'
@@ -212,7 +217,12 @@ import {
   type PaneLayout,
   type PaneLeaf
 } from './lib/pane-layout'
-import { paneModesWithPathMode, type PaneMode, type PaneModesByPath } from './lib/pane-mode'
+import {
+  isPaneMode,
+  paneModesWithPathMode,
+  type PaneMode,
+  type PaneModesByPath
+} from './lib/pane-mode'
 import {
   normalizeTextReplacements,
   type TextReplacements
@@ -393,6 +403,28 @@ function refreshNotesCoalesced(): Promise<void> {
     }
   })()
   return coalescedNotesRefreshInFlight
+}
+
+/** A note the user just created is for typing: with the Default view mode
+ *  preference set to Preview, the fallback would open it read-only with no
+ *  editor mounted, breaking the create-then-type flow (#543 follow-up).
+ *  Remembering 'edit' for the new path wins over the fallback; a later
+ *  explicit mode switch still overwrites it. Written straight into
+ *  paneModes (not via setPaneModeForPath) so the pane's sticky mode is
+ *  untouched, and skipped entirely when the default is already 'edit'. */
+function rememberEditModeForCreatedNote(path: string): void {
+  const s = useStore.getState()
+  if (s.defaultPaneMode === 'edit') return
+  useStore.setState((cur) => ({
+    paneModes: {
+      ...cur.paneModes,
+      [cur.activePaneId]: paneModesWithPathMode(
+        cur.paneModes[cur.activePaneId] ?? {},
+        path,
+        'edit'
+      )
+    }
+  }))
 }
 
 async function refreshVaultIndexes(): Promise<void> {
@@ -590,6 +622,8 @@ interface Prefs {
   hideActiveLineMarkup: boolean
   /** Show an H1 through H6 badge before Markdown headings in the editor. */
   showHeadingLevelLabels: boolean
+  /** Vertical guide lines at each nested-list level in the editor (#491). */
+  listIndentGuides: boolean
   /** How a completed task's text is styled (strike / gray / both / none) in the
    *  editor and preview. Applied via `html[data-completed-task-style]`. */
   completedTaskStyle: CompletedTaskStyle
@@ -605,6 +639,9 @@ interface Prefs {
   /** Keep the current view mode (Edit / Split / Preview) when switching notes
    *  instead of resolving each note's own last mode. Off = per-note (default). */
   keepViewModeAcrossNotes: boolean
+  /** The mode a note opens in before the user has picked one for it: Edit
+   *  (default), Split, or Preview for read-first workflows. (#543) */
+  defaultPaneMode: PaneMode
   /** Renaming a note also rewrites its leading `# Heading` to the new title,
    *  so the title line stops drifting from the filename. Never adds a heading
    *  to a note that has none. (#455) */
@@ -1075,11 +1112,13 @@ export const DEFAULT_PREFS: Prefs = {
   renderTablesInLivePreview: 'rich',
   hideActiveLineMarkup: false,
   showHeadingLevelLabels: false,
+  listIndentGuides: true,
   completedTaskStyle: 'none',
   mathRenderer: 'katex',
   typstTagPreambles: false,
   looseMathDelimiters: false,
   keepViewModeAcrossNotes: false,
+  defaultPaneMode: 'edit',
   syncTitleHeadingOnRename: true,
   markdownSnippets: true,
   textReplacementsEnabled: true,
@@ -1243,6 +1282,10 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
       typeof p.showHeadingLevelLabels === 'boolean'
         ? p.showHeadingLevelLabels
         : DEFAULT_PREFS.showHeadingLevelLabels,
+    listIndentGuides:
+      typeof p.listIndentGuides === 'boolean'
+        ? p.listIndentGuides
+        : DEFAULT_PREFS.listIndentGuides,
     renderTablesInLivePreview: isTableRenderMode(p.renderTablesInLivePreview)
       ? p.renderTablesInLivePreview
       : // Migrate the old boolean: true → the rich widget, false → plain markdown.
@@ -1278,6 +1321,7 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
       typeof p.keepViewModeAcrossNotes === 'boolean'
         ? p.keepViewModeAcrossNotes
         : DEFAULT_PREFS.keepViewModeAcrossNotes,
+    defaultPaneMode: isPaneMode(p.defaultPaneMode) ? p.defaultPaneMode : DEFAULT_PREFS.defaultPaneMode,
     syncTitleHeadingOnRename:
       typeof p.syncTitleHeadingOnRename === 'boolean'
         ? p.syncTitleHeadingOnRename
@@ -2470,11 +2514,13 @@ function collectPrefs(s: {
   renderTablesInLivePreview: TableRenderMode
   hideActiveLineMarkup: boolean
   showHeadingLevelLabels: boolean
+  listIndentGuides: boolean
   completedTaskStyle: CompletedTaskStyle
   mathRenderer: MathRenderer
   typstTagPreambles: boolean
   looseMathDelimiters: boolean
   keepViewModeAcrossNotes: boolean
+  defaultPaneMode: PaneMode
   syncTitleHeadingOnRename: boolean
   markdownSnippets: boolean
   textReplacementsEnabled: boolean
@@ -2577,6 +2623,7 @@ function collectPrefs(s: {
     imeEnglishLayoutId: s.imeEnglishLayoutId,
     livePreview: s.livePreview,
     showHeadingLevelLabels: s.showHeadingLevelLabels,
+    listIndentGuides: s.listIndentGuides,
     renderTablesInLivePreview: s.renderTablesInLivePreview,
     hideActiveLineMarkup: s.hideActiveLineMarkup,
     completedTaskStyle: s.completedTaskStyle,
@@ -2584,6 +2631,7 @@ function collectPrefs(s: {
     typstTagPreambles: s.typstTagPreambles,
     looseMathDelimiters: s.looseMathDelimiters,
     keepViewModeAcrossNotes: s.keepViewModeAcrossNotes,
+    defaultPaneMode: s.defaultPaneMode,
     syncTitleHeadingOnRename: s.syncTitleHeadingOnRename,
     markdownSnippets: s.markdownSnippets,
     textReplacementsEnabled: s.textReplacementsEnabled,
@@ -3079,11 +3127,14 @@ interface Store {
   /** Hide Markdown markup on the caret's line in live preview. Persisted. */
   hideActiveLineMarkup: boolean
   showHeadingLevelLabels: boolean
+  listIndentGuides: boolean
   completedTaskStyle: CompletedTaskStyle
   mathRenderer: MathRenderer
   typstTagPreambles: boolean
   looseMathDelimiters: boolean
   keepViewModeAcrossNotes: boolean
+  /** The mode a note opens in before it has a remembered one. Persisted. (#543) */
+  defaultPaneMode: PaneMode
   /** Renaming a note rewrites its leading `# Heading` to match. Persisted. (#455) */
   syncTitleHeadingOnRename: boolean
   /** Auto-close markdown delimiters while typing. Persisted. */
@@ -3429,6 +3480,13 @@ interface Store {
    *  this is a plain array move, not the tree's manual-order sidecar/resolver).
    *  Moves `draggedKey` to just before `beforeKey`, or to the end when null. */
   reorderFavorite: (draggedKey: string, beforeKey: string | null) => Promise<void>
+  /**
+   * Toggle a folder on the vault's `tasks.excludedFolders` list (#458) and
+   * rescan, so its checkboxes leave (or rejoin) every Tasks surface at once.
+   * `relDir` is the folder's vault-relative on-disk path
+   * (`vaultRelativeFolderPath` output, e.g. `inbox/Books`).
+   */
+  toggleTasksExcludedFolder: (relDir: string) => Promise<void>
   setNotes: (notes: NoteMeta[]) => void
   setView: (view: View) => void
   /** Open the Tasks panel as a tab in the active pane. If the tab is
@@ -3686,11 +3744,13 @@ interface Store {
   setRenderTablesInLivePreview: (mode: TableRenderMode) => void
   setHideActiveLineMarkup: (on: boolean) => void
   setShowHeadingLevelLabels: (on: boolean) => void
+  setListIndentGuides: (on: boolean) => void
   setCompletedTaskStyle: (style: CompletedTaskStyle) => void
   setMathRenderer: (renderer: MathRenderer) => void
   setTypstTagPreambles: (on: boolean) => void
   setLooseMathDelimiters: (on: boolean) => void
   setKeepViewModeAcrossNotes: (on: boolean) => void
+  setDefaultPaneMode: (mode: PaneMode) => void
   setSyncTitleHeadingOnRename: (on: boolean) => void
   setMarkdownSnippets: (on: boolean) => void
   setTextReplacementsEnabled: (on: boolean) => void
@@ -5009,6 +5069,7 @@ export const useStore = create<Store>((set, get) => {
   imeEnglishLayoutId: loadPrefs().imeEnglishLayoutId,
   livePreview: loadPrefs().livePreview,
   showHeadingLevelLabels: loadPrefs().showHeadingLevelLabels,
+  listIndentGuides: loadPrefs().listIndentGuides,
   renderTablesInLivePreview: loadPrefs().renderTablesInLivePreview,
   hideActiveLineMarkup: loadPrefs().hideActiveLineMarkup,
   completedTaskStyle: loadPrefs().completedTaskStyle,
@@ -5016,6 +5077,7 @@ export const useStore = create<Store>((set, get) => {
   typstTagPreambles: loadPrefs().typstTagPreambles,
   looseMathDelimiters: loadPrefs().looseMathDelimiters,
   keepViewModeAcrossNotes: loadPrefs().keepViewModeAcrossNotes,
+  defaultPaneMode: loadPrefs().defaultPaneMode,
   syncTitleHeadingOnRename: loadPrefs().syncTitleHeadingOnRename,
   markdownSnippets: loadPrefs().markdownSnippets,
   textReplacementsEnabled: loadPrefs().textReplacementsEnabled,
@@ -5201,6 +5263,22 @@ export const useStore = create<Store>((set, get) => {
       applyManualPlace(get().vaultSettings.favorites, draggedKey, beforeKey)
     )
   },
+  toggleTasksExcludedFolder: async (relDir) => {
+    const cleaned = normalizeTasksExcludedFolder(relDir)
+    if (!cleaned) return
+    const settings = get().vaultSettings
+    const current = settings.tasks?.excludedFolders ?? []
+    const next = current.includes(cleaned)
+      ? current.filter((f) => f !== cleaned)
+      : [...current, cleaned]
+    await get().setVaultSettings({
+      ...settings,
+      tasks: next.length > 0 ? { excludedFolders: next } : undefined
+    })
+    // Rescan immediately: the Tasks view, boards, and calendars should reflect
+    // the exclusion without waiting for the next natural refresh.
+    await get().refreshTasks()
+  },
   toggleFavoriteActiveNote: async () => {
     const path = get().activeNote?.path ?? get().selectedPath
     if (!path) return
@@ -5350,10 +5428,16 @@ export const useStore = create<Store>((set, get) => {
   },
 
   openAssetsView: async () => {
-    const state = get()
     // Refresh both: assets for the list, notes for fresh assetEmbeds (usage).
     await Promise.all([get().refreshAssets(), get().refreshNotes()])
-    await get().openNoteInPane(state.activePaneId, ASSETS_VIEW_TAB_PATH)
+    // The pane id must be read AFTER the refreshes. With no tabs open,
+    // refreshNotes prunes the empty leaf and mints a replacement with a new
+    // id (rewritePathsInTree returns makeLeaf() for a tree that pruned to
+    // nothing), so an id snapshotted before the await names a pane that no
+    // longer exists and openNoteInPane silently no-ops: clicking Assets on
+    // the home screen did nothing. The sibling view openers have no await
+    // between reading the id and using it.
+    await get().openNoteInPane(get().activePaneId, ASSETS_VIEW_TAB_PATH)
     ;(document.activeElement as HTMLElement | null)?.blur?.()
     set({ focusedPanel: 'editor' })
   },
@@ -5446,6 +5530,7 @@ export const useStore = create<Store>((set, get) => {
       : resolveCreateLocation(settings.tasksLocation, s.activeNote, settings)
     try {
       const meta = await window.zen.createNote(folder, title, subpath)
+      rememberEditModeForCreatedNote(meta.path)
       // Overwrite the default `# title` body with the TaskNotes-style frontmatter
       // so the note is recognized as a task and shows up in the Tasks view.
       await window.zen.writeNote(
@@ -6774,6 +6859,107 @@ export const useStore = create<Store>((set, get) => {
       scheduleManualOrderReload()
       return
     }
+    // The live feed's unlink handling, shared with the resync path below:
+    // a deleted note's tab closes wherever it is open.
+    const closeUnlinkedNote = (notePath: string): void => {
+      set((s) => {
+        const nextLayout = rewritePathsInTree(s.paneLayout, (p) =>
+          p === notePath ? null : p
+        )
+        const ensured = ensureActivePane(nextLayout, s.activePaneId)
+        const { [notePath]: _drop, ...contents } = s.noteContents
+        const { [notePath]: _d, ...dirty } = s.noteDirty
+        void _drop
+        void _d
+        return {
+          paneLayout: ensured.layout,
+          activePaneId: ensured.activePaneId,
+          noteContents: contents,
+          noteDirty: dirty,
+          pinnedRefPath: s.pinnedRefPath === notePath ? null : s.pinnedRefPath,
+          ...activeFieldsFrom(ensured.layout, ensured.activePaneId, contents, dirty)
+        }
+      })
+    }
+    if (ev.scope === 'resync') {
+      // The change feed was interrupted and events were lost; re-pull every
+      // surface the feed keeps fresh instead of trusting the resumed stream.
+      await Promise.all([
+        refreshNotesCoalesced(),
+        get().refreshAssets(),
+        window.zen
+          .getVaultSettings()
+          .then((settings) => {
+            const normalized = normalizeVaultSettings(settings)
+            set({
+              vaultSettings: normalized,
+              ...(get().viewSettingsScope === 'vault' ? viewPrefsFromVault(normalized) : {})
+            })
+          })
+          .catch((err) => {
+            console.error('resync vault settings failed', err)
+          }),
+        tasksSurfaceVisible(get()) ? get().refreshTasks() : Promise.resolve()
+      ])
+      const stateAfter = get()
+      const openTabs = [...new Set(allLeaves(stateAfter.paneLayout).flatMap((leaf) => leaf.tabs))]
+      // Databases and comment threads have their own feed scopes ('database',
+      // 'comments') whose per-path events the gap swallowed too: re-pull
+      // every loaded database (syncDatabaseFromDisk forgets ones deleted on
+      // the server and refuses to clobber mid-debounce edits) and the
+      // comments of every open note. Any drawing may also have changed;
+      // drop all cached previews so embeds re-render instead of showing the
+      // pre-gap image.
+      invalidateAllExcalidrawPreviews()
+      set({ excalidrawPreviewVersion: get().excalidrawPreviewVersion + 1 })
+      await Promise.all([
+        ...Object.keys(stateAfter.databases).map((csvPath) =>
+          get().syncDatabaseFromDisk(csvPath)
+        ),
+        ...openTabs
+          .filter((p) => stateAfter.noteContents[p])
+          .map(async (p) => {
+            await get().loadNoteComments(p)
+          })
+      ])
+      // Open notes may have changed on the server while the feed was down.
+      // Re-read the clean ones; a dirty buffer holds local edits the user
+      // has not saved, and clobbering those trades a stale view for lost work.
+      const openPaths = openTabs.filter(
+        (p) => stateAfter.noteContents[p] && !stateAfter.noteDirty[p]
+      )
+      await Promise.all(
+        openPaths.map(async (openPath) => {
+          try {
+            const content = await window.zen.readNote(openPath)
+            set((s) => {
+              const existing = s.noteContents[openPath]
+              if (!existing || existing.body === content.body || s.noteDirty[openPath]) return s
+              const contents = { ...s.noteContents, [openPath]: content }
+              const dirty = { ...s.noteDirty, [openPath]: false }
+              return {
+                noteContents: contents,
+                noteDirty: dirty,
+                ...activeFieldsFrom(s.paneLayout, s.activePaneId, contents, dirty)
+              }
+            })
+          } catch {
+            // refreshNotes above deliberately never prunes selectedPath and
+            // refuses a prune that would close every note tab (#384),
+            // deferring real deletions to unlink events that a resync can
+            // never deliver. The fresh note list is the second witness: a
+            // path missing from it that also fails to read was deleted on
+            // the server while the feed was down, so close its tab like the
+            // lost unlink event would have. Dirty buffers never reach this
+            // loop, so unsaved local edits survive.
+            if (!get().notes.some((n) => n.path === openPath)) {
+              closeUnlinkedNote(openPath)
+            }
+          }
+        })
+      )
+      return
+    }
     if (ev.scope === 'comments') {
       await get().loadNoteComments(ev.path)
       return
@@ -6864,24 +7050,7 @@ export const useStore = create<Store>((set, get) => {
     if (!open) return
 
     if (ev.kind === 'unlink') {
-      set((s) => {
-        const nextLayout = rewritePathsInTree(s.paneLayout, (p) =>
-          p === ev.path ? null : p
-        )
-        const ensured = ensureActivePane(nextLayout, s.activePaneId)
-        const { [ev.path]: _drop, ...contents } = s.noteContents
-        const { [ev.path]: _d, ...dirty } = s.noteDirty
-        void _drop
-        void _d
-        return {
-          paneLayout: ensured.layout,
-          activePaneId: ensured.activePaneId,
-          noteContents: contents,
-          noteDirty: dirty,
-          pinnedRefPath: s.pinnedRefPath === ev.path ? null : s.pinnedRefPath,
-          ...activeFieldsFrom(ensured.layout, ensured.activePaneId, contents, dirty)
-        }
-      })
+      closeUnlinkedNote(ev.path)
       return
     }
 
@@ -7118,6 +7287,7 @@ export const useStore = create<Store>((set, get) => {
   createAndOpen: async (folder, subpath = '', options) => {
     try {
       const meta = await window.zen.createNote(folder, options?.title, subpath)
+      rememberEditModeForCreatedNote(meta.path)
       await get().refreshNotes()
       set({
         view: { kind: 'folder', folder, subpath },
@@ -7676,6 +7846,10 @@ export const useStore = create<Store>((set, get) => {
     set({ showHeadingLevelLabels: on })
     savePrefs(collectPrefs(get()))
   },
+  setListIndentGuides: (on) => {
+    set({ listIndentGuides: on })
+    savePrefs(collectPrefs(get()))
+  },
   setRenderTablesInLivePreview: (mode) => {
     set({ renderTablesInLivePreview: mode })
     savePrefs(collectPrefs(get()))
@@ -7704,6 +7878,10 @@ export const useStore = create<Store>((set, get) => {
   },
   setKeepViewModeAcrossNotes: (on) => {
     set({ keepViewModeAcrossNotes: on })
+    savePrefs(collectPrefs(get()))
+  },
+  setDefaultPaneMode: (mode) => {
+    set({ defaultPaneMode: mode })
     savePrefs(collectPrefs(get()))
   },
   setSyncTitleHeadingOnRename: (on) => {
@@ -8253,6 +8431,7 @@ export const useStore = create<Store>((set, get) => {
     const body = template ? renderTemplate(template.body, { title, now: date }).body : ''
     try {
       const meta = await window.zen.createNote('inbox', title, subpath)
+      rememberEditModeForCreatedNote(meta.path)
       if (body) await window.zen.writeNote(meta.path, body)
       await get().refreshNotes()
       return get().notes.find((n) => n.path === meta.path) ?? meta
@@ -8559,6 +8738,7 @@ export const useStore = create<Store>((set, get) => {
       if (!title) title = template.name
       const { body, cursorOffset } = renderTemplate(template.body, { title, now: opts?.date })
       const meta = await window.zen.createNote(folder, title, subpath)
+      rememberEditModeForCreatedNote(meta.path)
       // Write the rendered body before opening so the editor never flashes the
       // default `# Title` scaffold (mirrors importDroppedMarkdownFiles).
       await window.zen.writeNote(meta.path, body)
@@ -8743,7 +8923,15 @@ export const useStore = create<Store>((set, get) => {
     set({ hasCompletedOnboarding: false, settingsOpen: false })
     savePrefs(collectPrefs(get()))
   },
-  setFocusedPanel: (panel) => set({ focusedPanel: panel }),
+  setFocusedPanel: (panel) => {
+    // Handing the keyboard to the sidebar must also take it away from any
+    // self-keyed surface (the database grid keeps every key while it holds
+    // DOM focus). Without this, "Focus Sidebar" painted the vim cursor and
+    // `m` hint on a sidebar row while the grid silently kept the keys, and
+    // pressing `m` on a "selected" folder opened nothing.
+    if (panel === 'sidebar') releaseSelfKeyedSurfaceFocus()
+    set({ focusedPanel: panel })
+  },
   focusSidebar: () => {
     const s = get()
     // Land the cursor on the note being edited. The plain active-view

@@ -19,7 +19,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import type { IPty } from 'node-pty'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { promises as fsp, createReadStream } from 'node:fs'
+import { openAsBlob, promises as fsp, createReadStream } from 'node:fs'
 import { Readable } from 'node:stream'
 import { homedir } from 'node:os'
 import path from 'node:path'
@@ -76,6 +76,7 @@ import {
   importExternalNote,
   importFiles,
   importPastedImage,
+  pastedImageFilename,
   invalidateNoteMetaCache,
   invalidateVaultSettingsCache,
   vaultChangeAffectsSettings,
@@ -2291,6 +2292,18 @@ async function migrateLegacyRemoteWorkspaceSecrets(): Promise<void> {
         lastConnectedAt: null
       }
       nextProfiles = [...nextProfiles, targetProfile].sort((a, b) => a.name.localeCompare(b.name))
+    }
+
+    // After this write the target profile holds the only copy of the
+    // credential (the config's own copy is stripped right below). The config
+    // parser synthesizes the legacy workspace's profile with a fresh random
+    // id on every load and keeps remoteWorkspaceProfileId only when it
+    // matches a profile, so the common legacy case arrives here with a found
+    // profile and a null selection. Leaving the selection null strands the
+    // credential: boot resolves the token through the selected profile and
+    // lands on the reconnect screen asking for a token the user already
+    // saved. Never steal an existing valid selection, though.
+    if (!findRemoteProfileById(nextProfiles, nextProfileId)) {
       nextProfileId = targetProfile.id
     }
 
@@ -2328,10 +2341,30 @@ function stopRemoteWatch(): void {
 
 function startRemoteWatch(client: RemoteServerClient, capabilities: ServerCapabilities): void {
   stopRemoteWatch()
-  if (!capabilities.supportsWatch) return
-  stopRemoteVaultWatch = client.watchVaultChanges((ev) => {
-    windowVaults.sendRemoteVaultChange(ev)
-  })
+  if (!capabilities.supportsWatch) {
+    // A server can run with its watcher disabled (inotify-restricted hosts,
+    // ZENNOTES_DISABLE_WATCHER). Say so once, or "no live updates" has no
+    // trace anywhere.
+    console.warn(
+      `[remote] ${client.baseUrl} reports no watch support; live updates are off for this workspace`
+    )
+    return
+  }
+  stopRemoteVaultWatch = client.watchVaultChanges(
+    (ev) => {
+      windowVaults.sendRemoteVaultChange(ev)
+    },
+    {
+      onReconnect: () => {
+        windowVaults.sendRemoteVaultChange({
+          kind: 'change',
+          path: '',
+          folder: 'inbox',
+          scope: 'resync'
+        })
+      }
+    }
+  )
 }
 
 async function setVaultForWindow(
@@ -2500,7 +2533,7 @@ async function setRemoteWorkspace(
   options: { persist?: boolean; profileId?: string | null; vaultPath?: string | null } = {}
 ): Promise<{ vault: VaultInfo | null; capabilities: ServerCapabilities }> {
   const client = new RemoteServerClient({ baseUrl, authToken })
-  const capabilities = await client.getCapabilities()
+  let capabilities = await client.getCapabilities()
   remoteWorkspaceBootError = null
   let vault = await client.getCurrentVault()
   const preferredVaultPath = options.vaultPath?.trim() || null
@@ -2510,6 +2543,11 @@ async function setRemoteWorkspace(
     vault?.root !== preferredVaultPath
   ) {
     vault = await client.selectVaultPath(preferredVaultPath)
+    // supportsWatch is per-watcher on the server (a root where fsnotify
+    // fails falls back to a no-op watcher), so the snapshot taken before
+    // the selection can be wrong in either direction for the vault we
+    // actually landed on. Re-ask before the watch decision below.
+    capabilities = await client.getCapabilities()
   }
 
   const win = currentIpcWindow() ?? mainWindow
@@ -3016,6 +3054,18 @@ function requireRemoteWorkspaceClient(): RemoteServerClient {
   return remoteWorkspaceClient
 }
 
+/** The delete/duplicate/restore endpoints shipped with server 2.24; against
+ *  an older server the request would just 404. Name the real remedy instead. */
+function requireRemoteAssetOps(action: string): RemoteServerClient {
+  const client = requireRemoteWorkspaceClient()
+  if (!remoteServerCapabilities?.supportsAssetOps) {
+    throw new Error(
+      `${action} needs a newer ZenNotes server. Update the server and reconnect this workspace.`
+    )
+  }
+  return client
+}
+
 /**
  * Enumerate installed font families for the font picker.
  *
@@ -3403,6 +3453,17 @@ function registerIpc(): void {
     const client = requireRemoteWorkspaceClient()
     const vault = await client.selectVaultPath(targetPath)
     currentVault = vault
+    // supportsWatch is per-watcher on the server: selecting a vault swaps
+    // the watcher, and the new root may have watch where the old one did
+    // not (or the reverse). Deciding from the connect-time snapshot left
+    // whole sessions without live updates, or watching a feed that
+    // structurally never emits.
+    try {
+      remoteServerCapabilities = await client.getCapabilities()
+    } catch {
+      // Keep the stale snapshot rather than failing the vault selection;
+      // the watch decision degrades to connect-time behavior.
+    }
     if (remoteServerCapabilities) {
       startRemoteWatch(client, remoteServerCapabilities)
     }
@@ -4128,6 +4189,32 @@ function registerIpc(): void {
     }
   })
 
+  handle(IPC.VAULT_OPEN_ASSET_EXTERNALLY, async (_e, relPath: string) => {
+    try {
+      const rel = String(relPath ?? '').trim()
+      if (!rel) return { ok: false, error: 'Empty path.' }
+      if (isRemoteWorkspaceActive()) {
+        // The asset lives on the server; the OS opener needs local bytes.
+        // Joining the remote vault root onto this machine's filesystem is
+        // exactly the "Failed to open path" the reporter hit. Download into
+        // a fresh temp dir per open (a second open must not clobber a file
+        // the first app still has mapped); the OS owns temp cleanup.
+        const client = requireRemoteWorkspaceClient()
+        const response = await client.fetchAssetResponse(rel)
+        const dir = await fsp.mkdtemp(path.join(app.getPath('temp'), 'zennotes-remote-open-'))
+        const target = path.join(dir, path.basename(rel) || 'attachment')
+        await fsp.writeFile(target, Buffer.from(await response.arrayBuffer()))
+        const error = await shell.openPath(target)
+        return error ? { ok: false, error } : { ok: true }
+      }
+      const v = requireVault()
+      const error = await shell.openPath(absolutePath(v.root, rel))
+      return error ? { ok: false, error } : { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
   handle(IPC.VAULT_FETCH_LINK_METADATA, async (_e, url: string) => {
     return await fetchLinkMetadata(url)
   })
@@ -4145,9 +4232,41 @@ function registerIpc(): void {
 
   handle(
     IPC.VAULT_IMPORT_FILES,
-    async (_e, _notePath: string, sourcePaths: string[]) => {
+    // `notePath` is unused on the local path (this fork's `importFiles` emits a
+    // vault-relative wikilink, so it needs no note anchor) but the remote
+    // workspace upload below does need it.
+    async (_e, notePath: string, sourcePaths: string[]) => {
       if (isRemoteWorkspaceActive()) {
-        throw new Error('Desktop file import is only available for local vaults right now.')
+        // The dropped files live on THIS machine; the vault does not. Hand
+        // each one to the server's upload endpoint. openAsBlob streams the
+        // bytes (the local path streams via fs.copyFile too), so a large
+        // screen recording neither sits fully in main-process memory nor
+        // hits readFile's 2 GiB cap. Failures are collected per file: a
+        // whole-batch rejection after some files already uploaded stranded
+        // those uploads on the server with no markdown inserted for any.
+        const client = requireRemoteWorkspaceClient()
+        const imported = []
+        const failures: string[] = []
+        for (const sourcePath of sourcePaths) {
+          const abs = path.resolve(sourcePath)
+          try {
+            const stat = await fsp.stat(abs)
+            if (!stat.isFile()) continue
+            const blob = await openAsBlob(abs, { type: 'application/octet-stream' })
+            imported.push(await client.uploadAsset(notePath, path.basename(abs), blob))
+          } catch (err) {
+            failures.push(
+              `${path.basename(abs)}: ${err instanceof Error ? err.message : String(err)}`
+            )
+          }
+        }
+        if (imported.length === 0 && failures.length > 0) {
+          throw new Error(`Import failed. ${failures.join('; ')}`)
+        }
+        if (failures.length > 0) {
+          console.warn('[remote] some dropped files failed to import:', failures.join('; '))
+        }
+        return imported
       }
       const v = requireVault()
       return await importFiles(v.root, sourcePaths)
@@ -4156,7 +4275,25 @@ function registerIpc(): void {
 
   handle(IPC.VAULT_IMPORT_PASTED_IMAGE, async (_e, input: PastedImageInput) => {
     if (isRemoteWorkspaceActive()) {
-      throw new Error('Clipboard image paste is only available for local vaults right now.')
+      const client = requireRemoteWorkspaceClient()
+      const bytes =
+        input.data instanceof ArrayBuffer
+          ? new Uint8Array(input.data)
+          : ArrayBuffer.isView(input.data)
+            ? new Uint8Array(input.data.buffer, input.data.byteOffset, input.data.byteLength)
+            : null
+      if (!bytes) throw new Error('Clipboard image data is invalid.')
+      if (bytes.byteLength === 0) throw new Error('Clipboard image is empty.')
+      const filename = pastedImageFilename(input, new Date())
+      const uploaded = await client.uploadAsset('', filename, bytes, input.mimeType)
+      // A paste embeds as a wikilink exactly like the local path does; the
+      // server's markdown is note-relative and meant for drag-drop imports.
+      return {
+        name: uploaded.name,
+        path: uploaded.path,
+        markdown: `![[${uploaded.path}]]`,
+        kind: 'image' as const
+      }
     }
     const v = requireVault()
     return await importPastedImage(v.root, input)
@@ -4164,7 +4301,7 @@ function registerIpc(): void {
 
   handle(IPC.VAULT_RENAME_ASSET, async (_e, relPath: string, nextName: string) => {
     if (isRemoteWorkspaceActive()) {
-      throw new Error('Asset rename is only available for local vaults right now.')
+      return await requireRemoteWorkspaceClient().renameAsset(relPath, nextName)
     }
     const v = requireVault()
     return await renameAsset(v.root, relPath, nextName)
@@ -4172,7 +4309,7 @@ function registerIpc(): void {
 
   handle(IPC.VAULT_MOVE_ASSET, async (_e, relPath: string, targetDir: string) => {
     if (isRemoteWorkspaceActive()) {
-      throw new Error('Asset move is only available for local vaults right now.')
+      return await requireRemoteWorkspaceClient().moveAsset(relPath, targetDir)
     }
     const v = requireVault()
     return await moveAsset(v.root, relPath, targetDir)
@@ -4180,7 +4317,7 @@ function registerIpc(): void {
 
   handle(IPC.VAULT_DUPLICATE_ASSET, async (_e, relPath: string) => {
     if (isRemoteWorkspaceActive()) {
-      throw new Error('Asset duplication is only available for local vaults right now.')
+      return await requireRemoteAssetOps('Asset duplication').duplicateAsset(relPath)
     }
     const v = requireVault()
     return await duplicateAsset(v.root, relPath)
@@ -4188,7 +4325,7 @@ function registerIpc(): void {
 
   handle(IPC.VAULT_DELETE_ASSET, async (_e, relPath: string) => {
     if (isRemoteWorkspaceActive()) {
-      throw new Error('Asset deletion is only available for local vaults right now.')
+      return await requireRemoteAssetOps('Asset deletion').deleteAsset(relPath)
     }
     const v = requireVault()
     return await deleteAsset(v.root, relPath)
@@ -4196,21 +4333,27 @@ function registerIpc(): void {
 
   handle(IPC.VAULT_RESTORE_DELETED_ASSET, async (_e, deleted: DeletedAsset) => {
     if (isRemoteWorkspaceActive()) {
-      throw new Error('Asset restore is only available for local vaults right now.')
+      return await requireRemoteAssetOps('Asset restore').restoreDeletedAsset(deleted)
     }
     const v = requireVault()
     return await restoreDeletedAsset(v.root, deleted)
   })
 
   handle(IPC.VAULT_LIST_DELETED_ASSETS, async () => {
-    if (isRemoteWorkspaceActive()) return []
+    if (isRemoteWorkspaceActive()) {
+      // Older servers have no deleted-assets store; an empty Trash view is
+      // the truthful answer there, not an error.
+      if (!remoteServerCapabilities?.supportsAssetOps) return []
+      return await requireRemoteWorkspaceClient().listDeletedAssets()
+    }
     const v = requireVault()
     return await listDeletedAssets(v.root)
   })
 
   handle(IPC.VAULT_PURGE_DELETED_ASSET, async (_e, undoToken: string) => {
     if (isRemoteWorkspaceActive()) {
-      throw new Error('Asset deletion is only available for local vaults right now.')
+      await requireRemoteAssetOps('Asset deletion').purgeDeletedAsset(undoToken)
+      return
     }
     const v = requireVault()
     await purgeDeletedAsset(v.root, undoToken)
@@ -4218,7 +4361,8 @@ function registerIpc(): void {
 
   handle(IPC.VAULT_EMPTY_DELETED_ASSETS, async () => {
     if (isRemoteWorkspaceActive()) {
-      throw new Error('Asset deletion is only available for local vaults right now.')
+      await requireRemoteAssetOps('Asset deletion').emptyDeletedAssets()
+      return
     }
     const v = requireVault()
     await emptyDeletedAssets(v.root)

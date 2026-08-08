@@ -52,6 +52,7 @@ import {
 } from '@shared/ipc'
 import { DEMO_TOUR_DIR } from '@shared/demo-tour'
 import { FRONTMATTER_BLOCK_RE, frontmatterTags } from '@shared/frontmatter'
+import { IMAGE_FILE_EXTENSIONS, pastedImageFilename } from '@shared/pasted-image'
 import {
   DATABASE_SIDECAR_SUFFIX,
   databaseCsvPathFor,
@@ -78,6 +79,7 @@ import {
   systemFolderForDirName,
   type SystemFolderPaths
 } from '@shared/system-folder-paths'
+import { normalizeTasksExcludedFolders } from '@shared/tasks-excluded-folders'
 
 const CONFIG_FILE = 'zennotes.config.json'
 const FOLDERS: NoteFolder[] = ['inbox', 'quick', 'archive', 'trash']
@@ -109,26 +111,7 @@ const RESERVED_NON_SYSTEM_ROOT_NAMES = new Set<string>([
   ...ATTACHMENTS_DIRS,
   INTERNAL_VAULT_DIR
 ])
-const IMAGE_EXTENSIONS = new Set([
-  '.apng',
-  '.avif',
-  '.gif',
-  '.jpeg',
-  '.jpg',
-  '.png',
-  '.svg',
-  '.webp'
-])
-const PASTED_IMAGE_MIME_EXTENSIONS: Record<string, string> = {
-  'image/apng': '.apng',
-  'image/avif': '.avif',
-  'image/gif': '.gif',
-  'image/jpeg': '.jpg',
-  'image/jpg': '.jpg',
-  'image/png': '.png',
-  'image/svg+xml': '.svg',
-  'image/webp': '.webp'
-}
+const IMAGE_EXTENSIONS = IMAGE_FILE_EXTENSIONS
 const PDF_EXTENSIONS = new Set(['.pdf'])
 const AUDIO_EXTENSIONS = new Set(['.aac', '.flac', '.m4a', '.mp3', '.ogg', '.wav'])
 const VIDEO_EXTENSIONS = new Set(['.m4v', '.mov', '.mp4', '.ogv', '.webm'])
@@ -1131,6 +1114,7 @@ function normalizeVaultSettings(
     favorites?: unknown
     view?: unknown
     systemFolderPaths?: unknown
+    tasks?: unknown
   }
   const folderIcons: Record<string, FolderIconId> = {}
   if (candidate.folderIcons && typeof candidate.folderIcons === 'object') {
@@ -1185,8 +1169,20 @@ function normalizeVaultSettings(
     folderColors: normalizeFolderColors(candidate.folderColors),
     favorites: normalizeFavorites(candidate.favorites),
     view: normalizeVaultViewSettings(candidate.view),
-    systemFolderPaths: normalizeSystemFolderPaths(candidate.systemFolderPaths)
+    systemFolderPaths: normalizeSystemFolderPaths(candidate.systemFolderPaths),
+    tasks: normalizeTasksSettings(candidate.tasks)
   }
+}
+
+/** Carry the Tasks-system settings (#458) through the round-trip: a validated
+ *  excludedFolders list, or undefined when nothing survives so vault.json
+ *  stays free of empty stubs. */
+function normalizeTasksSettings(raw: unknown): VaultSettings['tasks'] | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const excluded = normalizeTasksExcludedFolders(
+    (raw as { excludedFolders?: unknown }).excludedFolders
+  )
+  return excluded.length > 0 ? { excludedFolders: excluded } : undefined
 }
 
 /** Carry the per-vault view overrides (#292) through the round-trip, keeping
@@ -3398,47 +3394,22 @@ function cleanDeletedAssetToken(token: string): string {
   return token
 }
 
-function padPastedImageDatePart(value: number): string {
-  return String(value).padStart(2, '0')
+function markdownForImportedAsset(
+  relativeFromNote: string,
+  filename: string,
+  kind: ImportedAssetKind
+): string {
+  const destination = markdownDestination(relativeFromNote)
+  if (kind === 'image') {
+    return `![${path.basename(filename, path.extname(filename))}](${destination})`
+  }
+  return `[${filename}](${destination})`
 }
 
-function pastedImageTimestamp(now: Date): string {
-  const date = [
-    now.getFullYear(),
-    padPastedImageDatePart(now.getMonth() + 1),
-    padPastedImageDatePart(now.getDate())
-  ].join('-')
-  const time = [
-    padPastedImageDatePart(now.getHours()),
-    padPastedImageDatePart(now.getMinutes()),
-    padPastedImageDatePart(now.getSeconds())
-  ].join('')
-  return `${date} ${time}`
-}
-
-function pastedImageExtension(input: Pick<PastedImageInput, 'mimeType' | 'suggestedName'>): string {
-  const suggestedExt = path.extname(input.suggestedName ?? '').toLowerCase()
-  if (IMAGE_EXTENSIONS.has(suggestedExt)) return suggestedExt
-
-  const mimeExt = PASTED_IMAGE_MIME_EXTENSIONS[input.mimeType.toLowerCase()]
-  if (mimeExt) return mimeExt
-  if (input.mimeType.toLowerCase().startsWith('image/')) return '.png'
-  throw new Error('Clipboard item is not an image.')
-}
-
-function pastedImageFilename(input: Pick<PastedImageInput, 'mimeType' | 'suggestedName'>, now: Date): string {
-  const ext = pastedImageExtension(input)
-  const rawName = path.basename(input.suggestedName ?? '')
-  const nameExt = path.extname(rawName)
-  const rawBase = nameExt ? path.basename(rawName, nameExt) : rawName
-  const base = rawBase
-    .replace(/[\\/:%*?"<>|\[\]#^]/g, '-')
-    .replace(/\s+/g, ' ')
-    .trim()
-  const fallbackBase = `Pasted Image ${pastedImageTimestamp(now)}`
-  const finalBase = base && base !== '.' && base !== '..' ? base : fallbackBase
-  return `${finalBase}${ext}`
-}
+// The naming lives in @shared/pasted-image so the web client produces the
+// same filenames; re-exported for the remote-workspace paste path, which
+// uploads the bytes but must name the file exactly like a local paste would.
+export { pastedImageFilename }
 
 function pastedImageBuffer(data: PastedImageInput['data']): Buffer {
   if (data instanceof ArrayBuffer) return Buffer.from(data)
@@ -3800,14 +3771,23 @@ export async function deleteAsset(root: string, rel: string): Promise<DeletedAss
   await fs.mkdir(trashDir, { recursive: true })
   const name = path.basename(source.abs)
   const deletedAt = new Date().toISOString()
-  await fs.rename(source.abs, path.join(trashDir, name))
   // Persist the original location so the asset can be listed + restored from the
   // Trash view even after a restart (not just via the in-session undo stack).
-  await fs.writeFile(
-    path.join(trashDir, DELETED_ASSET_META),
-    JSON.stringify({ path: source.rel, name, deletedAt }, null, 2),
-    'utf8'
-  )
+  // Metadata first, file move last: a failure anywhere leaves the asset still
+  // in the vault. The old order (rename, then metadata) could hit a write
+  // error after the move and strand the asset in a token dir the Trash view
+  // skips, gone from the vault with no in-app way back.
+  try {
+    await fs.writeFile(
+      path.join(trashDir, DELETED_ASSET_META),
+      JSON.stringify({ path: source.rel, name, deletedAt }, null, 2),
+      'utf8'
+    )
+    await fs.rename(source.abs, path.join(trashDir, name))
+  } catch (err) {
+    await fs.rm(trashDir, { recursive: true, force: true }).catch(() => {})
+    throw err
+  }
   return { path: source.rel, name, undoToken, deletedAt }
 }
 
@@ -3857,10 +3837,27 @@ export async function emptyDeletedAssets(root: string): Promise<void> {
 }
 
 export async function restoreDeletedAsset(root: string, deleted: DeletedAsset): Promise<AssetMeta> {
-  const targetRel = cleanDeletedAssetPath(deleted.path)
-  const name = cleanAssetFilename(deleted.name)
   const undoToken = cleanDeletedAssetToken(deleted.undoToken)
   const trashDir = resolveSafe(root, `${INTERNAL_VAULT_DIR}/${DELETED_ASSETS_DIR}/${undoToken}`)
+  // Only the token comes from the caller; the stored metadata decides what
+  // gets restored and where. Trusting a caller-supplied name here once let a
+  // request naming the metadata file itself "restore" that file and then
+  // destroy the real asset bytes with the trash dir cleanup (the Go server
+  // shared the hole; the two stores are one disk contract).
+  let storedMeta: { path: string; name: string }
+  try {
+    const raw = await fs.readFile(path.join(trashDir, DELETED_ASSET_META), 'utf8')
+    const parsed = JSON.parse(raw) as { path?: unknown; name?: unknown }
+    if (typeof parsed.path !== 'string' || typeof parsed.name !== 'string') throw new Error()
+    storedMeta = { path: parsed.path, name: parsed.name }
+  } catch {
+    throw new Error('This deleted asset can no longer be restored.')
+  }
+  const targetRel = cleanDeletedAssetPath(storedMeta.path)
+  const name = cleanAssetFilename(storedMeta.name)
+  if (name === DELETED_ASSET_META) {
+    throw new Error('This deleted asset can no longer be restored.')
+  }
   const sourceAbs = path.join(trashDir, name)
   const targetAbs = resolveSafe(root, targetRel)
   const targetDir = path.dirname(targetAbs)

@@ -1,5 +1,6 @@
 import type {
   AssetMeta,
+  DeletedAsset,
   DirectoryBrowseResult,
   FolderEntry,
   ImportedAsset,
@@ -269,6 +270,98 @@ export class RemoteServerClient {
     }).then((resp) => resp.subpath)
   }
 
+  async renameAsset(relPath: string, nextName: string): Promise<AssetMeta> {
+    return this.jsonRequest<AssetMeta>('/api/assets/rename', {
+      method: 'POST',
+      body: { path: relPath, name: nextName }
+    })
+  }
+
+  async moveAsset(relPath: string, targetDir: string): Promise<AssetMeta> {
+    return this.jsonRequest<AssetMeta>('/api/assets/move', {
+      method: 'POST',
+      body: { path: relPath, targetDir }
+    })
+  }
+
+  async duplicateAsset(relPath: string): Promise<AssetMeta> {
+    return this.jsonRequest<AssetMeta>('/api/assets/duplicate', {
+      method: 'POST',
+      body: { path: relPath }
+    })
+  }
+
+  async deleteAsset(relPath: string): Promise<DeletedAsset> {
+    return this.jsonRequest<DeletedAsset>('/api/assets/delete', {
+      method: 'POST',
+      body: { path: relPath }
+    })
+  }
+
+  async listDeletedAssets(): Promise<DeletedAsset[]> {
+    return this.jsonRequest<DeletedAsset[]>('/api/assets/deleted')
+  }
+
+  async restoreDeletedAsset(deleted: DeletedAsset): Promise<AssetMeta> {
+    return this.jsonRequest<AssetMeta>('/api/assets/restore', {
+      method: 'POST',
+      body: deleted
+    })
+  }
+
+  async purgeDeletedAsset(undoToken: string): Promise<void> {
+    await this.jsonRequest<void>('/api/assets/purge', {
+      method: 'POST',
+      body: { undoToken }
+    })
+  }
+
+  async emptyDeletedAssets(): Promise<void> {
+    await this.jsonRequest<void>('/api/assets/empty-deleted', { method: 'POST' })
+  }
+
+  /** Multipart, not JSON: the payload is raw file bytes, and the server
+   *  reads a `file` form part plus the owning note's path. A Blob input
+   *  (fs.openAsBlob) streams from disk instead of sitting in memory, which
+   *  is how dropped files of any size reach a remote vault. */
+  async uploadAsset(
+    notePath: string,
+    filename: string,
+    bytes: Uint8Array | Blob,
+    mimeType = 'application/octet-stream'
+  ): Promise<ImportedAsset> {
+    const form = new FormData()
+    form.append('notePath', notePath)
+    // The cast narrows ArrayBufferLike to ArrayBuffer: every byte source
+    // here (structured-clone paste bytes) is plain-buffer backed, which
+    // BlobPart demands but the Uint8Array generic cannot promise.
+    const blob =
+      bytes instanceof Blob ? bytes : new Blob([bytes as Uint8Array<ArrayBuffer>], { type: mimeType })
+    form.append('file', blob, filename)
+    const headers = new Headers()
+    if (this.authToken) {
+      headers.set('Authorization', `Bearer ${this.authToken}`)
+    }
+    let response: Response
+    try {
+      response = await fetch(`${this.baseUrl}/api/assets/upload`, {
+        method: 'POST',
+        headers,
+        body: form
+      })
+    } catch (error) {
+      throw new RemoteConnectionError(connectionErrorMessage(this.baseUrl, error))
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => '')
+      throw new RemoteRequestError(
+        requestErrorMessage(this.baseUrl, '/api/assets/upload', response, text),
+        response.status
+      )
+    }
+    return (await response.json()) as ImportedAsset
+  }
+
   async fetchAssetResponse(assetPath: string): Promise<Response> {
     const headers = new Headers()
     if (this.authToken) {
@@ -287,34 +380,101 @@ export class RemoteServerClient {
     return response
   }
 
-  watchVaultChanges(onEvent: (event: VaultChangeEvent) => void): () => void {
+  watchVaultChanges(
+    onEvent: (event: VaultChangeEvent) => void,
+    options: { onReconnect?: () => void; stableAfterMs?: number } = {}
+  ): () => void {
     const url = new URL('/api/watch', `${this.baseUrl}/`)
     const headers: Record<string, string> = {}
     if (this.authToken) {
       headers['Authorization'] = `Bearer ${this.authToken}`
     }
-    const ws = new WebSocket(url, { headers })
 
-    ws.on('message', (data: WebSocket.RawData) => {
-      const text =
-        typeof data === 'string'
-          ? data
-          : data instanceof ArrayBuffer
-            ? Buffer.from(data).toString('utf8')
-            : Buffer.isBuffer(data)
-              ? data.toString('utf8')
-              : ''
-      if (!text) return
-      try {
-        onEvent(JSON.parse(text) as VaultChangeEvent)
-      } catch {
-        // ignore malformed watcher payloads
-      }
-    })
+    // The subscription must outlive any single socket: a laptop sleep, a
+    // Wi-Fi switch, a server restart, or an idle proxy all kill the
+    // connection without the user doing anything wrong. Every HTTP call
+    // keeps working through such a gap, so a silently dead socket shows up
+    // as "edits from my other device never arrive" — the app looks fine
+    // and is quietly frozen in the past.
+    let ws: WebSocket | null = null
+    let stopped = false
+    let reconnectTimer: NodeJS.Timeout | null = null
+    let stableTimer: NodeJS.Timeout | null = null
+    let failedAttempts = 0
+    // How long a socket must stay up before it counts as a real session.
+    const stableAfterMs = options.stableAfterMs ?? 15_000
+
+    const connect = (): void => {
+      if (stopped) return
+      const socket = new WebSocket(url, { headers })
+      ws = socket
+
+      socket.on('open', () => {
+        // Events that fired while we were down are gone for good; the
+        // caller re-pulls everything instead of trusting the resumed feed.
+        // Only the very first attempt connecting cleanly has no gap.
+        const hadGap = failedAttempts > 0
+        // The failure counter resets only after the socket has stayed up for
+        // a while, not on the handshake: a peer that accepts the upgrade and
+        // immediately drops it (a misconfigured proxy, a crash-looping
+        // server) would otherwise reconnect on a flat 1s delay forever, and
+        // every cycle's onReconnect re-pulls the entire vault.
+        if (stableTimer) clearTimeout(stableTimer)
+        stableTimer = setTimeout(() => {
+          if (!stopped && ws === socket) failedAttempts = 0
+        }, stableAfterMs)
+        if (hadGap) options.onReconnect?.()
+      })
+
+      socket.on('message', (data: WebSocket.RawData) => {
+        const text =
+          typeof data === 'string'
+            ? data
+            : data instanceof ArrayBuffer
+              ? Buffer.from(data).toString('utf8')
+              : Buffer.isBuffer(data)
+                ? data.toString('utf8')
+                : ''
+        if (!text) return
+        try {
+          onEvent(JSON.parse(text) as VaultChangeEvent)
+        } catch {
+          // ignore malformed watcher payloads
+        }
+      })
+
+      // `ws` is an EventEmitter: an 'error' with no listener throws an
+      // uncaught exception in the main process (a server restart raises
+      // ECONNRESET here). The close handler owns recovery.
+      socket.on('error', () => {})
+
+      socket.on('close', () => {
+        if (stopped || ws !== socket) return
+        if (stableTimer) {
+          clearTimeout(stableTimer)
+          stableTimer = null
+        }
+        ws = null
+        const delay = Math.min(30_000, 1_000 * 2 ** failedAttempts)
+        failedAttempts += 1
+        reconnectTimer = setTimeout(connect, delay)
+      })
+    }
+
+    connect()
 
     return () => {
+      stopped = true
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer)
+        reconnectTimer = null
+      }
+      if (stableTimer) {
+        clearTimeout(stableTimer)
+        stableTimer = null
+      }
       try {
-        ws.close()
+        ws?.close()
       } catch {
         // ignore close errors
       }

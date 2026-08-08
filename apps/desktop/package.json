@@ -1,7 +1,7 @@
 {
   "name": "@zennotes/desktop",
   "productName": "ZenNotes",
-  "version": "2.22.1",
+  "version": "2.25.0",
   "description": "ZenNotes desktop shell",
   "private": true,
   "main": "./out/main/index.js",
@@ -286,6 +286,7 @@
         "rpm",
         "tar.gz"
       ],
+      "compression": "normal",
       "icon": "build/icons",
       "maintainer": "Adib Hanna <adibhanna@gmail.com>",
       "category": "Office",
@@ -307,10 +308,15 @@
       ]
     },
     "deb": {
-      "afterInstall": "build/after-install.sh"
+      "afterInstall": "build/after-install.sh",
+      "compression": "xz"
     },
     "rpm": {
-      "afterInstall": "build/after-install.sh"
+      "afterInstall": "build/after-install.sh",
+      "compression": "xz"
+    },
+    "pacman": {
+      "compression": "xz"
     }
   }
 }

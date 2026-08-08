@@ -51,6 +51,14 @@ export class CliRemoteClient {
     return this.get<RemoteVaultInfo | null>('/api/vault')
   }
 
+  /** The layout facts database path composition needs (#556). */
+  getVaultSettings(): Promise<{
+    primaryNotesLocation?: string
+    systemFolderPaths?: Record<string, string> | null
+  }> {
+    return this.get('/api/vault/settings')
+  }
+
   listNotes(): Promise<NoteMeta[]> {
     return this.get<NoteMeta[]>('/api/notes')
   }
@@ -68,12 +76,20 @@ export class CliRemoteClient {
     return this.get<VaultTextSearchMatch[]>(`/api/search/text?${params.toString()}`)
   }
 
-  scanTasks(): Promise<VaultTask[]> {
-    return this.get<VaultTask[]>('/api/tasks')
+  scanTasks(opts?: { includeExcluded?: boolean }): Promise<VaultTask[]> {
+    return this.get<VaultTask[]>(
+      opts?.includeExcluded ? '/api/tasks?includeExcluded=1' : '/api/tasks'
+    )
   }
 
-  scanTasksForPath(relPath: string): Promise<VaultTask[]> {
-    return this.get<VaultTask[]>(`/api/tasks/for?path=${encodeURIComponent(relPath)}`)
+  scanTasksForPath(
+    relPath: string,
+    opts?: { includeExcluded?: boolean }
+  ): Promise<VaultTask[]> {
+    const suffix = opts?.includeExcluded ? '&includeExcluded=1' : ''
+    return this.get<VaultTask[]>(
+      `/api/tasks/for?path=${encodeURIComponent(relPath)}${suffix}`
+    )
   }
 
   /* --- writes --- */

@@ -1,5 +1,5 @@
 import { syntaxTree } from '@codemirror/language'
-import { type Extension, type Range, StateEffect } from '@codemirror/state'
+import { Facet, type Extension, type Range, StateEffect } from '@codemirror/state'
 import type { SyntaxNode } from '@lezer/common'
 import {
   Decoration,
@@ -9,6 +9,65 @@ import {
   type ViewUpdate
 } from '@codemirror/view'
 import { MANAGED_STYLES_CHANGED_EVENT } from './custom-themes'
+import { DEFAULT_EDITOR_TAB_SIZE, normalizeEditorTabSize } from './editor-tab-size'
+
+interface ListIndentConfig {
+  width: number
+  guides: boolean
+}
+
+/**
+ * Config facet, API-compatible with upstream's (#491) so every call site can
+ * stay as upstream wired it. Only `guides` actually drives anything here:
+ * this fork derives the per-level step by MEASURING the rendered marker width
+ * (see measureListIndents), so the indent is font-aware rather than a fixed
+ * number of `ch`. `width` is kept as the pre-measurement fallback.
+ */
+export const listIndentConfig = Facet.define<Partial<ListIndentConfig>, ListIndentConfig>({
+  combine: (values) => ({
+    width: values.find((v) => v.width != null)?.width ?? DEFAULT_EDITOR_TAB_SIZE,
+    guides: values.find((v) => v.guides != null)?.guides ?? true
+  })
+})
+
+/** Provide the guides half of the config. */
+export function listIndentGuides(enabled: boolean): ReturnType<typeof listIndentConfig.of> {
+  return listIndentConfig.of({ guides: enabled })
+}
+
+/** Provide the width half, normalized exactly like the Tab size setting. */
+export function listIndentWidth(value: unknown): ReturnType<typeof listIndentConfig.of> {
+  return listIndentConfig.of({ width: normalizeEditorTabSize(value) })
+}
+
+/**
+ * One vertical rule per ancestor level, at that level's marker column plus a
+ * small inset so it sits under the bullet rather than the left edge. Upstream
+ * positions these in `ch`; here they ride the MEASURED per-level step in px, so
+ * a guide lands exactly on the indent this plugin actually applied (upstream's
+ * ch positions drift from it in a proportional font). Falls back to ch before
+ * the first measurement. Empty at depth 0 — a top-level item has no ancestor.
+ */
+function listGuideStyle(depth: number, stepPx: number | null, widthCh: number): string {
+  if (depth < 1) return ''
+  const images: string[] = []
+  const positions: string[] = []
+  for (let level = 0; level < depth; level++) {
+    images.push(
+      'linear-gradient(to bottom, var(--z-list-guide-color) 0, var(--z-list-guide-color) 100%)'
+    )
+    positions.push(
+      stepPx != null
+        ? `calc(${level * stepPx}px + 0.45ch) 0`
+        : `calc(${level * widthCh}ch + 0.45ch) 0`
+    )
+  }
+  return (
+    `background-image: ${images.join(', ')}; ` +
+    `background-position: ${positions.join(', ')}; ` +
+    'background-size: 1px 100%; background-repeat: no-repeat;'
+  )
+}
 
 // The checkbox part covers every task state (`[ ]`, `[x]`, `[>]`, `[-]`, `[/]`)
 // so Tab/Shift-Tab indents a started or cancelled task like any other. (#512)
@@ -92,6 +151,8 @@ function listDepthAt(view: EditorView, pos: number): number {
 interface ListIndent {
   /** Content column = depth * step + own prefix (px). Drives `padding-left`. */
   content: number
+  /** Per-level step (px), shared by every measured line. Positions the guides. */
+  step: number
   /** Own prefix = marker + gap (px). Drives the negative `text-indent`. */
   marker: number
 }
@@ -136,12 +197,16 @@ function computeDecorations(
       // Fallback before measurement: a 2ch bullet step (exact in monospace).
       const content = px ? `${px.content}px` : `${depth * 2 + prefixCh}ch`
       const marker = px ? `${px.marker}px` : `${prefixCh}ch`
+      const { width, guides } = view.state.facet(listIndentConfig)
+      const guideStyle = guides ? listGuideStyle(depth, px ? px.step : null, width) : ''
 
       ranges.push(
         Decoration.line({
           class: 'cm-markdown-list-line',
           attributes: {
-            style: `--z-list-hanging-indent: ${content}; --z-list-marker-indent: ${marker}`
+            style:
+              `--z-list-hanging-indent: ${content}; --z-list-marker-indent: ${marker}` +
+              (guideStyle ? `; ${guideStyle}` : '')
           }
         }).range(line.from)
       )
@@ -191,7 +256,7 @@ function measureListIndents(view: EditorView): Map<number, ListIndent> {
 
   const out = new Map<number, ListIndent>()
   for (const l of lines) {
-    out.set(l.from, { content: l.depth * stepPx + l.marker, marker: l.marker })
+    out.set(l.from, { content: l.depth * stepPx + l.marker, step: stepPx, marker: l.marker })
   }
   return out
 }
@@ -200,7 +265,7 @@ function sameIndents(a: Map<number, ListIndent>, b: Map<number, ListIndent>): bo
   if (a.size !== b.size) return false
   for (const [k, v] of a) {
     const w = b.get(k)
-    if (!w || w.content !== v.content || w.marker !== v.marker) return false
+    if (!w || w.content !== v.content || w.marker !== v.marker || w.step !== v.step) return false
   }
   return true
 }
@@ -241,7 +306,11 @@ const listIndentViewPlugin = ViewPlugin.fromClass(
         }
         this.measured = remapped
       }
-      if (update.docChanged || update.viewportChanged) {
+      if (
+        update.docChanged ||
+        update.viewportChanged ||
+        update.state.facet(listIndentConfig) !== update.startState.facet(listIndentConfig)
+      ) {
         const built = computeDecorations(update.view, this.measured)
         this.decorations = built.decorations
         this.atomic = built.atomic

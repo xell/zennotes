@@ -134,7 +134,7 @@ const SECTIONS: Array<{ heading: string; rows: CommandRow[] }> = [
   {
     heading: 'TASKS',
     rows: [
-      { name: 'task list', description: 'Open checkbox tasks across all notes', flags: '--unchecked  --all  --tag <t>  --json' },
+      { name: 'task list', description: 'Open checkbox tasks across all notes', flags: '--unchecked  --all  --tag <t>  --include-excluded  --json' },
       { name: 'task toggle <id>', description: 'Flip a task checkbox by stable id' }
     ]
   },
@@ -143,6 +143,17 @@ const SECTIONS: Array<{ heading: string; rows: CommandRow[] }> = [
     rows: [
       { name: 'vault info', description: 'Vault path (or server) + per-folder counts', flags: '--json' },
       { name: 'vault list', description: 'Known vaults and servers; the default is marked with *', flags: '--json' }
+    ]
+  },
+  {
+    heading: 'DATABASES',
+    rows: [
+      { name: 'base list', description: 'Every database in the vault', flags: '--json' },
+      { name: 'base create <title>', description: 'Create an empty database', flags: '--folder <f/sub>  --json' },
+      { name: 'base rows <base>', description: 'List a database’s rows (title or path picks the base)', flags: '--json' },
+      { name: 'base get <base> <row>', description: 'One row by id or title value', flags: '--json' },
+      { name: 'base add <base>', description: 'Add a row; --body (or --body - for stdin) also creates its record page', flags: '--set Field=Value …  --body <text|->  --page  --json' },
+      { name: 'base set <base> <row>', description: 'Set fields; select options mint, the page re-mirrors', flags: '--set Field=Value …  --json' }
     ]
   },
   {

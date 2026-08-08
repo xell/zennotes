@@ -37,7 +37,10 @@ const OPS_FOR_TYPE: Record<FieldType, FilterOp[]> = {
   date: ['is', 'before', 'after', 'isEmpty', 'isNotEmpty'],
   select: ['is', 'isNot', 'isEmpty', 'isNotEmpty'],
   multiSelect: ['is', 'isNot', 'isEmpty', 'isNotEmpty'],
-  checkbox: ['checked', 'unchecked']
+  checkbox: ['checked', 'unchecked'],
+  // Note-link cells hold raw `[[target]]` text; contains is the useful op.
+  note: ['contains', 'notContains', 'isEmpty', 'isNotEmpty'],
+  noteMulti: ['contains', 'notContains', 'isEmpty', 'isNotEmpty']
 }
 
 /** Operators that take no value input. */
@@ -47,7 +50,10 @@ const PANEL_WIDTH = 360
 const CONTROL = 'rounded-md border border-paper-300 bg-paper-50 px-2 py-1 text-xs text-ink-900 outline-none focus:border-accent'
 
 function opsFor(field: DbField | undefined): FilterOp[] {
-  return field ? OPS_FOR_TYPE[field.type] : ['is']
+  // Text ops for a type this build doesn't know (a schema written by a newer
+  // version): the cell renders as text, so the filter should behave the same
+  // instead of throwing on the missing entry.
+  return field ? OPS_FOR_TYPE[field.type] ?? OPS_FOR_TYPE.text : ['is']
 }
 
 /** A value input that adapts to the field type: a dropdown of options for

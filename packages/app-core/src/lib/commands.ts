@@ -11,6 +11,7 @@ import { confirmApp } from './confirm-requests'
 import { promptApp } from './prompt-requests'
 import { buildMoveNotePrompt, parseMoveNoteTarget } from './move-note'
 import { focusLastActivePane, focusPaneInDirection } from './pane-nav'
+import { focusSidebarPanel } from './sidebar-focus'
 import { findLeaf } from './pane-layout'
 import { assetPathFromTab, isAssetTabPath } from './asset-tabs'
 import { classifyLocalAssetHref } from './local-assets'
@@ -1270,7 +1271,15 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       category: 'Go',
       shortcut: shortcut('global.focusSidebar'),
       keywords: 'focus sidebar panel navigate reveal',
-      run: () => getState().focusSidebar()
+      run: () => {
+        const st = getState()
+        if (!st.sidebarOpen) st.toggleSidebar()
+        // Moves DOM focus too (with retries), not just the store panel: the
+        // closing palette restores focus on unmount, and if that lands in a
+        // self-keyed surface (database grid) it re-steals every key while the
+        // sidebar paints its vim cursor. See focusSidebarPanel.
+        focusSidebarPanel()
+      }
     },
     {
       id: 'nav.focus.editor',

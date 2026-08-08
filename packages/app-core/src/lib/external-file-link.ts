@@ -45,6 +45,43 @@ export function externalFileLink(href: string): string | null {
  * Confirm, then open `href` (an {@link externalFileLink}) with the OS default
  * app via the desktop bridge. On the web, or on failure, shows a toast.
  */
+/**
+ * Confirm, then open a VAULT asset (vault-relative path) with the OS default
+ * app. Distinct from {@link openExternalFileLink} on purpose: joining the
+ * vault root onto the path in the renderer breaks on remote workspaces, where
+ * the root is a directory on the SERVER. The bridge resolves the vault it
+ * actually has — local opens in place, remote downloads to a temp file first
+ * — and the confirm shows the vault-relative path, not a foreign server path.
+ */
+export async function openVaultAssetExternally(assetVaultRel: string): Promise<void> {
+  const open = window.zen?.openAssetExternally
+  const toast = useToastStore.getState().addToast
+
+  if (typeof open !== 'function') {
+    toast('Opening attachments is only available in the desktop app.', 'info')
+    return
+  }
+
+  const ok = await confirmApp({
+    title: 'Open attachment?',
+    description: `This opens ${assetVaultRel} with your system's default app.`,
+    confirmLabel: 'Open'
+  })
+  if (!ok) return
+
+  try {
+    const result = await open(assetVaultRel)
+    if (result.ok) return
+    if (result.error === 'desktop-only') {
+      toast('Opening attachments is only available in the desktop app.', 'info')
+    } else {
+      toast(result.error ? `Could not open file: ${result.error}` : 'Could not open file.', 'error')
+    }
+  } catch (err) {
+    toast(`Could not open file: ${err instanceof Error ? err.message : String(err)}`, 'error')
+  }
+}
+
 export async function openExternalFileLink(href: string): Promise<void> {
   const open = window.zen?.openExternalFile
   const toast = useToastStore.getState().addToast

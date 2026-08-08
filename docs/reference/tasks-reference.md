@@ -57,6 +57,20 @@ priority: high
 
 Inline task metadata wins over frontmatter defaults.
 
+## Checklists: opting out of Tasks
+
+Not every checkbox is a task. Two vault-portable mechanisms turn checkboxes back into plain checklists (#458): a per-note frontmatter key (two opt-out values) and a per-folder exclusion list.
+
+| Switch | Effect |
+| --- | --- |
+| Frontmatter `tasks: false` (or `off`) | The note feeds nothing to Tasks: no inline tasks, and no file task even when the note is tagged `task`. |
+| Frontmatter `tasks: note` | The note's own file task stays visible, but its inline checkboxes are not tasks. For project notes that belong on the board without their checklists. |
+| Excluded folders | `tasks.excludedFolders` in the vault settings lists folders whose notes are never scanned. Managed from the sidebar folder context menu ("Exclude from Tasks") or Settings → Tasks. |
+
+Checkboxes in excluded notes render and toggle in the editor exactly as before. Any other `tasks:` value (or none) keeps the default: every checkbox is a task.
+
+Exclusions apply on every surface: the Tasks views, calendars, the home widget, `zn task list`, the MCP `list_tasks` tool, and the self-hosted server's API. To list everything anyway: `zn task list --include-excluded`, `list_tasks` with `includeExcluded: true`, or `GET /api/tasks?includeExcluded=1`.
+
 ## Tasks views
 
 The Tasks tab has three modes:

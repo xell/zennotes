@@ -8,6 +8,8 @@ import { defaultGenId } from '@shared/database-csv'
 import {
   splitMultiSelect,
   joinMultiSelect,
+  splitNoteLinks,
+  joinNoteLinks,
   isCheckboxTrue
 } from '@shared/database-transforms'
 import type {
@@ -16,10 +18,21 @@ import type {
   DbRow,
   DbView,
   FieldType,
-  SelectOption
+  SelectOption,
+  SelectOptionsSource
 } from '@shared/databases'
 
-export { splitMultiSelect, joinMultiSelect, isCheckboxTrue }
+export { splitMultiSelect, joinMultiSelect, splitNoteLinks, joinNoteLinks, isCheckboxTrue }
+// Record-level pure ops moved to shared-domain so the zn CLI shares them (#556).
+export {
+  addRow,
+  composePageBody,
+  deleteRow,
+  ensureSelectOption,
+  fieldsById,
+  recordTitle,
+  setCell
+} from '@shared/database-records'
 
 const genId = defaultGenId
 
@@ -33,64 +46,6 @@ export function formatDate(iso: string): string {
 export function optionLabel(field: DbField, value: string): string {
   const opt = field.options?.find((o) => o.value === value)
   return opt?.label ?? opt?.value ?? value
-}
-
-export function fieldsById(doc: DatabaseDoc): Map<string, DbField> {
-  return new Map(doc.fields.map((f) => [f.id, f]))
-}
-
-/** A record's display title: the first non-id field's value (fallback "Untitled"). */
-export function recordTitle(doc: DatabaseDoc, row: DbRow): string {
-  const titleField = doc.fields.find((f) => f.id !== doc.idFieldId)
-  const v = titleField ? (row.cells[titleField.id] ?? '').trim() : ''
-  return v || 'Untitled'
-}
-
-function yamlScalar(value: string): string {
-  if (value === '') return '""'
-  if (/[:#"'\n]|^\s|\s$/.test(value)) return JSON.stringify(value)
-  return value
-}
-
-/**
- * Compose a record "page" note: the record's properties as flat YAML
- * frontmatter followed by `body` (the freeform page). The id field and the
- * title field are omitted — the title is the page's `# heading`, so repeating
- * it as a `Name:` property would be redundant. Empty values render as a blank
- * `key:` rather than `key: ""`.
- */
-export function composePageBody(doc: DatabaseDoc, row: DbRow, body: string): string {
-  const titleFieldId = doc.fields.find((f) => f.id !== doc.idFieldId)?.id
-  const lines = ['---']
-  for (const f of doc.fields) {
-    if (f.id === doc.idFieldId || f.id === titleFieldId) continue
-    const v = row.cells[f.id] ?? ''
-    lines.push(v ? `${f.name}: ${yamlScalar(v)}` : `${f.name}:`)
-  }
-  lines.push('---')
-  return `${lines.join('\n')}\n${body.replace(/^\n+/, '')}`
-}
-
-// --- row mutations (→ updateDatabaseRows) -------------------------------
-
-export function setCell(doc: DatabaseDoc, rowId: string, fieldId: string, value: string): DatabaseDoc {
-  return {
-    ...doc,
-    rows: doc.rows.map((r) => (r.id === rowId ? { ...r, cells: { ...r.cells, [fieldId]: value } } : r))
-  }
-}
-
-export function addRow(doc: DatabaseDoc): DatabaseDoc {
-  const id = genId()
-  const cells: Record<string, string> = {}
-  for (const f of doc.fields) cells[f.id] = ''
-  cells[doc.idFieldId] = id
-  const row: DbRow = { id, cells }
-  return { ...doc, rows: [...doc.rows, row] }
-}
-
-export function deleteRow(doc: DatabaseDoc, rowId: string): DatabaseDoc {
-  return { ...doc, rows: doc.rows.filter((r) => r.id !== rowId) }
 }
 
 // --- schema / view mutations (→ updateDatabaseSchema) -------------------
@@ -217,17 +172,23 @@ export function moveColumnToField(
   return updateView(doc, viewId, { columnOrder: without })
 }
 
-export function ensureSelectOption(doc: DatabaseDoc, fieldId: string, rawValue: string): DatabaseDoc {
-  const value = rawValue.trim().replace(/,/g, ' ') // option values may not contain commas
-  if (!value) return doc
+
+/** Set (or with null, clear) where a select field discovers options. (#500) */
+export function setFieldOptionsSource(
+  doc: DatabaseDoc,
+  fieldId: string,
+  source: SelectOptionsSource | null
+): DatabaseDoc {
   return {
     ...doc,
     fields: doc.fields.map((f) => {
       if (f.id !== fieldId) return f
-      const options = f.options ?? []
-      if (options.some((o) => o.value === value)) return f
-      const opt: SelectOption = { id: genId(), value }
-      return { ...f, options: [...options, opt] }
+      if (!source) {
+        const { optionsSource: _drop, ...rest } = f
+        void _drop
+        return rest
+      }
+      return { ...f, optionsSource: source }
     })
   }
 }

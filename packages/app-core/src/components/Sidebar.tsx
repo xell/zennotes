@@ -534,6 +534,7 @@ export function Sidebar(): JSX.Element {
   const newDrawing = useStore((s) => s.newDrawing);
   const newDatabase = useStore((s) => s.newDatabase);
   const toggleFavorite = useStore((s) => s.toggleFavorite);
+  const toggleTasksExcludedFolder = useStore((s) => s.toggleTasksExcludedFolder);
   const createDatabase = useStore((s) => s.createDatabase);
   const openTemplatePaletteForFolder = useStore((s) => s.openTemplatePaletteForFolder);
   const quickNoteDateTitle = useStore((s) => s.quickNoteDateTitle);
@@ -2320,16 +2321,21 @@ export function Sidebar(): JSX.Element {
     if (activePath === lastRevealedPathRef.current) return;
     lastRevealedPathRef.current = activePath;
     const startedAt = performance.now();
+    // Settings are read at effect time, not subscribed: with vaultSettings in
+    // the dependency array, every settings write (a favorite toggle, a folder
+    // color, a remote resync) re-ran this and yanked the sidebar scroll back to
+    // the active note while the user was browsing elsewhere (upstream 42786fb).
+    const revealSettings = useStore.getState().vaultSettings;
     // A database resolves to its `.base` folder row; everything else is a leaf
     // (note or asset) that the reveal effect looks up by metadata.
     const isDatabase = !!csvPathFromDatabaseTab(selectedPath);
     if (isDatabase) {
-      const section = folderForVaultRelativePath(activePath, vaultSettings);
+      const section = folderForVaultRelativePath(activePath, revealSettings);
       if (!section) return;
       requestSidebarReveal({
         kind: "folder",
         folder: section,
-        subpath: assetPathWithinFolder(activePath, section, vaultSettings),
+        subpath: assetPathWithinFolder(activePath, section, revealSettings),
       });
     } else {
       requestSidebarReveal({ kind: "leaf", path: activePath });
@@ -2338,13 +2344,7 @@ export function Sidebar(): JSX.Element {
       path: activePath,
       revealed: isDatabase ? "database" : "leaf",
     });
-  }, [
-    autoReveal,
-    activePath,
-    selectedPath,
-    vaultSettings,
-    requestSidebarReveal,
-  ]);
+  }, [autoReveal, activePath, selectedPath, requestSidebarReveal]);
 
   const [activeBodyTagSnapshot, setActiveBodyTagSnapshot] = useState<{
     path: string;
@@ -3031,6 +3031,27 @@ export function Sidebar(): JSX.Element {
       },
     });
 
+    // Vault-level Tasks exclusion (#458). The list stores on-disk relative
+    // paths, so a root-primary inbox's top level resolves to "": no valid
+    // entry to toggle, hide the item there.
+    const tasksExcludeRelDir = vaultRelativeFolderPath(
+      folder,
+      subpath,
+      vaultSettings,
+    );
+    if (tasksExcludeRelDir) {
+      const tasksExcluded = (
+        vaultSettings.tasks?.excludedFolders ?? []
+      ).includes(tasksExcludeRelDir);
+      items.push({ kind: "separator" });
+      items.push({
+        label: tasksExcluded ? "Include in Tasks" : "Exclude from Tasks",
+        onSelect: async () => {
+          await toggleTasksExcludedFolder(tasksExcludeRelDir);
+        },
+      });
+    }
+
     if (!isTop) {
       items.push({ kind: "separator" });
       const leafName = subpath.split("/").slice(-1)[0];
@@ -3126,6 +3147,7 @@ export function Sidebar(): JSX.Element {
     openIconPicker,
     openColorPicker,
     toggleFavorite,
+    toggleTasksExcludedFolder,
     bulkSelectionMenuItems,
     selectedSidebarKeys,
     isolatedRoot,
@@ -4026,6 +4048,10 @@ export function Sidebar(): JSX.Element {
     <aside
       className={`glass-sidebar relative flex shrink-0 flex-col pt-3${isSidebarFocused ? " panel-focused" : ""}`}
       style={{ width: sidebarWidth }}
+      // Programmatic focus target for focusSidebarPanel (the Focus Sidebar
+      // command); -1 keeps it out of the tab order.
+      data-zen-sidebar
+      tabIndex={-1}
       onMouseDownCapture={(e) => {
         syncSidebarCursorFromTarget(e.target);
         setFocusedPanel("sidebar");
@@ -4447,6 +4473,13 @@ export function Sidebar(): JSX.Element {
                           item.subpath,
                           vaultSettings.folderIcons,
                         ).icon
+                      }
+                      colorClass={
+                        resolveFolderColorGlyphClass(
+                          item.folder,
+                          item.subpath,
+                          vaultSettings.folderColors,
+                        ) ?? undefined
                       }
                       active={
                         isolatedRoot?.folder === item.folder &&
