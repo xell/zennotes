@@ -40,6 +40,19 @@ describe('workspace tab strip overflow styles', () => {
     )
   })
 
+  it('styles no GLOBAL webkit scrollbar, so macOS overlay scrollbars survive (3d6ac6d)', () => {
+    // Styling the bare `::-webkit-scrollbar` pseudo-elements (no selector in
+    // front) opts Electron out of macOS overlay scrollbars app-wide: the editor
+    // loses its fade-in-while-scrolling bar and every scroller gets a permanent
+    // one instead. An upstream merge reintroduced exactly this block once, and
+    // nothing else in the suite noticed. Scoped rules (the tab strip above, the
+    // xterm viewport) are fine — only unscoped ones are the problem.
+    const globalScrollbarRule = /^\s*::-webkit-scrollbar/m
+    expect(stylesSource).not.toMatch(globalScrollbarRule)
+    // Same story for the standard property applied globally.
+    expect(stylesSource).not.toMatch(/^\s*(?:html|body|\*)\s*\{[^}]*scrollbar-color/m)
+  })
+
   it('does not force the no-wrap tab to the strip height, so the scrollbar cannot clip it (#421)', () => {
     // `min-h-8` only belongs in wrap mode (a floor for wrapped rows). In no-wrap
     // the tab must be free to size to the scroll area so the horizontal scrollbar

@@ -4254,8 +4254,11 @@ export function Sidebar(): JSX.Element {
         // page scroll) without needing a prop/ref threaded across components —
         // same cross-component convention as the other data-sidebar-* attrs.
         data-sidebar-scroll-container="true"
+        // `zn-sidebar-scroll` is upstream's hook, kept as a bare class for user
+        // CSS overrides. No `scrollbarGutter: 'stable'` — reserving the gutter
+        // permanently indents the tree even when nothing is scrolling, which
+        // 3d6ac6d removed along with the custom scrollbar rules.
         className="zn-sidebar-scroll mt-3 min-h-0 flex-1 overflow-y-auto px-3 outline-none"
-        style={{ scrollbarGutter: "stable" }}
         onDragOver={handleTreeDragOver}
         onDrop={handleTreeDrop}
         onDragLeave={handleTreeDragLeave}
