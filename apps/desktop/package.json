@@ -70,6 +70,8 @@
     "jsxgraph": "^1.12.2",
     "katex": "^0.16.15",
     "mermaid": "^11.4.1",
+    "micromark-util-encode": "^2.0.1",
+    "micromark-util-subtokenize": "^2.1.0",
     "node-tikzjax": "^1.0.5",
     "prettier": "^3.8.2",
     "react": "^18.3.1",
