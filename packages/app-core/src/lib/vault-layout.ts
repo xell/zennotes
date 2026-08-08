@@ -18,14 +18,18 @@ import {
   type NoteMeta,
   type VaultSettings
 } from '@shared/ipc'
+import {
+  normalizeSystemFolderPaths,
+  resolveFolderPath,
+  systemFolderForDirName
+} from '@shared/system-folder-paths'
 import { getISOWeek, getISOWeekYear, mondayOfISOWeek } from './template-render'
 
-const SYSTEM_FOLDERS = new Set<NoteFolder>(['inbox', 'quick', 'archive', 'trash'])
-const RESERVED_ROOT_NAMES = new Set<string>([
-  'inbox',
-  'quick',
-  'archive',
-  'trash',
+// Reserved however the system folders are remapped:
+// asset dirs and our own internal dir are never user note folders, while
+// `inbox`/`archive`/… are reserved only while a system folder actually
+// resolves there (see systemFolderForDirName).
+const RESERVED_NON_SYSTEM_ROOT_NAMES = new Set<string>([
   'assets',
   'attachements',
   '_assets',
@@ -651,6 +655,7 @@ export function normalizeVaultSettings(
     folderIcons: normalizedFolderIcons,
     folderColors: normalizedFolderColors,
     favorites: normalizedFavorites,
+    systemFolderPaths: normalizeSystemFolderPaths(settings?.systemFolderPaths),
     // Per-vault view overrides (#292): passed through as-is; the store validates
     // each value when it overlays them onto the live prefs.
     ...(settings?.view ? { view: settings.view } : {})
@@ -930,11 +935,8 @@ export function notePathWithinFolder(
   settings: VaultSettings | null | undefined
 ): string {
   if (folder === 'inbox' && isPrimaryNotesAtRoot(settings)) return path
-  const prefix = `${folder}/`
-  // Case-insensitive so a note under a capitalized on-disk system folder
-  // (e.g. `Inbox/`) lands in the same subpath as its sibling assets, which use
-  // the same lenient stripping. Mirrors `assetPathWithinFolder`. (#186)
-  return path.toLowerCase().startsWith(prefix) ? path.slice(prefix.length) : path
+  const prefix = `${resolveFolderPath(folder, settings?.systemFolderPaths)}/`
+  return path.toLowerCase().startsWith(prefix.toLowerCase()) ? path.slice(prefix.length) : path
 }
 
 export function noteFolderSubpath(
@@ -1473,18 +1475,14 @@ export function findDateNoteByTitle(
   return null
 }
 
-// Match a path's top segment to a system folder case-insensitively. On
+// A path's top segment matches a system folder case-insensitively, and only
+// against that folder's RESOLVED name (see systemFolderForDirName). On
 // case-insensitive filesystems (macOS/Windows) the inbox folder can be stored
 // with different casing than the canonical lowercase the rest of the app emits:
 // `listNotes` builds note paths from `folderRoot()` (always `inbox/…`), but
 // `listAssets`/the watcher walk real directory entries and preserve the on-disk
 // case (e.g. `Inbox/…`). Comparing case-sensitively dropped those assets to
 // `null`, so a capitalized `Inbox/` showed its notes but hid its images/PDFs. (#186)
-function systemFolderForTopSegment(top: string): NoteFolder | null {
-  const lower = top.toLowerCase()
-  return SYSTEM_FOLDERS.has(lower as NoteFolder) ? (lower as NoteFolder) : null
-}
-
 export function folderForVaultRelativePath(
   relPath: string,
   settings: VaultSettings | null | undefined
@@ -1492,9 +1490,16 @@ export function folderForVaultRelativePath(
   const normalized = relPath.replace(/\\/g, '/').replace(/^\/+/, '')
   const top = normalized.split('/')[0] ?? ''
   if (!top || top.startsWith('.')) return null
-  const system = systemFolderForTopSegment(top)
+  const system = systemFolderForDirName(top, settings?.systemFolderPaths)
   if (system) return system
-  if (isPrimaryNotesAtRoot(settings) && !RESERVED_ROOT_NAMES.has(top.toLowerCase())) return 'inbox'
+  // A default folder name whose folder has been remapped elsewhere is an
+  // ordinary user directory, so it is not reserved any more.
+  if (
+    isPrimaryNotesAtRoot(settings) &&
+    !RESERVED_NON_SYSTEM_ROOT_NAMES.has(top.toLowerCase())
+  ) {
+    return 'inbox'
+  }
   return null
 }
 
@@ -1505,10 +1510,8 @@ export function assetPathWithinFolder(
 ): string {
   const normalized = assetPath.replace(/\\/g, '/').replace(/^\/+/, '')
   if (folder === 'inbox' && isPrimaryNotesAtRoot(settings)) return normalized
-  const prefix = `${folder}/`
-  // Strip the system-folder prefix case-insensitively so a capitalized on-disk
-  // folder (e.g. `Inbox/`) lands in the same subpath tree as its notes. (#186)
-  return normalized.toLowerCase().startsWith(prefix)
+  const prefix = `${resolveFolderPath(folder, settings?.systemFolderPaths)}/`
+  return normalized.toLowerCase().startsWith(prefix.toLowerCase())
     ? normalized.slice(prefix.length)
     : normalized
 }

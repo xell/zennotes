@@ -574,6 +574,46 @@ describe('folderForVaultRelativePath — case-insensitive system folders (#186)'
   })
 })
 
+// A folder is wherever it RESOLVES to (#398). Testing the default names first
+// meant a vault that moved its archive still classified a leftover `archive/`
+// as the system archive, so the same directory read one way here and another
+// way in the listings that walk the remapped path.
+describe('folderForVaultRelativePath with remapped system folders (#398)', () => {
+  const remapped = {
+    primaryNotesLocation: 'inbox',
+    systemFolderPaths: { archive: '99 - Archive' }
+  } as VaultSettings
+
+  it('classifies the remapped directory as its system folder', () => {
+    expect(folderForVaultRelativePath('99 - Archive/scan.pdf', remapped)).toBe('archive')
+    expect(folderForVaultRelativePath('99 - archive/scan.pdf', remapped)).toBe('archive')
+  })
+
+  it('stops classifying the default name once that folder has moved', () => {
+    expect(folderForVaultRelativePath('archive/scan.pdf', remapped)).toBeNull()
+  })
+
+  it('classifies a swap by resolved names, not by the defaults', () => {
+    const swapped = {
+      primaryNotesLocation: 'inbox',
+      systemFolderPaths: { inbox: 'archive', archive: 'inbox' }
+    } as VaultSettings
+    expect(folderForVaultRelativePath('archive/a.md', swapped)).toBe('inbox')
+    expect(folderForVaultRelativePath('inbox/b.md', swapped)).toBe('archive')
+  })
+
+  it('treats a moved-away default name as ordinary root content in root mode', () => {
+    const rootMode = {
+      primaryNotesLocation: 'root',
+      systemFolderPaths: { archive: '99 - Archive' }
+    } as VaultSettings
+    expect(folderForVaultRelativePath('archive/scan.pdf', rootMode)).toBe('inbox')
+    // The dirs that are reserved no matter what stay reserved.
+    expect(folderForVaultRelativePath('assets/scan.pdf', rootMode)).toBeNull()
+    expect(folderForVaultRelativePath('99 - Archive/scan.pdf', rootMode)).toBe('archive')
+  })
+})
+
 describe('favorites', () => {
   it('discriminates folder keys from note paths by the colon', () => {
     expect(isFavoriteFolderKey('inbox:Projects')).toBe(true)

@@ -125,6 +125,91 @@ describe('built-in template commands (#112)', () => {
   })
 })
 
+describe('Workflows feature switch', () => {
+  it('offers view.workflows only while the feature is enabled', async () => {
+    const { buildCommands, useStore } = await loadCommands()
+
+    // buildCommands drops anything whose `when` guard rejects, so an off
+    // switch removes the palette entry outright rather than greying it out.
+    useStore.setState({ workflowsEnabled: true })
+    expect(buildCommands().find((c) => c.id === 'view.workflows')?.title).toBe('Open Workflows')
+
+    useStore.setState({ workflowsEnabled: false })
+    expect(buildCommands().some((c) => c.id === 'view.workflows')).toBe(false)
+  })
+})
+
+describe('Workflow run entries', () => {
+  const INDEX = [
+    {
+      id: 'reading-log',
+      name: 'Reading log',
+      description: 'Keep the table in sync',
+      status: 'active' as const,
+      mutates: true
+    },
+    { id: 'half-idea', name: 'Half idea', description: '', status: 'draft' as const, mutates: false }
+  ]
+
+  it('lists one Run entry per active workflow and none for drafts', async () => {
+    ;(window.zen as unknown as Record<string, unknown>).applyWorkflow = vi.fn()
+    const { buildCommands, useStore } = await loadCommands()
+    useStore.setState({ workflowsEnabled: true, workspaceMode: 'local', workflowIndex: INDEX })
+
+    const commands = buildCommands()
+    const run = commands.find((c) => c.id === 'workflow.run.reading-log')
+    expect(run?.title).toBe('Run: Reading log')
+    expect(run?.category).toBe('Workflow')
+    // A draft cannot run, so the palette does not offer to.
+    expect(commands.some((c) => c.id === 'workflow.run.half-idea')).toBe(false)
+    // The browsable picker rides along, in the Switch Vault… drill-down shape.
+    expect(commands.find((c) => c.id === 'workflow.runPicker')?.title).toBe('Run Workflow…')
+  })
+
+  it('offers no Run entries where the bridge cannot apply a run', async () => {
+    // The stub bridge has no applyWorkflow, which is the web app's shape.
+    const { buildCommands, useStore } = await loadCommands()
+    useStore.setState({ workflowsEnabled: true, workspaceMode: 'local', workflowIndex: INDEX })
+    expect(buildCommands().some((c) => c.id.startsWith('workflow.run.'))).toBe(false)
+  })
+
+  it('offers the tutorial even before the feature is enabled', async () => {
+    ;(window.zen as unknown as Record<string, unknown>).applyWorkflow = vi.fn()
+    const { buildCommands, useStore } = await loadCommands()
+    // Workflows OFF: starting the tutorial is how someone opts in, so the
+    // palette must surface it exactly like the button in Settings does.
+    useStore.setState({ workflowsEnabled: false, workspaceMode: 'local' })
+    expect(buildCommands().find((c) => c.id === 'workflow.tutorial')?.title).toBe(
+      'Start Workflows Tutorial'
+    )
+  })
+
+  it('offers no tutorial where workflows cannot run at all', async () => {
+    // The stub bridge has no applyWorkflow, which is the web app's shape.
+    const { buildCommands, useStore } = await loadCommands()
+    useStore.setState({ workflowsEnabled: true, workspaceMode: 'local' })
+    expect(buildCommands().some((c) => c.id === 'workflow.tutorial')).toBe(false)
+  })
+
+  it('a captured Run command dies with the feature switch', async () => {
+    ;(window.zen as unknown as Record<string, unknown>).applyWorkflow = vi.fn()
+    const { buildCommands, useStore } = await loadCommands()
+    useStore.setState({ workflowsEnabled: true, workspaceMode: 'local', workflowIndex: INDEX })
+
+    // The vim ex registry snapshots command objects at editor mount, then
+    // re-checks only `when`. A Run entry must therefore carry the switch as
+    // its `when`, or `:workflow_run_…` keeps writing after the toggle is off.
+    const run = buildCommands().find((c) => c.id === 'workflow.run.reading-log')
+    const picker = buildCommands().find((c) => c.id === 'workflow.runPicker')
+    expect(run?.when?.()).toBe(true)
+    expect(picker?.when?.()).toBe(true)
+
+    useStore.setState({ workflowsEnabled: false })
+    expect(run?.when?.()).toBe(false)
+    expect(picker?.when?.()).toBe(false)
+  })
+})
+
 describe('close-tab command shortcut', () => {
   // #242: in Vim mode Ctrl+W is the pane prefix, so the Mod+W label was wrong.
   it('shows :q in Vim mode and the Mod+W binding otherwise', async () => {

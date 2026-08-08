@@ -18,6 +18,7 @@ import {
   isTagsViewActive,
   isTasksViewActive,
   isTrashViewActive,
+  isWorkflowsViewActive,
   useStore,
 } from "../store";
 import { Button } from "./ui/Button";
@@ -55,6 +56,7 @@ import {
   SortIcon,
   TargetIcon,
   TrashIcon,
+  WorkflowIcon,
 } from "./icons";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { ResizeHandle } from "./ResizeHandle";
@@ -85,6 +87,7 @@ import {
   parseFavoriteFolderKey,
   vaultRelativeFolderPath,
 } from "../lib/vault-layout";
+import { resolveFolderPath } from "@shared/system-folder-paths";
 import {
   getCurrentDragPayload,
   hasZenAssetItem,
@@ -341,6 +344,11 @@ function SidebarSectionHeading({
   );
 }
 
+// NOTE: upstream defines a local `vaultRelativeFolderPath` here. This fork
+// imports the `vault-layout` export instead — same behaviour (root-mapped inbox
+// plus `resolveFolderPath`), one definition, and it stays in step with the rest
+// of the path-remapping helpers in that module.
+
 type SidebarSelectionItem =
   | { kind: "note"; path: string }
   | { kind: "folder"; folder: NoteFolder; subpath: string };
@@ -500,6 +508,9 @@ export function Sidebar(): JSX.Element {
   const setView = useStore((s) => s.setView);
   const openTasksView = useStore((s) => s.openTasksView);
   const tasksViewActive = useStore(isTasksViewActive);
+  const openWorkflowsView = useStore((s) => s.openWorkflowsView);
+  const workflowsViewActive = useStore(isWorkflowsViewActive);
+  const workflowsEnabled = useStore((s) => s.workflowsEnabled);
   const openQuickNotesView = useStore((s) => s.openQuickNotesView);
   const quickNotesViewActive = useStore(isQuickNotesViewActive);
   const openHelpView = useStore((s) => s.openHelpView);
@@ -4484,6 +4495,22 @@ export function Sidebar(): JSX.Element {
             />
           )}
 
+          {/* Hidden when the feature is off. Because the row is skipped before
+              its props are evaluated, idxCounter never advances for it and the
+              data-sidebar-idx sequence stays contiguous for Vim navigation. */}
+          {workflowsEnabled && (
+            <TaskSidebarRow
+              active={workflowsViewActive}
+              onClick={() => void openWorkflowsView()}
+              label="Workflows"
+              icon={<WorkflowIcon width={12} height={12} strokeWidth={2.15} />}
+              sidebarType="workflows"
+              sidebarIdx={idxCounter.current.value++}
+              vimHighlight={vimCursor === idxCounter.current.value - 1}
+              sidebarFocused={isSidebarFocused}
+            />
+          )}
+
           <FolderTreeRoot
             label={folderLabels.quick}
             icon={
@@ -7202,6 +7229,9 @@ function TreeRow({
 
 // Top-level utility row. These align their icon center to the folder chevron
 // rail, but do not reserve a full fake chevron slot.
+// Shared by the Tasks and Workflows rows under "Quick access". Both are
+// single-click entries to a virtual tab rather than folders, so they share one
+// component; `icon` and `sidebarType` are the only things that differ.
 function TaskSidebarRow({
   active,
   onClick,
@@ -7209,6 +7239,8 @@ function TaskSidebarRow({
   sidebarIdx,
   vimHighlight,
   sidebarFocused = false,
+  icon,
+  sidebarType = "tasks",
 }: {
   active: boolean;
   onClick: () => void;
@@ -7216,6 +7248,8 @@ function TaskSidebarRow({
   sidebarIdx?: number;
   vimHighlight?: boolean;
   sidebarFocused?: boolean;
+  icon?: JSX.Element;
+  sidebarType?: string;
 }): JSX.Element {
   const strongActive = active && (!sidebarFocused || !!vimHighlight);
   return (
@@ -7245,12 +7279,12 @@ function TaskSidebarRow({
       {...(sidebarIdx != null
         ? {
             "data-sidebar-idx": sidebarIdx,
-            "data-sidebar-type": "tasks",
+            "data-sidebar-type": sidebarType,
           }
         : {})}
     >
       <SidebarGlyph active={strongActive} rowActive={active}>
-        <CheckSquareIcon width={12} height={12} strokeWidth={2.15} />
+        {icon ?? <CheckSquareIcon width={12} height={12} strokeWidth={2.15} />}
       </SidebarGlyph>
       <span className="flex-1 truncate">{label}</span>
     </div>

@@ -88,14 +88,18 @@ var reservedRootNames = map[string]struct{}{
 	internalVaultDir:      {},
 }
 
-var hiddenPrimaryRootNames = map[string]struct{}{
-	string(FolderQuick):   {},
-	string(FolderArchive): {},
-	string(FolderTrash):   {},
+// reservedNonSystemRootNames is the subset of reservedRootNames that stays
+// reserved however the system folders are remapped: asset dirs and our own
+// internal dir are never user note folders, while `inbox`/`archive`/… are
+// reserved only while a system folder actually resolves there (see
+// SystemFolderForDirName). Mirrors RESERVED_NON_SYSTEM_ROOT_NAMES in
+// apps/desktop/src/main/vault.ts.
+var reservedNonSystemRootNames = map[string]struct{}{
 	AssetsDir:             {},
 	PrimaryAttachmentsDir: {},
 	internalVaultDir:      {},
 }
+
 var validFolderIconIDs = map[FolderIconID]struct{}{
 	"folder":     {},
 	"bolt":       {},
@@ -146,13 +150,30 @@ var validFolderColorIDs = map[FolderColorID]struct{}{
 func init() {
 	for _, dir := range legacyAttachmentsDirs {
 		reservedRootNames[dir] = struct{}{}
-		hiddenPrimaryRootNames[dir] = struct{}{}
+		reservedNonSystemRootNames[dir] = struct{}{}
 	}
 }
 
-func shouldHidePrimaryRootName(name string) bool {
-	_, hidden := hiddenPrimaryRootNames[name]
-	return hidden
+func shouldHidePrimaryRootName(name string, hidden map[string]struct{}) bool {
+	_, skip := hidden[name]
+	return skip
+}
+
+// hiddenPrimaryRootNames returns the directory names skipped while walking the
+// vault root in `root` primary mode, where the root itself is the inbox: the
+// asset dirs, our internal dir, and the RESOLVED directory of every other
+// system folder. A default name whose folder has been remapped away (`quick/`
+// once quick lives in `Fast/`) is an ordinary user folder and must not be
+// hidden. Mirrors hiddenPrimaryRootNames in apps/desktop/src/main/vault.ts.
+func hiddenPrimaryRootNames(settings VaultSettings) map[string]struct{} {
+	names := map[string]struct{}{}
+	for name := range reservedNonSystemRootNames {
+		names[name] = struct{}{}
+	}
+	for _, folder := range []NoteFolder{FolderQuick, FolderArchive, FolderTrash} {
+		names[resolveFolderPath(folder, settings.SystemFolderPaths)] = struct{}{}
+	}
+	return names
 }
 
 // Vault encapsulates all operations against a filesystem vault root.
@@ -170,6 +191,19 @@ type Vault struct {
 	metaCache     map[string]noteMetaCacheEntry
 	metaCacheLoad bool
 	metaCacheGen  uint64
+	// settingsMu guards settingsCache only. GetSettings never takes v.mu (and
+	// is called with v.mu already held), so the lock order is always v.mu
+	// first, settingsMu second, and never the reverse.
+	settingsMu    sync.Mutex
+	settingsCache *cachedVaultSettings
+}
+
+// cachedVaultSettings is a parsed vault.json plus the identity of the bytes it
+// was parsed from.
+type cachedVaultSettings struct {
+	settings VaultSettings
+	modTime  time.Time
+	size     int64
 }
 
 // Options tunes vault filesystem permissions and limits. Zero values
@@ -291,6 +325,15 @@ func cloneSettings(settings VaultSettings) VaultSettings {
 	}
 	favorites := make([]string, len(settings.Favorites))
 	copy(favorites, settings.Favorites)
+	// Nil stays nil: an absent map marshals away thanks to `omitempty`, and an
+	// empty one would claim the vault has overrides it does not have.
+	var systemFolderPaths map[string]string
+	if settings.SystemFolderPaths != nil {
+		systemFolderPaths = make(map[string]string, len(settings.SystemFolderPaths))
+		for key, value := range settings.SystemFolderPaths {
+			systemFolderPaths[key] = value
+		}
+	}
 	dailyLegacyPatterns := make([]DateNotePatternSettings, len(settings.DailyNotes.LegacyPatterns))
 	copy(dailyLegacyPatterns, settings.DailyNotes.LegacyPatterns)
 	weeklyLegacyPatterns := make([]DateNotePatternSettings, len(settings.WeeklyNotes.LegacyPatterns))
@@ -331,6 +374,7 @@ func cloneSettings(settings VaultSettings) VaultSettings {
 		FolderIcons:       folderIcons,
 		FolderColors:      folderColors,
 		Favorites:         favorites,
+		SystemFolderPaths: systemFolderPaths,
 	}
 }
 
@@ -530,6 +574,7 @@ func normalizeVaultSettings(value VaultSettings, fallbackPrimary PrimaryNotesLoc
 		FolderIcons:       folderIcons,
 		FolderColors:      folderColors,
 		Favorites:         normalizeFavorites(value.Favorites),
+		SystemFolderPaths: normalizeSystemFolderPaths(value.SystemFolderPaths),
 	}
 }
 
@@ -745,20 +790,73 @@ func (v *Vault) vaultLooksEmpty() bool {
 	return true
 }
 
+// GetSettings reads the vault settings, reparsing vault.json only when the file
+// on disk has actually changed. Every folderRoot() call consults the settings,
+// so a single client refresh asked for them about five times and each ask meant
+// a ReadDir of the root plus a read and a JSON parse of vault.json.
+//
+// The cache is keyed on the file's mtime and size, and one open handle serves
+// both the stat and the read so the key always describes the bytes that were
+// parsed. A stat of the path followed by a read of the path would leave a
+// window where the file is swapped in between (js/file-system-race). This
+// mirrors getVaultSettings in apps/desktop/src/main/vault.ts.
 func (v *Vault) GetSettings() (VaultSettings, error) {
-	fallbackPrimary := v.inferPrimaryNotesLocation()
-	raw, err := os.ReadFile(v.settingsPath())
+	file, err := os.Open(v.settingsPath())
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return normalizeVaultSettings(VaultSettings{}, fallbackPrimary), nil
+			v.invalidateSettingsCache()
+			return normalizeVaultSettings(VaultSettings{}, v.inferPrimaryNotesLocation()), nil
 		}
+		return VaultSettings{}, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return VaultSettings{}, err
+	}
+	if cached, ok := v.cachedSettings(info); ok {
+		return cached, nil
+	}
+	raw, err := io.ReadAll(file)
+	if err != nil {
 		return VaultSettings{}, err
 	}
 	var settings VaultSettings
 	if err := json.Unmarshal(raw, &settings); err != nil {
 		return VaultSettings{}, err
 	}
-	return normalizeVaultSettings(settings, fallbackPrimary), nil
+	normalized := normalizeVaultSettings(settings, v.inferPrimaryNotesLocation())
+	v.storeSettingsCache(normalized, info)
+	return cloneSettings(normalized), nil
+}
+
+// cachedSettings returns the cached settings when they were parsed from a
+// vault.json with this exact mtime and size. The copy is defensive: callers
+// mutate what GetSettings hands them.
+func (v *Vault) cachedSettings(info os.FileInfo) (VaultSettings, bool) {
+	v.settingsMu.Lock()
+	defer v.settingsMu.Unlock()
+	cached := v.settingsCache
+	if cached == nil || cached.size != info.Size() || !cached.modTime.Equal(info.ModTime()) {
+		return VaultSettings{}, false
+	}
+	return cloneSettings(cached.settings), true
+}
+
+func (v *Vault) storeSettingsCache(settings VaultSettings, info os.FileInfo) {
+	v.settingsMu.Lock()
+	defer v.settingsMu.Unlock()
+	v.settingsCache = &cachedVaultSettings{
+		settings: cloneSettings(settings),
+		modTime:  info.ModTime(),
+		size:     info.Size(),
+	}
+}
+
+func (v *Vault) invalidateSettingsCache() {
+	v.settingsMu.Lock()
+	defer v.settingsMu.Unlock()
+	v.settingsCache = nil
 }
 
 func (v *Vault) SetSettings(next VaultSettings) (VaultSettings, error) {
@@ -774,8 +872,11 @@ func (v *Vault) SetSettings(next VaultSettings) (VaultSettings, error) {
 	if err := os.WriteFile(v.settingsPath(), data, v.fileMode); err != nil {
 		return VaultSettings{}, err
 	}
+	// The next read re-parses rather than trusting a same-tick mtime.
+	v.invalidateSettingsCache()
 	if normalized.PrimaryNotesLocation == PrimaryNotesInbox {
-		if err := os.MkdirAll(filepath.Join(v.root, string(FolderInbox)), v.dirMode); err != nil {
+		inbox := filepath.Join(v.root, resolveFolderPath(FolderInbox, normalized.SystemFolderPaths))
+		if err := os.MkdirAll(inbox, v.dirMode); err != nil {
 			return VaultSettings{}, err
 		}
 	}
@@ -791,14 +892,22 @@ func (v *Vault) primaryNotesRoot() (string, error) {
 	if settings.PrimaryNotesLocation == PrimaryNotesRoot {
 		return v.root, nil
 	}
-	return filepath.Join(v.root, string(FolderInbox)), nil
+	// Resolve through the override, the same as EnsureLayout: hardcoding
+	// `inbox` here made every inbox read and write miss a remapped inbox while
+	// the layout pass dutifully created the remapped directory. (#115)
+	return filepath.Join(v.root, resolveFolderPath(FolderInbox, settings.SystemFolderPaths)), nil
 }
 
 func (v *Vault) folderRoot(folder NoteFolder) (string, error) {
 	if folder == FolderInbox {
 		return v.primaryNotesRoot()
 	}
-	return filepath.Join(v.root, string(folder)), nil
+	settings, err := v.GetSettings()
+	if err != nil {
+		return "", err
+	}
+	p := resolveFolderPath(folder, settings.SystemFolderPaths)
+	return filepath.Join(v.root, p), nil
 }
 
 // EnsureLayout creates the four top-level folders and seeds a welcome
@@ -813,7 +922,8 @@ func (v *Vault) EnsureLayout() error {
 		if f == FolderInbox && settings.PrimaryNotesLocation == PrimaryNotesRoot {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Join(v.root, string(f)), v.dirMode); err != nil {
+		p := resolveFolderPath(f, settings.SystemFolderPaths)
+		if err := os.MkdirAll(filepath.Join(v.root, p), v.dirMode); err != nil {
 			return err
 		}
 	}
@@ -979,6 +1089,12 @@ func (v *Vault) ListNotes() ([]NoteMeta, error) {
 	defer v.mu.RUnlock()
 	v.hydratePersistedNoteMetaCache()
 
+	settings, err := v.GetSettings()
+	if err != nil {
+		return nil, err
+	}
+	hiddenRootNames := hiddenPrimaryRootNames(settings)
+
 	type noteFile struct {
 		folder NoteFolder
 		path   string
@@ -1003,12 +1119,12 @@ func (v *Vault) ListNotes() ([]NoteMeta, error) {
 					return filepath.SkipDir
 				}
 				if isFormDirName(d.Name()) {
-					return filepath.SkipDir // database folder — not loose notes
+					return filepath.SkipDir
 				}
 				if isPrimaryRoot && path != folderRoot {
 					parent := filepath.Dir(path)
 					if filepath.Clean(parent) == filepath.Clean(folderRoot) {
-						if shouldHidePrimaryRootName(d.Name()) {
+						if shouldHidePrimaryRootName(d.Name(), hiddenRootNames) {
 							return filepath.SkipDir
 						}
 					}
@@ -1018,7 +1134,7 @@ func (v *Vault) ListNotes() ([]NoteMeta, error) {
 			if isPrimaryRoot {
 				parent := filepath.Dir(path)
 				if filepath.Clean(parent) == filepath.Clean(folderRoot) {
-					if shouldHidePrimaryRootName(d.Name()) {
+					if shouldHidePrimaryRootName(d.Name(), hiddenRootNames) {
 						return filepath.SkipDir
 					}
 				}
@@ -1086,6 +1202,11 @@ func assignSiblingOrder[T any](list []T, key func(T) string, set func(*T, int)) 
 func (v *Vault) ListFolders() ([]FolderEntry, error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
+	settings, err := v.GetSettings()
+	if err != nil {
+		return nil, err
+	}
+	hiddenRootNames := hiddenPrimaryRootNames(settings)
 	out := []FolderEntry{}
 	for _, folder := range AllFolders {
 		folderRoot, err := v.folderRoot(folder)
@@ -1112,7 +1233,7 @@ func (v *Vault) ListFolders() ([]FolderEntry, error) {
 			if isPrimaryRoot {
 				parent := filepath.Dir(path)
 				if filepath.Clean(parent) == filepath.Clean(folderRoot) {
-					if shouldHidePrimaryRootName(d.Name()) {
+					if shouldHidePrimaryRootName(d.Name(), hiddenRootNames) {
 						return filepath.SkipDir
 					}
 				}
@@ -1567,12 +1688,19 @@ func (v *Vault) copyNoteCommentsLocked(sourceRel, nextRel string) error {
 	return err
 }
 
+// folderOf classifies an absolute path by the folder it lives in, honoring the
+// on-disk overrides: without them a note in a remapped trash directory came
+// back tagged `inbox`, and a restore lost the subfolder it was trashed from.
 func (v *Vault) folderOf(abs string) (NoteFolder, bool) {
 	rel, err := filepath.Rel(v.root, abs)
 	if err != nil {
 		return "", false
 	}
-	return FolderForRelativePath(rel)
+	var paths map[string]string
+	if settings, err := v.GetSettings(); err == nil {
+		paths = settings.SystemFolderPaths
+	}
+	return FolderForRelativePathWithSettings(rel, paths)
 }
 
 // --- Create / Rename / Delete ---
@@ -2030,6 +2158,11 @@ func (v *Vault) DuplicateFolder(folder NoteFolder, subpath string) (string, erro
 func (v *Vault) ScanTasks() ([]Task, error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
+	settings, err := v.GetSettings()
+	if err != nil {
+		return nil, err
+	}
+	hiddenRootNames := hiddenPrimaryRootNames(settings)
 	all := []Task{}
 	for _, folder := range []NoteFolder{FolderInbox, FolderQuick, FolderArchive} {
 		folderRoot, err := v.folderRoot(folder)
@@ -2051,7 +2184,7 @@ func (v *Vault) ScanTasks() ([]Task, error) {
 				if isPrimaryRoot && path != folderRoot {
 					parent := filepath.Dir(path)
 					if filepath.Clean(parent) == filepath.Clean(folderRoot) {
-						if shouldHidePrimaryRootName(d.Name()) {
+						if shouldHidePrimaryRootName(d.Name(), hiddenRootNames) {
 							return filepath.SkipDir
 						}
 					}
@@ -2061,7 +2194,7 @@ func (v *Vault) ScanTasks() ([]Task, error) {
 			if isPrimaryRoot {
 				parent := filepath.Dir(path)
 				if filepath.Clean(parent) == filepath.Clean(folderRoot) {
-					if shouldHidePrimaryRootName(d.Name()) {
+					if shouldHidePrimaryRootName(d.Name(), hiddenRootNames) {
 						return nil
 					}
 				}
@@ -2109,6 +2242,11 @@ func (v *Vault) SearchCapabilities() TextSearchCapabilities {
 func (v *Vault) textSearchFilesLocked() (uint64, []textSearchFile, error) {
 	h := fnv.New64a()
 	files := []textSearchFile{}
+	settings, err := v.GetSettings()
+	if err != nil {
+		return 0, nil, err
+	}
+	hiddenRootNames := hiddenPrimaryRootNames(settings)
 	for _, folder := range []NoteFolder{FolderInbox, FolderQuick, FolderArchive} {
 		folderRoot, err := v.folderRoot(folder)
 		if err != nil {
@@ -2128,7 +2266,7 @@ func (v *Vault) textSearchFilesLocked() (uint64, []textSearchFile, error) {
 				if isPrimaryRoot && path != folderRoot {
 					parent := filepath.Dir(path)
 					if filepath.Clean(parent) == cleanFolderRoot {
-						if shouldHidePrimaryRootName(d.Name()) {
+						if shouldHidePrimaryRootName(d.Name(), hiddenRootNames) {
 							return filepath.SkipDir
 						}
 					}
@@ -2138,7 +2276,7 @@ func (v *Vault) textSearchFilesLocked() (uint64, []textSearchFile, error) {
 			if isPrimaryRoot {
 				parent := filepath.Dir(path)
 				if filepath.Clean(parent) == cleanFolderRoot {
-					if shouldHidePrimaryRootName(d.Name()) {
+					if shouldHidePrimaryRootName(d.Name(), hiddenRootNames) {
 						return nil
 					}
 				}

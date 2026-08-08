@@ -3,6 +3,7 @@ import {
   findKeymapConflict,
   getDefaultKeymapBinding,
   getKeymapDefinition,
+  normalizeKeymapOverrides,
   shortcutBindingFromEvent,
   sequenceTokenFromEvent
 } from './keymaps'
@@ -251,5 +252,40 @@ describe('findKeymapConflict (#298 — global shortcut conflicts)', () => {
     expect(findKeymapConflict({}, 'nav.moveRight', 'l')).toBeNull()
     // Even a genuine cross-action duplicate in a sequence group is allowed.
     expect(findKeymapConflict({}, 'nav.delete', 'x')).toBeNull()
+  })
+})
+
+// An action with a `defaultBindingMac` has two defaults, and "is this an
+// override?" has to be asked against the one for THIS platform. Comparing
+// against the cross-platform default silently dropped a deliberate macOS
+// rebind on the next prefs load, and stored the Mac default as an override
+// everywhere else.
+describe('normalizeKeymapOverrides', () => {
+  const macDefault = 'Ctrl+.' // editor.hopMarkerForward on macOS
+  const otherDefault = 'Alt+]' // …and everywhere else
+
+  it('keeps a macOS rebind back to the cross-platform default', () => {
+    withPlatform('darwin', () => {
+      expect(getDefaultKeymapBinding('editor.hopMarkerForward')).toBe(macDefault)
+      expect(normalizeKeymapOverrides({ 'editor.hopMarkerForward': otherDefault })).toEqual({
+        'editor.hopMarkerForward': otherDefault
+      })
+    })
+  })
+
+  it('drops a macOS binding that just restates the macOS default', () => {
+    withPlatform('darwin', () => {
+      expect(normalizeKeymapOverrides({ 'editor.hopMarkerForward': macDefault })).toEqual({})
+    })
+  })
+
+  it('mirrors both rules off macOS', () => {
+    withPlatform('win32', () => {
+      expect(normalizeKeymapOverrides({ 'editor.hopMarkerForward': otherDefault })).toEqual({})
+      // Kept as an override, normalized the way Windows/Linux spell Ctrl.
+      expect(normalizeKeymapOverrides({ 'editor.hopMarkerForward': macDefault })).toEqual({
+        'editor.hopMarkerForward': 'Mod+.'
+      })
+    })
   })
 })

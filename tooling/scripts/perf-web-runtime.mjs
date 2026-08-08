@@ -42,13 +42,15 @@ const budgets = {
   searchInputMs: parsePositiveInt(process.env.ZEN_PERF_WEB_BUDGET_SEARCH_MS, 120),
   scrollMs: parsePositiveInt(process.env.ZEN_PERF_WEB_BUDGET_SCROLL_MS, 80),
   maxLongTaskMs: parsePositiveInt(process.env.ZEN_PERF_WEB_BUDGET_LONG_TASK_MS, 180),
-  maxVisibleRows: parsePositiveInt(process.env.ZEN_PERF_WEB_BUDGET_VISIBLE_ROWS, 640),
-  maxSidebarRows: parsePositiveInt(process.env.ZEN_PERF_WEB_BUDGET_SIDEBAR_ROWS, 480),
+  // No row-count budgets — see the note in perf-desktop-runtime.mjs. Sidebar
+  // virtualization keeps every row in the DOM by design, so the count is not a
+  // weight metric; maxDomNodes and maxHeapMB are.
   maxNoteListRows: parsePositiveInt(process.env.ZEN_PERF_WEB_BUDGET_NOTELIST_ROWS, 160),
   maxHeapMB: parsePositiveInt(process.env.ZEN_PERF_WEB_BUDGET_HEAP_MB, 256),
   maxDomNodes: parsePositiveInt(process.env.ZEN_PERF_WEB_BUDGET_DOM_NODES, 12000)
 }
-const allowDeferredChunks = process.env.ZEN_PERF_ALLOW_DEFERRED_CHUNKS === '1'
+const enforceDeferredChunks =
+  process.env.ZEN_PERF_ENFORCE === '1' || process.env.ZEN_PERF_ENFORCE_DEFERRED_CHUNKS === '1'
 const deferredNormalFlowChunkPatterns = [
   /^Preview-/,
   /^NoteHoverPreview-/,
@@ -56,7 +58,8 @@ const deferredNormalFlowChunkPatterns = [
   /^vendor-markdown-/,
   /^vendor-highlight-/,
   /^vendor-d3-/,
-  /^vendor-mermaid-/,
+  // mermaid.core is the entry of the mermaid stack: if any of it loads, this does.
+  /^mermaid\.core-/,
   /^vendor-jsxgraph-/,
   /^vendor-function-plot-/
 ]
@@ -935,8 +938,6 @@ async function main() {
       budgetStatus('search input', search.wallMs, budgets.searchInputMs),
       budgetStatus('virtual scroll', scroll.wallMs, budgets.scrollMs),
       budgetStatus('max long task', longTaskSummary.maxMs, budgets.maxLongTaskMs),
-      budgetStatus('visible note rows', scroll.visibleRows, budgets.maxVisibleRows),
-      budgetStatus('sidebar note rows', scroll.sidebarRows, budgets.maxSidebarRows),
       budgetStatus('notelist note rows', scroll.noteListRows, budgets.maxNoteListRows),
       budgetStatus('js heap used', runtimeMetrics.jsHeapUsedMB, budgets.maxHeapMB),
       budgetStatus('dom nodes', runtimeMetrics.domNodes, budgets.maxDomNodes)
@@ -1044,7 +1045,9 @@ async function main() {
     if (errors.length > 0) {
       throw new Error('Runtime benchmark saw console errors')
     }
-    if (!allowDeferredChunks && deferredNormalFlowChunks.length > 0) {
+    // Reported always, fatal only under ZEN_PERF_ENFORCE — same reasoning as
+    // the desktop harness.
+    if (enforceDeferredChunks && deferredNormalFlowChunks.length > 0) {
       throw new Error('Runtime benchmark loaded deferred-heavy chunks during normal flow')
     }
     if (enforceBudgets && failed.length > 0) {

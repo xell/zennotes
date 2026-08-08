@@ -1,7 +1,7 @@
 {
   "name": "@zennotes/app-core",
   "private": true,
-  "version": "2.19.0",
+  "version": "2.20.0",
   "type": "module",
   "exports": {
     "./main": "./src/main.tsx"
@@ -37,6 +37,7 @@
     "@replit/codemirror-vim": "^6.3.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "@xyflow/react": "^12.11.2",
     "dompurify": "^3.3.4",
     "function-plot": "^1.25.3",
     "gray-matter": "^4.0.3",
@@ -62,6 +63,8 @@
     "remark-rehype": "^11.1.1",
     "unified": "^11.0.5",
     "unist-util-visit": "^5.0.0",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2",
     "zustand": "^5.0.2"
   },
   "devDependencies": {

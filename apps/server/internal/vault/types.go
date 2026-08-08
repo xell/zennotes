@@ -44,16 +44,165 @@ func IsValidFolder(f NoteFolder) bool {
 
 var AllFolders = []NoteFolder{FolderInbox, FolderQuick, FolderArchive, FolderTrash}
 
+var defaultFolderPaths = map[NoteFolder]string{
+	FolderInbox:   string(FolderInbox),
+	FolderQuick:   string(FolderQuick),
+	FolderArchive: string(FolderArchive),
+	FolderTrash:   string(FolderTrash),
+}
+
+var reservedFolderPathNames = map[string]struct{}{
+	"assets":         {},
+	".zennotes":      {},
+	"attachements":   {},
+	"_assets":        {},
+	"deleted-assets": {},
+	"comments":       {},
+}
+
+func isValidFolderPath(p string) bool {
+	if p == "" || len(p) > 128 {
+		return false
+	}
+	if strings.Contains(p, "/") || strings.Contains(p, "\\") {
+		return false
+	}
+	if p == "." || p == ".." || strings.HasPrefix(p, ".") {
+		return false
+	}
+	for _, c := range p {
+		if c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' ||
+			c == '|' || c == '#' || c == '^' || c == '[' || c == ']' {
+			return false
+		}
+	}
+	if _, reserved := reservedFolderPathNames[strings.ToLower(p)]; reserved {
+		return false
+	}
+	return true
+}
+
+// NormalizeSystemFolderPaths validates a raw systemFolderPaths map the way the
+// vault settings reader does. Exported so callers that read vault.json without
+// going through GetSettings (the watcher) classify against the same paths the
+// vault itself uses. Mirrors normalizeSystemFolderPaths in
+// packages/shared-domain/src/system-folder-paths.ts.
+func NormalizeSystemFolderPaths(raw map[string]string) map[string]string {
+	return normalizeSystemFolderPaths(raw)
+}
+
+func normalizeSystemFolderPaths(raw map[string]string) map[string]string {
+	if raw == nil {
+		return nil
+	}
+	next := map[string]string{}
+	for _, folder := range AllFolders {
+		val, ok := raw[string(folder)]
+		if !ok || val == "" {
+			continue
+		}
+		val = strings.TrimSpace(val)
+		if !isValidFolderPath(val) {
+			continue
+		}
+		if val == string(folder) {
+			continue
+		}
+		// Never let a folder claim ANOTHER folder's default name, even when that
+		// other folder has moved out of the way: {inbox: "archive", archive:
+		// "inbox"} resolves without collision, and the swap it describes reads
+		// backwards on every surface that classifies a path by its top segment
+		// (and in every other app looking at the same directory).
+		if claimsAnotherDefaultName(folder, val) {
+			continue
+		}
+		next[string(folder)] = val
+	}
+	changed := true
+	for changed {
+		changed = false
+		for _, folder := range AllFolders {
+			val, ok := next[string(folder)]
+			if !ok {
+				continue
+			}
+			lower := strings.ToLower(val)
+			for _, other := range AllFolders {
+				if other == folder {
+					continue
+				}
+				otherResolved := strings.ToLower(resolveFolderPath(other, next))
+				if lower == otherResolved {
+					delete(next, string(folder))
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	if len(next) == 0 {
+		return nil
+	}
+	return next
+}
+
+func claimsAnotherDefaultName(folder NoteFolder, val string) bool {
+	lower := strings.ToLower(val)
+	for _, other := range AllFolders {
+		if other == folder {
+			continue
+		}
+		if lower == defaultFolderPaths[other] {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveFolderPath(folder NoteFolder, paths map[string]string) string {
+	if p, ok := paths[string(folder)]; ok {
+		return p
+	}
+	return defaultFolderPaths[folder]
+}
+
+// SystemFolderForDirName returns the system folder that owns a top-level
+// directory name, or false when the name belongs to no system folder (an
+// ordinary user folder, an assets dir, anything else).
+//
+// This is THE classification rule for a path's first segment, because only the
+// RESOLVED name of each folder counts: with inbox remapped to `01 - Entry`,
+// `01 - Entry/` is the inbox and a directory literally named `inbox/` is just a
+// user folder. Case-insensitive, since macOS and Windows preserve whatever case
+// the directory was created with (#186). Mirrors systemFolderForDirName in
+// packages/shared-domain/src/system-folder-paths.ts.
+func SystemFolderForDirName(name string, paths map[string]string) (NoteFolder, bool) {
+	lower := strings.ToLower(name)
+	for _, folder := range AllFolders {
+		if strings.ToLower(resolveFolderPath(folder, paths)) == lower {
+			return folder, true
+		}
+	}
+	return "", false
+}
+
 func FolderForRelativePath(rel string) (NoteFolder, bool) {
+	return FolderForRelativePathWithSettings(rel, nil)
+}
+
+func FolderForRelativePathWithSettings(rel string, paths map[string]string) (NoteFolder, bool) {
 	normalized := filepath.ToSlash(rel)
 	top := strings.SplitN(normalized, "/", 2)[0]
-	if IsValidFolder(NoteFolder(top)) {
-		return NoteFolder(top), true
-	}
 	if top == "" || strings.HasPrefix(top, ".") {
 		return "", false
 	}
-	if _, reserved := reservedRootNames[top]; reserved {
+	if folder, ok := SystemFolderForDirName(top, paths); ok {
+		return folder, true
+	}
+	// Only the dirs that are reserved no matter where the system folders live.
+	// A default name whose folder has moved (`inbox/` once inbox is `bucket`)
+	// is an ordinary user folder and must classify as one.
+	if _, reserved := reservedNonSystemRootNames[top]; reserved {
 		return "", false
 	}
 	return FolderInbox, true
@@ -131,6 +280,9 @@ type VaultSettings struct {
 	// Favorites are note paths or `folder:subpath` keys pinned to the top of
 	// the sidebar. Persisted so the web client's favorites survive a round-trip.
 	Favorites []string `json:"favorites"`
+	// Per-system-folder on-disk path overrides (#115). Maps internal folder IDs
+	// to vault-relative directory names. Absent entries fall back to the default.
+	SystemFolderPaths map[string]string `json:"systemFolderPaths,omitempty"`
 }
 
 // NoteMeta — vault-relative note metadata. Mirrors shared/ipc.ts NoteMeta.

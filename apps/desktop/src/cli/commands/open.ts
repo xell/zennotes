@@ -36,6 +36,9 @@ export interface ResolvedOpenTarget {
   isDirectory: boolean
 }
 
+/** How long a cold start gets to crash before we call the launch good. */
+const LAUNCH_GRACE_MS = 500
+
 /** Resolve one target against cwd, then the vault root. A file or a folder. */
 export async function resolveTarget(
   vault: string,
@@ -114,7 +117,28 @@ export async function cmdOpen(vault: string, args: ParsedArgs): Promise<void> {
     stdio: 'ignore',
     env
   })
+
+  // The child is detached and silent, so the only honest success signal is
+  // the absence of an immediate failure: a spawn error, or the app dying in
+  // its first moments (no display, a broken sandbox). A warm hand-off to a
+  // running instance exits 0 almost instantly, which is success. Past the
+  // grace window we stop waiting rather than make every cold start feel slow;
+  // before this, `zn open` printed success unconditionally, including when
+  // the app never started at all.
+  const failure = await new Promise<string | null>((settle) => {
+    const timer = setTimeout(() => settle(null), LAUNCH_GRACE_MS)
+    child.once('error', (err) => {
+      clearTimeout(timer)
+      settle(`Could not launch ZenNotes: ${err.message}`)
+    })
+    child.once('exit', (code, signal) => {
+      clearTimeout(timer)
+      if (code === 0 && signal === null) settle(null)
+      else settle(`ZenNotes exited before it could open anything (${signal ?? `exit code ${code}`}).`)
+    })
+  })
   child.unref()
+  if (failure) throw new Error(failure)
 
   if (resolved.length === 1) {
     const only = resolved[0]!

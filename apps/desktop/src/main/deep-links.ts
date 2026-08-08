@@ -53,6 +53,20 @@ export function parseOpenNoteDeepLink(rawUrl: string): OpenNoteDeepLinkRequest |
   return notePath ? { target, path: notePath } : null
 }
 
+/** The inverse of parseOpenNoteDeepLink: the shareable URL that opens a
+ *  vault-relative note in the app. Segments are percent-encoded so titles
+ *  with spaces, `#`, `?` or `&` survive; slashes stay readable. Parens are
+ *  encoded beyond what encodeURIComponent does because these URLs live
+ *  inside markdown `[title](url)` links, where a bare `)` ends the link. */
+export function buildOpenNoteDeepLink(relPath: string): string {
+  const encoded = relPath
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((seg) => encodeURIComponent(seg).replace(/\(/g, '%28').replace(/\)/g, '%29'))
+    .join('/')
+  return `${ZENNOTES_DEEP_LINK_SCHEME}://open?path=${encoded}`
+}
+
 export function normalizeDeepLinkNotePath(rawPath: string | null | undefined): string | null {
   const trimmed = rawPath?.trim()
   if (!trimmed || trimmed.includes('\0')) return null

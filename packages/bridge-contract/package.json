@@ -1,12 +1,13 @@
 {
   "name": "@zennotes/bridge-contract",
   "private": true,
-  "version": "2.19.0",
+  "version": "2.20.0",
   "type": "module",
   "exports": {
     "./bridge": "./src/bridge.ts",
     "./ipc": "./src/ipc.ts",
-    "./templates": "./src/templates.ts"
+    "./templates": "./src/templates.ts",
+    "./workflows": "./src/workflows.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",

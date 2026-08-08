@@ -11,7 +11,11 @@ export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
 export type ButtonSize = 'sm' | 'md'
 
 const BASE =
-  'inline-flex items-center justify-center gap-1.5 font-medium transition-colors ' +
+  // `shrink-0 whitespace-nowrap` because a button label is never allowed to
+  // wrap or squish: in a tight flex row the truncatable neighbours (a hint, a
+  // path) give way, exactly as IconButton already behaves. A row that cannot
+  // fit its buttons at all is a layout bug to fix there, not here.
+  'inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap font-medium transition-colors ' +
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 ' +
   'disabled:cursor-not-allowed disabled:opacity-50'
 

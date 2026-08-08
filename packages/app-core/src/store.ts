@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { EditorView } from '@codemirror/view'
 import { DEFAULT_VAULT_SETTINGS } from '@shared/ipc'
+import { resolveFolderPath } from '@shared/system-folder-paths'
 import type {
   AssetMeta,
   DateNotePatternSettings,
@@ -32,7 +33,11 @@ import {
   posixRelative,
   resolveAssetExactPath
 } from './lib/local-assets'
-import { isExcalidrawPath, isObsidianExcalidrawPath } from '@shared/excalidraw'
+import {
+  isExcalidrawPath,
+  isObsidianExcalidrawMarkdown,
+  isObsidianExcalidrawPath
+} from '@shared/excalidraw'
 import { TASKS_TAB_PATH, isTasksTabPath, parseTasksFromBody, toIsoDateLocal } from '@shared/tasks'
 import {
   isTypstPreamblePath,
@@ -65,6 +70,7 @@ import {
   type ManualOrderItem
 } from './lib/manual-order'
 import { TAGS_TAB_PATH, isTagsTabPath } from '@shared/tags'
+import { WORKFLOWS_TAB_PATH, isWorkflowsTabPath } from '@shared/workflows-view'
 import { HELP_TAB_PATH, isHelpTabPath } from '@shared/help'
 import { ARCHIVE_TAB_PATH, isArchiveTabPath } from '@shared/archive'
 import { TRASH_TAB_PATH, isTrashTabPath } from '@shared/trash'
@@ -102,6 +108,8 @@ import { isCustomThemeId } from './lib/custom-themes'
 import { isTableRenderMode, type TableRenderMode } from './lib/table-render-mode'
 import { customThemeSlugFromId, type CustomTheme } from '@shared/custom-themes'
 import type { Override } from '@shared/overrides'
+import type { CustomCodeLanguage } from '@shared/custom-code-languages'
+import { customCodeLanguageRegistry } from './lib/custom-code-languages'
 import { formatMarkdown } from './lib/format-markdown'
 import { confirmMoveToTrash } from './lib/confirm-trash'
 import { confirmApp, confirmAppChoice } from './lib/confirm-requests'
@@ -164,6 +172,7 @@ import {
 } from './lib/vault-layout'
 import { renderTemplate, renderTitle } from './lib/template-render'
 import type { NoteTemplate } from '@bridge-contract/templates'
+import type { WorkflowRunReceipt, WorkflowUndoResult } from '@bridge-contract/workflows'
 import { BUILTIN_TEMPLATES } from '@shared/builtin-templates'
 import {
   composeTemplateFile,
@@ -171,10 +180,13 @@ import {
   parseCustomTemplate,
   slugifyTemplateName
 } from '@shared/template-files'
+import { buildWorkflowIndex } from './lib/workflow-index'
+import type { WorkflowIndexEntry } from './lib/workflow-index'
 import {
   INITIAL_VISIBLE_NOTE_PREFETCH_BATCH_SIZE,
   selectInitialVisibleNotePrefetchPaths
 } from './lib/note-prefetch'
+import { retitleLeadingHeading } from './lib/note-heading-sync'
 import type { Panel } from './lib/vim-nav'
 import {
   allLeaves,
@@ -351,6 +363,14 @@ async function listNotesFromBridge(): Promise<NoteMeta[]> {
 let coalescedNotesRefreshInFlight: Promise<void> | null = null
 let coalescedNotesRefreshPending = false
 
+/**
+ * How to drop the vault watcher `init` installed, kept because `init` can run
+ * more than once: `retryWorkspaceBoot` re-enters it deliberately, and every
+ * re-entry that subscribed without disposing the previous one left a duplicate
+ * IPC listener behind for the rest of the session.
+ */
+let vaultChangeUnsubscribe: (() => void) | null = null
+
 function refreshNotesCoalesced(): Promise<void> {
   if (coalescedNotesRefreshInFlight) {
     coalescedNotesRefreshPending = true
@@ -375,8 +395,18 @@ async function refreshVaultIndexes(): Promise<void> {
     state.refreshNotes(),
     state.refreshAssets(),
     state.loadCustomTemplates(),
+    state.loadWorkflowIndex(),
     state.refreshRootContentHidden()
   ])
+  // A run the app died in the middle of left changes nobody was told about,
+  // and this is the first moment anyone is back to be told. Dynamically
+  // imported (the module imports this one) and never awaited: nothing about
+  // opening a vault waits on a message.
+  void import('./lib/workflow-trigger')
+    .then((mod) => mod.announceInterruptedWorkflowRun())
+    .catch(() => {
+      /* a message that cannot be raised is not a vault that failed to open */
+    })
 }
 
 /** Find a template (built-in or custom) by id, or undefined if it's gone. */
@@ -567,6 +597,10 @@ interface Prefs {
   /** Keep the current view mode (Edit / Split / Preview) when switching notes
    *  instead of resolving each note's own last mode. Off = per-note (default). */
   keepViewModeAcrossNotes: boolean
+  /** Renaming a note also rewrites its leading `# Heading` to the new title,
+   *  so the title line stops drifting from the filename. Never adds a heading
+   *  to a note that has none. (#455) */
+  syncTitleHeadingOnRename: boolean
   /** Auto-close markdown delimiters while typing: `**`+Space → `**|**`,
    *  ```` ``` ````+Enter expands a fenced block. Off restores plain typing. */
   markdownSnippets: boolean
@@ -686,6 +720,15 @@ interface Prefs {
   /** Show `/`-separated tags as a collapsible tree (sidebar + Tags view)
    *  instead of a flat list. Degrades to a flat list when no tag nests. (#439) */
   nestedTags: boolean
+  /** Master switch for the Workflows feature. Off hides the `zen://workflows`
+   *  view together with every way in (sidebar row, command, leader binding) and
+   *  closes any tab already showing it. OFF by default, deliberately: it can
+   *  rewrite notes in bulk, so it is a one-time opt-in under Settings. */
+  workflowsEnabled: boolean
+  /** Built-in workflow recipes hidden from the gallery, by preset id. Unknown
+   *  ids are kept rather than pruned, so hiding a preset survives the preset
+   *  itself being renamed away and back across versions. */
+  hiddenWorkflowPresets: string[]
   /** Full paths of collapsed nodes in the nested-tag tree. */
   collapsedTagNodes: string[]
   /** Auto-show the calendar panel when the active note is a daily or
@@ -833,6 +876,35 @@ function normalizeKanbanColumnOrder(raw: unknown): Record<string, string[]> {
 // parser accepts (see INLINE_STATUS_RE). Lower-cased, de-duplicated, capped. (#354)
 const KANBAN_STATUS_ID_RE = /^[\p{L}\d][\p{L}\d/_-]*$/u
 
+/** A workflow run as the Workflows view reports and remembers it. */
+export interface WorkflowRunRecord {
+  /** The workflow it belongs to, so it is never shown over a different graph. */
+  workflowId: string
+  receipt: WorkflowRunReceipt
+  /** Set once undone. The record stays; the offer to undo it does not. */
+  undone: WorkflowUndoResult | null
+  /** An undo that failed must not read as one that worked. */
+  undoError: string | null
+}
+
+/** Hidden gallery preset ids: strings, trimmed, deduped, order kept. Unknown
+ *  ids survive on purpose (see the Prefs doc); the cap is a config-file
+ *  hygiene bound, far above the built-in count. */
+export function normalizeHiddenWorkflowPresets(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const entry of raw) {
+    if (typeof entry !== 'string') continue
+    const id = entry.trim()
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    out.push(id)
+    if (out.length >= 64) break
+  }
+  return out
+}
+
 export function normalizeKanbanStatuses(raw: unknown): string[] {
   if (!Array.isArray(raw)) return []
   const out: string[] = []
@@ -943,6 +1015,7 @@ export const DEFAULT_PREFS: Prefs = {
   typstTagPreambles: false,
   looseMathDelimiters: false,
   keepViewModeAcrossNotes: false,
+  syncTitleHeadingOnRename: true,
   markdownSnippets: true,
   autoPairs: true,
   autoPairQuotesInProse: false,
@@ -1005,6 +1078,11 @@ export const DEFAULT_PREFS: Prefs = {
   contentAlign: 'center',
   tagsCollapsed: false,
   nestedTags: true,
+  // Off by default, deliberately: workflows can rewrite notes in bulk, and the
+  // graph editor asks more of a new user than any other view. The feature is
+  // opted into once in Settings -> Workflows, not stumbled into.
+  workflowsEnabled: false,
+  hiddenWorkflowPresets: [],
   collapsedTagNodes: [],
   autoCalendarPanel: true,
   calendarWeekStart: 'monday',
@@ -1126,6 +1204,10 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
       typeof p.keepViewModeAcrossNotes === 'boolean'
         ? p.keepViewModeAcrossNotes
         : DEFAULT_PREFS.keepViewModeAcrossNotes,
+    syncTitleHeadingOnRename:
+      typeof p.syncTitleHeadingOnRename === 'boolean'
+        ? p.syncTitleHeadingOnRename
+        : DEFAULT_PREFS.syncTitleHeadingOnRename,
     markdownSnippets:
       typeof p.markdownSnippets === 'boolean'
         ? p.markdownSnippets
@@ -1314,6 +1396,11 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
     tagsCollapsed:
       typeof p.tagsCollapsed === 'boolean' ? p.tagsCollapsed : DEFAULT_PREFS.tagsCollapsed,
     nestedTags: typeof p.nestedTags === 'boolean' ? p.nestedTags : DEFAULT_PREFS.nestedTags,
+    workflowsEnabled:
+      typeof p.workflowsEnabled === 'boolean'
+        ? p.workflowsEnabled
+        : DEFAULT_PREFS.workflowsEnabled,
+    hiddenWorkflowPresets: normalizeHiddenWorkflowPresets(p.hiddenWorkflowPresets),
     collapsedTagNodes: Array.isArray(p.collapsedTagNodes)
       ? p.collapsedTagNodes.filter((k): k is string => typeof k === 'string')
       : DEFAULT_PREFS.collapsedTagNodes,
@@ -1884,6 +1971,67 @@ function yieldForOptimisticPaint(): Promise<void> {
   })
 }
 
+/**
+ * One write chain per note path for task mutations (#503, the disk half). A
+ * mutation reads the body, computes its edit, and AWAITS the disk write; two
+ * rapid moves on the same note (Shift+H at key-repeat speed is ~30ms apart)
+ * both read the pre-first body inside that window, and the second write then
+ * puts the first move's line back the way it was. Chained per path, a
+ * mutation reads only after the previous write settled. Links are stored
+ * settled so one failed write cannot wedge a note's chain, and the tail
+ * cleans itself up so closed notes do not accumulate entries.
+ */
+const taskMutationQueues = new Map<string, Promise<void>>()
+
+function queueTaskMutation(path: string, run: () => Promise<void>): Promise<void> {
+  const prev = taskMutationQueues.get(path) ?? Promise.resolve()
+  const next = prev.then(run)
+  const tracked: Promise<void> = next
+    .then(
+      () => undefined,
+      () => undefined
+    )
+    .finally(() => {
+      if (taskMutationQueues.get(path) === tracked) taskMutationQueues.delete(path)
+    })
+  taskMutationQueues.set(path, tracked)
+  return next
+}
+
+/**
+ * Task mutations that have been asked for but have not finished, from the call
+ * itself rather than from the queue above. The optimistic paint yields a frame
+ * before anything is queued, so the queue alone has a blind spot exactly where
+ * a close is most likely to land.
+ */
+const inFlightTaskMutations = new Set<Promise<void>>()
+
+/**
+ * Wait for every task write in flight to settle.
+ *
+ * These writes go to notes that are NOT dirty (see `applyTaskMutation`), so
+ * `flushDirtyNotes` cannot see them on its own: a Kanban move still in flight
+ * when the window closes or the vault switches would simply be dropped. The
+ * queue tails are stored settled, so awaiting them cannot throw, and each entry
+ * removes itself once it resolves; the loop is for a mutation that queued
+ * another behind itself while we waited, and it is bounded so a pathological
+ * chain can never hold a quit open forever.
+ */
+async function drainTaskMutationQueues(): Promise<void> {
+  for (let pass = 0; pass < 5; pass += 1) {
+    if (inFlightTaskMutations.size === 0 && taskMutationQueues.size === 0) return
+    await Promise.all(
+      [...inFlightTaskMutations, ...taskMutationQueues.values()].map(async (pending) => {
+        try {
+          await pending
+        } catch {
+          /* a write that failed already reported itself */
+        }
+      })
+    )
+  }
+}
+
 function sameNoteJumpLocation(a: NoteJumpLocation | null, b: NoteJumpLocation | null): boolean {
   if (!a || !b) return false
   return (
@@ -2204,6 +2352,7 @@ function collectPrefs(s: {
   typstTagPreambles: boolean
   looseMathDelimiters: boolean
   keepViewModeAcrossNotes: boolean
+  syncTitleHeadingOnRename: boolean
   markdownSnippets: boolean
   autoPairs: boolean
   autoPairQuotesInProse: boolean
@@ -2262,6 +2411,8 @@ function collectPrefs(s: {
   contentAlign: 'center' | 'left'
   tagsCollapsed: boolean
   nestedTags: boolean
+  workflowsEnabled: boolean
+  hiddenWorkflowPresets: string[]
   collapsedTagNodes: string[]
   autoCalendarPanel: boolean
   calendarWeekStart: CalendarWeekStart
@@ -2304,6 +2455,7 @@ function collectPrefs(s: {
     typstTagPreambles: s.typstTagPreambles,
     looseMathDelimiters: s.looseMathDelimiters,
     keepViewModeAcrossNotes: s.keepViewModeAcrossNotes,
+    syncTitleHeadingOnRename: s.syncTitleHeadingOnRename,
     markdownSnippets: s.markdownSnippets,
     autoPairs: s.autoPairs,
     autoPairQuotesInProse: s.autoPairQuotesInProse,
@@ -2361,6 +2513,8 @@ function collectPrefs(s: {
     contentAlign: s.contentAlign,
     tagsCollapsed: s.tagsCollapsed,
     nestedTags: s.nestedTags,
+    workflowsEnabled: s.workflowsEnabled,
+    hiddenWorkflowPresets: s.hiddenWorkflowPresets,
     collapsedTagNodes: s.collapsedTagNodes,
     autoCalendarPanel: s.autoCalendarPanel,
     calendarWeekStart: s.calendarWeekStart,
@@ -2618,6 +2772,16 @@ export function isTasksViewActive(state: {
   return leaf?.activeTab === TASKS_TAB_PATH
 }
 
+/** True when the active pane is showing the Workflows canvas. Mirrors
+ *  `isTasksViewActive`; the sidebar row uses it for its selected state. */
+export function isWorkflowsViewActive(state: {
+  paneLayout: PaneLayout
+  activePaneId: string
+}): boolean {
+  const leaf = findLeaf(state.paneLayout, state.activePaneId)
+  return leaf?.activeTab === WORKFLOWS_TAB_PATH
+}
+
 function hasTasksViewOpen(state: { paneLayout: PaneLayout }): boolean {
   return allLeaves(state.paneLayout).some((leaf) => leaf.tabs.includes(TASKS_TAB_PATH))
 }
@@ -2739,6 +2903,12 @@ interface Store {
   templatePaletteTarget: { folder: NoteFolder; subpath: string } | null
   /** Custom templates loaded from `.zennotes/templates/` (built-ins are constants). */
   customTemplates: NoteTemplate[]
+  /**
+   * The vault's workflows, summarized for surfaces outside the workflows view.
+   * The command palette builds its Run entries from this synchronously, which
+   * is why it is store state rather than a fetch when the palette opens.
+   */
+  workflowIndex: WorkflowIndexEntry[]
   query: string
   initialized: boolean
   workspaceRestored: boolean
@@ -2779,6 +2949,8 @@ interface Store {
   typstTagPreambles: boolean
   looseMathDelimiters: boolean
   keepViewModeAcrossNotes: boolean
+  /** Renaming a note rewrites its leading `# Heading` to match. Persisted. (#455) */
+  syncTitleHeadingOnRename: boolean
   /** Auto-close markdown delimiters while typing. Persisted. */
   markdownSnippets: boolean
   /** Auto-insert matching `[]`, `()`, and `{}` delimiters while typing. Persisted. */
@@ -2790,6 +2962,24 @@ interface Store {
   wrapTabs: boolean
   settingsOpen: boolean
   gitModalOpen: boolean
+  /** Chapter index of the guided Workflows tutorial, or null when it is not
+   *  running. Session-only on purpose: the tutorial re-seeds (and first
+   *  cleans) its practice material on every start, so resuming a half-done
+   *  one after a restart would point at files that were never re-created.
+   *  Cleared on every vault switch with the rest of the per-vault slices: the
+   *  practice notes it is talking about live in the vault it started in. */
+  workflowTutorialStep: number | null
+  /** The most recent workflow run applied in this vault, receipt and undo
+   *  state included. Lives HERE rather than in the view for two reasons:
+   *  leaving the view and coming back must not cost the Undo (the receipt
+   *  toast expires in seconds, and a run someone can no longer take back
+   *  because they glanced at a note is a broken promise), and a run started
+   *  from the palette has to replace the one the view is showing rather than
+   *  leave two receipts for one workflow. Session-only, and per-vault: a run
+   *  id means nothing to another vault's journal, so every vault switch
+   *  clears it rather than offering an Undo that fails. The run-history UI is
+   *  the durable version of this, later. */
+  workflowRunRecord: WorkflowRunRecord | null
   themeId: string
   themeFamily: ThemeFamily
   themeMode: ThemeMode
@@ -2896,6 +3086,13 @@ interface Store {
   /** Render `/`-separated tags as a collapsible tree (sidebar + Tags view).
    *  Persisted. (#439) */
   nestedTags: boolean
+  /** Master switch for the Workflows feature. Persisted. Off hides the sidebar
+   *  row, the `view.workflows` command, and the leader binding, so the canvas
+   *  has no way in at all. */
+  workflowsEnabled: boolean
+  /** Built-in recipes hidden from the New-workflow gallery, by preset id.
+   *  Persisted (portable). Hiding is per taste, not per vault. */
+  hiddenWorkflowPresets: string[]
   /** Full paths of collapsed nodes in the nested-tag tree. Persisted. */
   collapsedTagNodes: string[]
   /** Auto-show the calendar panel when the active note is a daily or
@@ -2914,6 +3111,9 @@ interface Store {
   /** User themes parsed from ~/.config/zennotes/themes. Loaded + watched by
    *  `initCustomThemes`; the CSS is injected as it changes. */
   customThemes: CustomTheme[]
+  /** User-installed TextMate grammars and a revision used to refresh previews. */
+  customCodeLanguages: CustomCodeLanguage[]
+  customCodeLanguagesRevision: number
   /** User CSS overrides parsed from ~/.config/zennotes/overrides. Loaded + watched
    *  by `initOverrides`; enabled ones are injected on top of the active theme. */
   overrides: Override[]
@@ -3099,6 +3299,8 @@ interface Store {
    *  open + focused. If `tag` is omitted, just opens the tab with the
    *  current selection. First open with a tag starts a fresh selection. */
   openTagView: (tag?: string) => Promise<void>
+  /** Open the Workflows canvas as a tab in the active pane. */
+  openWorkflowsView: () => Promise<void>
   /** Close the Tags tab in every pane and clear the selection. */
   closeTagView: () => void
   /** Open the built-in Help tab in the active pane. */
@@ -3295,7 +3497,9 @@ interface Store {
   archiveActive: () => Promise<void>
   unarchiveActive: () => Promise<void>
   exportActiveNotePdf: () => Promise<void>
+  exportActiveNoteDocx: () => Promise<void>
   copyActiveNoteAsMarkdown: () => Promise<void>
+  copyActiveNoteAsHtml: () => Promise<void>
   setSearchOpen: (open: boolean) => void
   setVaultTextSearchOpen: (open: boolean) => void
   setCommandPaletteOpen: (open: boolean, mode?: CommandPaletteInitialMode) => void
@@ -3328,14 +3532,28 @@ interface Store {
   setTypstTagPreambles: (on: boolean) => void
   setLooseMathDelimiters: (on: boolean) => void
   setKeepViewModeAcrossNotes: (on: boolean) => void
+  setSyncTitleHeadingOnRename: (on: boolean) => void
   setMarkdownSnippets: (on: boolean) => void
   setAutoPairs: (on: boolean) => void
   setAutoPairQuotesInProse: (on: boolean) => void
   setHideBuiltinTemplates: (hidden: boolean) => void
+  /** Turn the whole Workflows feature on or off. Switching it off also closes
+   *  any pane still showing the canvas. */
+  setWorkflowsEnabled: (on: boolean) => void
+  hideWorkflowPreset: (id: string) => void
+  restoreWorkflowPreset: (id: string) => void
+  /** Wholesale replacement, for Settings' Hide all / Restore all. The preset
+   *  ids come from the caller so the store never imports the preset bodies
+   *  (they belong to lazy chunks, not the boot path). */
+  setHiddenWorkflowPresets: (ids: readonly string[]) => void
   setTabsEnabled: (on: boolean) => void
   setWrapTabs: (on: boolean) => void
   setSettingsOpen: (open: boolean) => void
   setGitModalOpen: (open: boolean) => void
+  setWorkflowTutorialStep: (step: number | null) => void
+  setWorkflowRunRecord: (
+    next: WorkflowRunRecord | null | ((prev: WorkflowRunRecord | null) => WorkflowRunRecord | null)
+  ) => void
   setTheme: (next: { id: string; family: ThemeFamily; mode: ThemeMode }) => void
   setEditorFontSize: (px: number) => void
   setEditorZoomDelta: (delta: number) => void
@@ -3440,6 +3658,8 @@ interface Store {
   insertTemplateIntoActiveNote: (template: NoteTemplate) => void
   /** Reload custom templates from disk (called on vault open and after CRUD). */
   loadCustomTemplates: () => Promise<void>
+  /** Reload the workflow index (called with the vault indexes and after workflow CRUD). */
+  loadWorkflowIndex: () => Promise<void>
   saveCustomTemplate: (input: {
     slug: string
     raw: string
@@ -3638,6 +3858,9 @@ interface Store {
   connectRemoteWorkspaceProfile: (id: string) => Promise<void>
   changeRemoteWorkspaceVaultPath: () => Promise<void>
   disconnectRemoteWorkspace: () => Promise<void>
+  /** Re-attempt the workspace configured on disk after the server was
+   *  unreachable at boot; full init on success, refreshed error on failure. */
+  retryWorkspaceBoot: () => Promise<void>
   saveRemoteWorkspaceProfile: (input: RemoteWorkspaceProfileInput) => Promise<RemoteWorkspaceProfile>
   deleteRemoteWorkspaceProfile: (id: string) => Promise<void>
   refreshRemoteWorkspaceProfiles: () => Promise<RemoteWorkspaceProfile[]>
@@ -3661,6 +3884,15 @@ const PATH_SAVE_DEBOUNCE_MS = 350
 const lastWrittenByPath = new Map<string, string>()
 
 // --- CSV database debounced persistence + echo suppression ---
+/** A user-showable message from a rejected bridge call. Electron wraps main
+ *  process rejections as "Error invoking remote method 'x': Error: <real>";
+ *  a toast should carry only the real sentence. */
+function humanIpcError(err: unknown, fallback: string): string {
+  const raw = err instanceof Error ? err.message : ''
+  const message = raw.replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, '').trim()
+  return message || fallback
+}
+
 const DATABASE_SAVE_DEBOUNCE_MS = 400
 const databaseSaveTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /** A pending write that touched the schema must persist the sidecar too. */
@@ -3886,6 +4118,51 @@ function renameNoteState(
     noteComments: rewriteNoteCommentsPath(s.noteComments, oldPath, meta.path),
     activeCommentId: s.activeCommentId,
     ...activeFieldsFrom(ensured.layout, ensured.activePaneId, contents, dirty)
+  }
+}
+
+/**
+ * After a rename, bring the note's leading `# Heading` along with the new
+ * filename (#455). Opt-in via the `syncTitleHeadingOnRename` setting; a note
+ * with no leading H1 is never given one.
+ *
+ * Runs for both open and closed notes: an open note goes through the normal
+ * buffer + save path so every pane showing it repaints, while a closed one is
+ * patched straight on disk rather than being pulled into the buffer map.
+ * Callers should refresh notes afterwards so the excerpt catches up.
+ */
+async function syncHeadingAfterRename(
+  meta: NoteMeta,
+  get: () => {
+    syncTitleHeadingOnRename: boolean
+    noteContents: Record<string, NoteContent>
+    updateNoteBody: (path: string, body: string) => void
+    persistNote: (path: string) => Promise<void>
+  }
+): Promise<void> {
+  if (!get().syncTitleHeadingOnRename) return
+  // Markdown only, and never an Obsidian drawing: those are `.md` files whose
+  // headings (`# Excalidraw Data`) are structure, not a title.
+  if (!meta.path.toLowerCase().endsWith('.md')) return
+  if (isObsidianExcalidrawPath(meta.path)) return
+  try {
+    const open = get().noteContents[meta.path]
+    if (open) {
+      if (isObsidianExcalidrawMarkdown(open.body)) return
+      const next = retitleLeadingHeading(open.body, meta.title)
+      if (next === open.body) return
+      get().updateNoteBody(meta.path, next)
+      await get().persistNote(meta.path)
+      return
+    }
+    const content = await window.zen.readNote(meta.path)
+    if (isObsidianExcalidrawMarkdown(content.body)) return
+    const next = retitleLeadingHeading(content.body, meta.title)
+    if (next === content.body) return
+    await window.zen.writeNote(meta.path, next)
+  } catch (err) {
+    // The rename itself succeeded; a failed heading rewrite must not undo it.
+    console.error('syncHeadingAfterRename failed', err)
   }
 }
 
@@ -4425,6 +4702,12 @@ export const useStore = create<Store>((set, get) => {
     const snapshot = rawSnapshot as Partial<WorkspaceSnapshot>
     const existingPaths = new Set(get().notes.map((note) => note.path))
     let layout = sanitizeWorkspaceLayout(snapshot.paneLayout, existingPaths)
+    // A workspace saved while Workflows was on (or synced from a machine where
+    // it still is) must not resurrect the canvas for someone who turned the
+    // feature off.
+    if (!get().workflowsEnabled) {
+      layout = rewritePathsInTree(layout, (path) => (isWorkflowsTabPath(path) ? null : path))
+    }
     const unreadable = new Set<string>()
     const contents: Record<string, NoteContent> = {}
     const dirty: Record<string, boolean> = {}
@@ -4538,6 +4821,7 @@ export const useStore = create<Store>((set, get) => {
   templatePaletteMode: 'create',
   templatePaletteTarget: null,
   customTemplates: [],
+  workflowIndex: [],
   query: '',
   initialized: false,
   workspaceRestored: false,
@@ -4569,6 +4853,7 @@ export const useStore = create<Store>((set, get) => {
   typstTagPreambles: loadPrefs().typstTagPreambles,
   looseMathDelimiters: loadPrefs().looseMathDelimiters,
   keepViewModeAcrossNotes: loadPrefs().keepViewModeAcrossNotes,
+  syncTitleHeadingOnRename: loadPrefs().syncTitleHeadingOnRename,
   markdownSnippets: loadPrefs().markdownSnippets,
   autoPairs: loadPrefs().autoPairs,
   autoPairQuotesInProse: loadPrefs().autoPairQuotesInProse,
@@ -4577,6 +4862,8 @@ export const useStore = create<Store>((set, get) => {
   wrapTabs: loadPrefs().wrapTabs,
   settingsOpen: false,
   gitModalOpen: false,
+  workflowTutorialStep: null,
+  workflowRunRecord: null,
   themeId: loadPrefs().themeId,
   themeFamily: loadPrefs().themeFamily,
   themeMode: loadPrefs().themeMode,
@@ -4631,6 +4918,8 @@ export const useStore = create<Store>((set, get) => {
   contentAlign: loadPrefs().contentAlign,
   tagsCollapsed: loadPrefs().tagsCollapsed,
   nestedTags: loadPrefs().nestedTags,
+  workflowsEnabled: loadPrefs().workflowsEnabled,
+  hiddenWorkflowPresets: loadPrefs().hiddenWorkflowPresets,
   collapsedTagNodes: loadPrefs().collapsedTagNodes,
   autoCalendarPanel: loadPrefs().autoCalendarPanel,
   calendarWeekStart: loadPrefs().calendarWeekStart,
@@ -4650,6 +4939,8 @@ export const useStore = create<Store>((set, get) => {
   terminalFontSize: loadPrefs().terminalFontSize,
   vaultTasks: [],
   customThemes: [],
+  customCodeLanguages: [],
+  customCodeLanguagesRevision: 0,
   overrides: [],
   tasksLoading: false,
   tasksFilter: '',
@@ -4814,6 +5105,21 @@ export const useStore = create<Store>((set, get) => {
     requestEditorFocus()
   },
 
+  openWorkflowsView: async () => {
+    const state = get()
+    // Single funnel for every entry point (sidebar row, command, leader key),
+    // so the feature switch holds even if a caller forgets to check it.
+    if (!state.workflowsEnabled) return
+    await get().openNoteInPane(state.activePaneId, WORKFLOWS_TAB_PATH)
+    // Deliberately NO blur here. This used to mirror the Tasks view and drop
+    // focus from whatever opened it, but the ordering defeats the view: the tab
+    // opens, React mounts WorkflowsView, its mount effect focuses the workflow
+    // list, and only THEN does this line run and strip it again. Focus landed on
+    // <body>, so j/k reached the document instead of the list and the whole view
+    // read as broken in a keyboard-first app. The view claims the keyboard
+    // itself, which also moves focus off the sidebar row this was blurring.
+  },
+
   openTagView: async (tag) => {
     const state = get()
     const trimmed = tag?.trim() ?? ''
@@ -4905,7 +5211,15 @@ export const useStore = create<Store>((set, get) => {
       }
       set((s) => ({ databases: { ...s.databases, [csvPath]: doc } }))
     } catch (err) {
+      // Failing silently here is how "clicking a database does nothing" bug
+      // reports happen (#499): the sidebar row looks live, the click dies in
+      // the console. Whatever the cause (server unreachable, bad schema),
+      // say so where the user is looking.
       console.error('loadDatabase failed', err)
+      const { useToastStore } = await import('./lib/toast')
+      useToastStore
+        .getState()
+        .addToast(humanIpcError(err, 'Could not open database'), 'error')
     } finally {
       set((s) =>
         csvPath in s.databasesLoading
@@ -4932,6 +5246,10 @@ export const useStore = create<Store>((set, get) => {
       set({ focusedPanel: 'editor' })
     } catch (err) {
       console.error('createDatabase failed', err)
+      const { useToastStore } = await import('./lib/toast')
+      useToastStore
+        .getState()
+        .addToast(humanIpcError(err, 'Could not create database'), 'error')
     }
   },
   newDatabase: async () => {
@@ -5410,73 +5728,108 @@ export const useStore = create<Store>((set, get) => {
     const optimisticTask = applyTaskMutationsToTask(task, mutations)
     const hasOptimisticChange = optimisticTask !== task
 
-    if (hasOptimisticChange) {
-      set((s) => ({
-        vaultTasks: s.vaultTasks.map((t) =>
-          t.sourcePath === path && t.taskIndex === task.taskIndex ? optimisticTask : t
-        )
-      }))
-      await yieldForOptimisticPaint()
-    }
+    // Tracked from HERE rather than from the write queue below: the optimistic
+    // paint yields a frame before anything is queued, and a quit inside that
+    // frame would find an empty queue and drop the move. See
+    // `drainTaskMutationQueues`.
+    const running = (async () => {
+      if (hasOptimisticChange) {
+        set((s) => ({
+          vaultTasks: s.vaultTasks.map((t) =>
+            t.sourcePath === path && t.taskIndex === task.taskIndex ? optimisticTask : t
+          )
+        }))
+        await yieldForOptimisticPaint()
+      }
 
-    const latestState = get()
-    const latestOpenBuffer = latestState.noteContents[path]
-    let body: string
-    try {
-      body = latestOpenBuffer?.body ?? (await window.zen.readNote(path)).body
-    } catch (err) {
-      console.error('readNote (mutate) failed', err)
-      if (hasOptimisticChange) void get().rescanTasksForPath(path)
-      return
-    }
-
-    let nextBody = body
-    if (task.kind === 'file') {
-      // Whole-note task: every field lives in frontmatter, so apply the whole
-      // batch as one frontmatter rewrite rather than per-line edits.
-      nextBody = updateFrontmatterFields(
-        body,
-        fileTaskMutationUpdates(mutations, toIsoDateLocal(new Date()))
-      )
-    } else {
-      for (const m of mutations) {
-        switch (m.kind) {
-          case 'set-checked':
-            nextBody = setTaskCheckedAtIndex(nextBody, task.taskIndex, m.checked)
-            break
-          case 'set-waiting':
-            nextBody = setTaskWaitingAtIndex(nextBody, task.taskIndex, m.waiting)
-            break
-          case 'set-priority':
-            nextBody = setTaskPriorityAtIndex(nextBody, task.taskIndex, m.priority)
-            break
-          case 'set-due':
-            nextBody = setTaskDueAtIndex(nextBody, task.taskIndex, m.due)
-            break
-          case 'set-field':
-            nextBody = setTaskFieldAtIndex(nextBody, task.taskIndex, m.key, m.value)
-            break
-          case 'set-text':
-            nextBody = setTaskTextAtIndex(nextBody, task.taskIndex, m.text)
-            break
+      // The optimistic paint above is immediate; everything from the body read
+      // down is queued per path, so a second mutation cannot read a base an
+      // in-flight write is about to invalidate.
+      await queueTaskMutation(path, async () => {
+        const latestState = get()
+        const latestOpenBuffer = latestState.noteContents[path]
+        let body: string
+        try {
+          body = latestOpenBuffer?.body ?? (await window.zen.readNote(path)).body
+        } catch (err) {
+          console.error('readNote (mutate) failed', err)
+          if (hasOptimisticChange) void get().rescanTasksForPath(path)
+          return
         }
-      }
-    }
-    if (nextBody === body) {
-      if (hasOptimisticChange) void get().rescanTasksForPath(path)
-      return
-    }
 
-    if (latestOpenBuffer) {
-      get().updateNoteBody(path, nextBody)
-    } else {
-      try {
-        await window.zen.writeNote(path, nextBody)
-      } catch (err) {
-        console.error('writeNote (mutate) failed', err)
-        if (hasOptimisticChange) void get().rescanTasksForPath(path)
-        return
-      }
+        let nextBody = body
+        if (task.kind === 'file') {
+          // Whole-note task: every field lives in frontmatter, so apply the whole
+          // batch as one frontmatter rewrite rather than per-line edits.
+          nextBody = updateFrontmatterFields(
+            body,
+            fileTaskMutationUpdates(mutations, toIsoDateLocal(new Date()))
+          )
+        } else {
+          for (const m of mutations) {
+            switch (m.kind) {
+              case 'set-checked':
+                nextBody = setTaskCheckedAtIndex(nextBody, task.taskIndex, m.checked)
+                break
+              case 'set-waiting':
+                nextBody = setTaskWaitingAtIndex(nextBody, task.taskIndex, m.waiting)
+                break
+              case 'set-priority':
+                nextBody = setTaskPriorityAtIndex(nextBody, task.taskIndex, m.priority)
+                break
+              case 'set-due':
+                nextBody = setTaskDueAtIndex(nextBody, task.taskIndex, m.due)
+                break
+              case 'set-field':
+                nextBody = setTaskFieldAtIndex(nextBody, task.taskIndex, m.key, m.value)
+                break
+              case 'set-text':
+                nextBody = setTaskTextAtIndex(nextBody, task.taskIndex, m.text)
+                break
+            }
+          }
+        }
+        if (nextBody === body) {
+          if (hasOptimisticChange) void get().rescanTasksForPath(path)
+          return
+        }
+
+        // The buffer route exists to MERGE with unsaved edits, so it is taken only
+        // when the note is genuinely dirty. `noteContents` also caches notes nobody
+        // has open (previews, workspace prefetch), and routing those through
+        // `updateNoteBody` hands the change to an editor autosave that has no
+        // editor: mark-dirty, wait, and hope. In a rapid Kanban chain the watcher
+        // reload from the PREVIOUS write then reloads the cache over the pending
+        // edit, and the move silently reverts on disk (#503). A clean note takes
+        // the disk write like any external edit; the cache is updated in the same
+        // breath so a third move in the chain never reads a stale base.
+        if (latestOpenBuffer && latestState.noteDirty[path]) {
+          get().updateNoteBody(path, nextBody)
+        } else {
+          try {
+            await window.zen.writeNote(path, nextBody)
+          } catch (err) {
+            console.error('writeNote (mutate) failed', err)
+            if (hasOptimisticChange) void get().rescanTasksForPath(path)
+            return
+          }
+          if (latestOpenBuffer) {
+            set((s) => {
+              const cached = s.noteContents[path]
+              // Only a still-clean cache entry is ours to move forward; a buffer
+              // the user dirtied since the read above keeps their text.
+              if (!cached || s.noteDirty[path]) return s
+              return { noteContents: { ...s.noteContents, [path]: { ...cached, body: nextBody } } }
+            })
+          }
+        }
+      })
+    })()
+    inFlightTaskMutations.add(running)
+    try {
+      await running
+    } finally {
+      inFlightTaskMutations.delete(running)
     }
   },
 
@@ -6495,6 +6848,9 @@ export const useStore = create<Store>((set, get) => {
       await get().applyFavorites(
         rewriteFavoriteNotePath(get().vaultSettings.favorites, oldPath, meta.path)
       )
+      // Before the refresh so one listing picks up both the rename and the
+      // rewritten heading (excerpt, size).
+      await syncHeadingAfterRename(meta, get)
       await get().refreshNotes()
     } catch (err) {
       console.error('renameNote failed', err)
@@ -6794,6 +7150,37 @@ export const useStore = create<Store>((set, get) => {
     })
   },
 
+  exportActiveNoteDocx: async () => {
+    const path = get().selectedPath
+    if (!path) return
+    try {
+      // The export reads the file, so unsaved edits must land first: same
+      // rule as the PDF path.
+      await get().persistNote(path)
+      if (get().noteDirty[path]) {
+        throw new Error('Could not save the note before exporting it.')
+      }
+      const docxPath = await window.zen.exportNoteDocx(path)
+      // Null means the save dialog was cancelled, which is not a result.
+      if (docxPath) {
+        const { useToastStore } = await import('./lib/toast')
+        useToastStore.getState().addToast('Word document exported', 'success', {
+          label: 'Show in folder',
+          onClick: () => void window.zen.revealFilePath(docxPath)
+        })
+      }
+    } catch (err) {
+      console.error('exportNoteDocx failed', err)
+      const { useToastStore } = await import('./lib/toast')
+      useToastStore
+        .getState()
+        .addToast(
+          err instanceof Error ? err.message : 'Could not export the note as a Word document.',
+          'error'
+        )
+    }
+  },
+
   exportActiveNotePdf: async () => {
     const path = get().selectedPath
     if (!path) return
@@ -6849,6 +7236,45 @@ export const useStore = create<Store>((set, get) => {
       }
     }
     window.zen.clipboardWriteText(body)
+  },
+
+  copyActiveNoteAsHtml: async () => {
+    const s = get()
+    const active = s.activeNote
+    if (!active) return
+    let body = s.noteContents[active.path]?.body
+    if (body == null) {
+      try {
+        body = (await window.zen.readNote(active.path)).body
+      } catch {
+        return
+      }
+    }
+    const { useToastStore } = await import('./lib/toast')
+    try {
+      // Lazy: the renderer chain rides the markdown vendor chunk, which has
+      // no business on the boot path for a clipboard command.
+      const { renderNoteEmailHtml } = await import('./lib/note-email-html')
+      const { html } = renderNoteEmailHtml(body, active.title)
+      // Both flavors: rich for mail clients, the markdown itself for editors.
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([body], { type: 'text/plain' })
+        })
+      ])
+      useToastStore
+        .getState()
+        .addToast('Copied as HTML, ready to paste into an email', 'success')
+    } catch (err) {
+      console.error('copyActiveNoteAsHtml failed', err)
+      useToastStore
+        .getState()
+        .addToast(
+          err instanceof Error ? err.message : 'Could not copy the note as HTML.',
+          'error'
+        )
+    }
   },
 
   setSearchOpen: (open) =>
@@ -7023,6 +7449,10 @@ export const useStore = create<Store>((set, get) => {
     set({ keepViewModeAcrossNotes: on })
     savePrefs(collectPrefs(get()))
   },
+  setSyncTitleHeadingOnRename: (on) => {
+    set({ syncTitleHeadingOnRename: on })
+    savePrefs(collectPrefs(get()))
+  },
   setMarkdownSnippets: (on) => {
     set({ markdownSnippets: on })
     savePrefs(collectPrefs(get()))
@@ -7037,6 +7467,27 @@ export const useStore = create<Store>((set, get) => {
   },
   setHideBuiltinTemplates: (hidden) => {
     set({ hideBuiltinTemplates: hidden })
+    savePrefs(collectPrefs(get()))
+  },
+  setWorkflowsEnabled: (on) => {
+    set({ workflowsEnabled: on })
+    savePrefs(collectPrefs(get()))
+    if (!on) closeWorkflowsTabsEverywhere()
+  },
+  hideWorkflowPreset: (id) => {
+    set((s) => ({
+      hiddenWorkflowPresets: normalizeHiddenWorkflowPresets([...s.hiddenWorkflowPresets, id])
+    }))
+    savePrefs(collectPrefs(get()))
+  },
+  restoreWorkflowPreset: (id) => {
+    set((s) => ({
+      hiddenWorkflowPresets: s.hiddenWorkflowPresets.filter((hidden) => hidden !== id)
+    }))
+    savePrefs(collectPrefs(get()))
+  },
+  setHiddenWorkflowPresets: (ids) => {
+    set({ hiddenWorkflowPresets: normalizeHiddenWorkflowPresets([...ids]) })
     savePrefs(collectPrefs(get()))
   },
   setTabsEnabled: (on) => {
@@ -7084,6 +7535,11 @@ export const useStore = create<Store>((set, get) => {
   },
   setSettingsOpen: (open) => set({ settingsOpen: open }),
   setGitModalOpen: (open) => set({ gitModalOpen: open }),
+  setWorkflowTutorialStep: (step) => set({ workflowTutorialStep: step }),
+  setWorkflowRunRecord: (next) =>
+    set((s) => ({
+      workflowRunRecord: typeof next === 'function' ? next(s.workflowRunRecord) : next
+    })),
   setTheme: ({ id, family, mode }) => {
     set({ themeId: id, themeFamily: family, themeMode: mode })
     savePrefs(collectPrefs(get()))
@@ -7766,6 +8222,20 @@ export const useStore = create<Store>((set, get) => {
     }
   },
 
+  loadWorkflowIndex: async () => {
+    // A workspace with no workflow support (the web bridge, an old server)
+    // simply has none; the palette then offers no Run entries, same as a vault
+    // with an empty workflows directory.
+    if (typeof window.zen.listWorkflows !== 'function') return
+    try {
+      const files = await window.zen.listWorkflows()
+      set({ workflowIndex: buildWorkflowIndex(files) })
+    } catch (err) {
+      console.error('loadWorkflowIndex failed', err)
+      set({ workflowIndex: [] })
+    }
+  },
+
   saveCustomTemplate: async (input) => {
     await window.zen.writeTemplate(input)
     await get().loadCustomTemplates()
@@ -7877,6 +8347,7 @@ export const useStore = create<Store>((set, get) => {
       await get().persistNote(notePath)
       const copy = await window.zen.duplicateNote(notePath)
       const renamed = await window.zen.renameNote(copy.path, trimmedName)
+      await syncHeadingAfterRename(renamed, get)
       await get().refreshNotes()
       await get().selectNote(renamed.path)
       get().setFocusedPanel('editor')
@@ -8148,6 +8619,25 @@ export const useStore = create<Store>((set, get) => {
       if (s.noteDirty[s.selectedPath]) await get().persistNote(s.selectedPath)
     }
 
+    // Virtual Workflows tab. Same deal as Tasks below: `zen://workflows` is not
+    // a file, so it must short-circuit before the disk read or readNote tries to
+    // open `<vault>/zen:/workflows` and the tab never opens.
+    if (isWorkflowsTabPath(path)) {
+      // Same gate as `openNoteInPane`: a disabled feature has no focusable tab.
+      if (!s.workflowsEnabled) return
+      set((cur) => {
+        const nextLayout =
+          updateLeaf(cur.paneLayout, paneId, (l) => leafWithAddedTab(l, path)) ??
+          cur.paneLayout
+        return {
+          paneLayout: nextLayout,
+          activePaneId: paneId,
+          ...activeFieldsFrom(nextLayout, paneId, cur.noteContents, cur.noteDirty)
+        }
+      })
+      return
+    }
+
     // Virtual Tasks tab — no disk read, no content cache entry. Just update
     // the pane layout so the tab becomes active and EditorPane can render
     // the panel instead of a CodeMirror view.
@@ -8313,6 +8803,11 @@ export const useStore = create<Store>((set, get) => {
     const s = get()
     const leaf = findLeaf(s.paneLayout, paneId)
     if (!leaf) return
+    // The feature switch, at the layer every caller funnels through rather than
+    // only in `openWorkflowsView`. Reopen Closed Tab lands here directly, and a
+    // canvas that can write to the vault may never come back past a switch that
+    // turned it off.
+    if (isWorkflowsTabPath(path) && !s.workflowsEnabled) return
     // Tasks / Tags / Help / Trash tabs are virtual — add them without touching disk.
     if (isWorkspaceVirtualTabPath(path)) {
       set((cur) => {
@@ -8698,16 +9193,19 @@ export const useStore = create<Store>((set, get) => {
     // "inbox" folder mapped to the vault root, that path has no `inbox/`
     // prefix, so building `${folder}/${subpath}/` would miss every path under
     // it — notes and asset tabs alike (the reported PDF "Failed to fetch" on
-    // folder rename). `vaultRelativeFolderPath` handles the root-mapped case.
+    // folder rename). `vaultRelativeFolderPath` handles the root-mapped case,
+    // and since #398 also resolves a remapped folder's real directory name.
     const oldFolderPath = vaultRelativeFolderPath(folder, oldSubpath, get().vaultSettings)
     const newFolderPath = vaultRelativeFolderPath(folder, newSubpath, get().vaultSettings)
     const oldPrefix = `${oldFolderPath}/`
     const newPrefix = `${newFolderPath}/`
     const rewritePath = (p: string): string =>
-      p.startsWith(oldPrefix) ? newPrefix + p.slice(oldPrefix.length) : p
+      p.toLowerCase().startsWith(oldPrefix.toLowerCase())
+        ? newPrefix + p.slice(oldPrefix.length)
+        : p
 
     const notes = get().notes.map((n) =>
-      n.path.startsWith(oldPrefix) ? { ...n, path: rewritePath(n.path) } : n
+      n.path.toLowerCase().startsWith(oldPrefix.toLowerCase()) ? { ...n, path: rewritePath(n.path) } : n
     )
     const folders = get().folders.map((f) => {
       if (f.folder !== folder) return f
@@ -8813,7 +9311,8 @@ export const useStore = create<Store>((set, get) => {
     ) {
       set({ view: { kind: 'folder', folder, subpath: '' } })
     }
-    const prefix = `${folder}/${subpath}/`
+    const folderPath = resolveFolderPath(folder, get().vaultSettings.systemFolderPaths)
+    const prefix = `${folderPath}/${subpath}/`
     const nextFolderIcons = removeFolderIcons(get().vaultSettings.folderIcons, folder, subpath)
     const nextFolderColors = removeFolderColors(get().vaultSettings.folderColors, folder, subpath)
     set((s) => {
@@ -9085,9 +9584,34 @@ export const useStore = create<Store>((set, get) => {
         savePrefs(collectPrefs(get()))
       }
     }
-    window.zen.onVaultChange((ev) => {
+    // `retryWorkspaceBoot` re-enters `init` on every successful reconnect, so
+    // the previous subscription has to go before a new one is made. Without
+    // this each reconnect left a live listener behind and one file change
+    // arrived as N changes, each running the full `applyChange`.
+    vaultChangeUnsubscribe?.()
+    vaultChangeUnsubscribe = window.zen.onVaultChange((ev) => {
       void get().applyChange(ev)
     })
+  },
+
+  retryWorkspaceBoot: async () => {
+    set({ workspaceSetupError: null })
+    try {
+      const vault = await window.zen.retryWorkspaceBoot()
+      if (vault) {
+        // The workspace is reachable again: run the exact boot path so the
+        // vault, settings, indexes and session restore land the normal way.
+        // init() is once-guarded for real boots; this re-entry is the point.
+        set({ initialized: false })
+        await get().init()
+        return
+      }
+      // Still down. Refresh the info so the screen shows the latest reason.
+      await get().refreshWorkspaceContext()
+    } catch (err) {
+      console.error('retryWorkspaceBoot failed', err)
+      set({ workspaceSetupError: humanIpcError(err, 'Could not reach the server.') })
+    }
   },
 
   openVaultPicker: async () => {
@@ -9146,6 +9670,8 @@ export const useStore = create<Store>((set, get) => {
       assetFiles: [],
       assetUndoStack: [],
       closedTabStack: [],
+      workflowRunRecord: null,
+      workflowTutorialStep: null,
       vaultTasks: [],
       selectedTags: [],
       view: { kind: 'folder', folder: 'inbox', subpath: '' },
@@ -9198,6 +9724,8 @@ export const useStore = create<Store>((set, get) => {
         assetFiles: [],
         assetUndoStack: [],
         closedTabStack: [],
+        workflowRunRecord: null,
+        workflowTutorialStep: null,
         vaultTasks: [],
         selectedTags: [],
         view: { kind: 'folder', folder: 'inbox', subpath: '' },
@@ -9259,6 +9787,8 @@ export const useStore = create<Store>((set, get) => {
           assetFiles: [],
           assetUndoStack: [],
           closedTabStack: [],
+          workflowRunRecord: null,
+          workflowTutorialStep: null,
           vaultTasks: [],
           selectedTags: [],
           view: { kind: 'folder', folder: 'inbox', subpath: '' },
@@ -9295,6 +9825,8 @@ export const useStore = create<Store>((set, get) => {
         assetFiles: [],
         assetUndoStack: [],
         closedTabStack: [],
+        workflowRunRecord: null,
+        workflowTutorialStep: null,
         vaultTasks: [],
         selectedTags: [],
         view: { kind: 'folder', folder: 'inbox', subpath: '' },
@@ -9424,6 +9956,8 @@ export const useStore = create<Store>((set, get) => {
         assetFiles: [],
         assetUndoStack: [],
         closedTabStack: [],
+        workflowRunRecord: null,
+        workflowTutorialStep: null,
         vaultTasks: [],
         selectedTags: [],
         view: { kind: 'folder', folder: 'inbox', subpath: '' },
@@ -9507,6 +10041,8 @@ export const useStore = create<Store>((set, get) => {
         assetFiles: [],
         assetUndoStack: [],
         closedTabStack: [],
+        workflowRunRecord: null,
+        workflowTutorialStep: null,
         vaultTasks: [],
         selectedTags: [],
         view: { kind: 'folder', folder: 'inbox', subpath: '' },
@@ -9588,6 +10124,8 @@ export const useStore = create<Store>((set, get) => {
         assetFiles: [],
         assetUndoStack: [],
         closedTabStack: [],
+        workflowRunRecord: null,
+        workflowTutorialStep: null,
         vaultTasks: [],
         selectedTags: [],
         view: { kind: 'folder', folder: 'inbox', subpath: '' },
@@ -9633,6 +10171,8 @@ export const useStore = create<Store>((set, get) => {
           assetFiles: [],
           assetUndoStack: [],
           closedTabStack: [],
+          workflowRunRecord: null,
+          workflowTutorialStep: null,
           vaultTasks: [],
           selectedTags: [],
           view: { kind: 'folder', folder: 'inbox', subpath: '' },
@@ -9667,6 +10207,8 @@ export const useStore = create<Store>((set, get) => {
         assetFiles: [],
         assetUndoStack: [],
         closedTabStack: [],
+        workflowRunRecord: null,
+        workflowTutorialStep: null,
         vaultTasks: [],
         selectedTags: [],
         view: { kind: 'folder', folder: 'inbox', subpath: '' },
@@ -9732,6 +10274,10 @@ export const useStore = create<Store>((set, get) => {
 
   flushDirtyNotes: async () => {
     get().persistWorkspace()
+    // Before the dirty sweep, not after: a queued task write on a note someone
+    // has open lands in the buffer rather than on disk, so draining first is
+    // what puts it in the set the sweep below persists.
+    await drainTaskMutationQueues()
     const dirtyPaths = Object.entries(get().noteDirty)
       .filter(([, isDirty]) => isDirty)
       .map(([path]) => path)
@@ -9751,6 +10297,25 @@ useStore.subscribe((state, prevState) => {
   if (!prevState.activePaneId || state.lastActivePaneId === prevState.activePaneId) return
   useStore.setState({ lastActivePaneId: prevState.activePaneId })
 })
+/** Drop the virtual Workflows tab from every pane that has it, mirroring
+ *  `closeTasksView`. Called whenever the feature is switched off, from either
+ *  Settings or an external config edit, so a disabled feature can never leave a
+ *  live canvas (which can write to the vault) on screen. */
+function closeWorkflowsTabsEverywhere(): void {
+  const state = useStore.getState()
+  for (const leaf of allLeaves(state.paneLayout)) {
+    if (leaf.tabs.includes(WORKFLOWS_TAB_PATH)) {
+      void state.closeTabInPane(leaf.id, WORKFLOWS_TAB_PATH)
+    }
+  }
+  // Closing a tab records it for Reopen Closed Tab, so without this the canvas
+  // is one Cmd+Shift+T away from being back. Safe to run straight after the
+  // loop: a virtual tab holds no unsaved body, so every close above reached its
+  // `set` synchronously.
+  useStore.setState((s) => ({
+    closedTabStack: s.closedTabStack.filter((entry) => !isWorkflowsTabPath(entry.path))
+  }))
+}
 
 // --- Portable config file sync (desktop) ------------------------------------
 
@@ -9773,6 +10338,9 @@ function applyPortableConfig(next: AppConfigPortable): void {
     patch[key] = mergedRecord[key]
   }
   useStore.setState(patch as Partial<Store>)
+  // setState bypasses the setters on purpose (no write-back to the file), so
+  // the tab cleanup that setWorkflowsEnabled does has to be repeated here.
+  if (!merged.workflowsEnabled) closeWorkflowsTabsEverywhere()
 }
 
 let configSyncInitialized = false
@@ -9881,6 +10449,38 @@ export function initCustomThemes(): void {
   if (typeof bridge.onCustomThemesChange === 'function') {
     try {
       bridge.onCustomThemesChange(applyCustomThemes)
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+async function applyCustomCodeLanguages(languages: CustomCodeLanguage[]): Promise<void> {
+  useStore.setState({ customCodeLanguages: languages })
+  try {
+    await customCodeLanguageRegistry.replace(languages)
+  } finally {
+    useStore.setState((state) => ({
+      customCodeLanguagesRevision: state.customCodeLanguagesRevision + 1
+    }))
+  }
+}
+
+export function refreshCustomCodeLanguages(): void {
+  const bridge = typeof window !== 'undefined' ? window.zen : undefined
+  if (!bridge || typeof bridge.listCustomCodeLanguages !== 'function') return
+  void bridge.listCustomCodeLanguages().then(applyCustomCodeLanguages).catch(() => {})
+}
+
+export function initCustomCodeLanguages(): void {
+  const bridge = typeof window !== 'undefined' ? window.zen : undefined
+  if (!bridge || typeof bridge.listCustomCodeLanguages !== 'function') return
+  refreshCustomCodeLanguages()
+  if (typeof bridge.onCustomCodeLanguagesChange === 'function') {
+    try {
+      bridge.onCustomCodeLanguagesChange((next) => {
+        void applyCustomCodeLanguages(next)
+      })
     } catch {
       /* ignore */
     }

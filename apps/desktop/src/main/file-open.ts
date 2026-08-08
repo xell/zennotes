@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export const MARKDOWN_FILE_EXTENSIONS = ['.md', '.markdown'] as const
 
@@ -67,9 +68,16 @@ export function markdownPathsFromArgv(argv: readonly string[]): string[] {
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i]
     if (!arg || arg.startsWith('-')) continue
-    if (arg.includes('://')) continue
-    if (!isMarkdownFilePath(arg)) continue
-    out.push(arg)
+    let candidate = arg
+    if (arg.includes('://')) {
+      // Same file:// decoding as `candidatePathsFromArgv`: a Linux file
+      // manager's `%U` hand-off wraps the path in a URL.
+      const decoded = pathFromFileUrl(arg)
+      if (!decoded) continue
+      candidate = decoded
+    }
+    if (!isMarkdownFilePath(candidate)) continue
+    out.push(candidate)
   }
   return out
 }
@@ -86,8 +94,29 @@ export function candidatePathsFromArgv(argv: readonly string[]): string[] {
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i]
     if (!arg || arg.startsWith('-')) continue
-    if (arg.includes('://')) continue
+    if (arg.includes('://')) {
+      // Linux file managers launch us through the .desktop's `Exec=… %U`,
+      // which hands paths over as file:// URLs. Dropping those made "Open
+      // with ZenNotes" on a folder a silent no-op; decode them instead.
+      // Other schemes (zennotes:// deep links) stay with their own handler.
+      const decoded = pathFromFileUrl(arg)
+      if (decoded) out.push(decoded)
+      continue
+    }
     out.push(arg)
   }
   return out
+}
+
+/** `file:///a/b` → `/a/b`, or null for anything malformed or non-file. */
+function pathFromFileUrl(arg: string): string | null {
+  if (!arg.startsWith('file://')) return null
+  // A bare `file://` decodes to `/` rather than throwing, and nothing that
+  // hands us a URL means "open the filesystem root by default".
+  if (arg.length <= 'file://'.length) return null
+  try {
+    return fileURLToPath(arg)
+  } catch {
+    return null
+  }
 }

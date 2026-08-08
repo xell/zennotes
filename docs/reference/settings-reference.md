@@ -34,6 +34,24 @@ Current options include:
 - editor behavior
 - search backend preference
 - Quick Note naming behavior
+- custom code languages in desktop builds
+
+### Custom code languages
+
+The desktop app can install a self-contained TextMate JSON grammar from
+`Settings → Editor → Languages`. During import you choose a primary fenced-code
+tag and optional aliases, then verify highlighting against an editable sample
+before installing it.
+
+Installed languages apply to Edit, Split, and Preview and can be enabled,
+disabled, replaced, revealed on disk, or removed from the same screen. Packs are
+stored machine-wide under the ZenNotes config directory in
+`languages/<id>/`, with a `manifest.json` and `grammar.tmLanguage.json`.
+
+Custom languages provide syntax highlighting only. They do not add completion,
+formatting, indentation rules, or language-server support. Built-in language and
+diagram tags are reserved, and the initial importer accepts only self-contained
+grammars without external TextMate scope dependencies.
 
 ### Vault text search backend
 

@@ -16,6 +16,7 @@ import { isHelpTabPath } from '@shared/help'
 import { isArchiveTabPath } from '@shared/archive'
 import { isTagsTabPath } from '@shared/tags'
 import { isTasksTabPath } from '@shared/tasks'
+import { isWorkflowsTabPath } from '@shared/workflows-view'
 import { isTrashTabPath } from '@shared/trash'
 import { isQuickNotesTabPath } from '@shared/quick-notes'
 import { focusEditorNormalMode } from '../lib/editor-focus'
@@ -26,6 +27,7 @@ function isVirtualPath(path: string | null): boolean {
   return (
     isQuickNotesTabPath(path) ||
     isTasksTabPath(path) ||
+    isWorkflowsTabPath(path) ||
     isTagsTabPath(path) ||
     isHelpTabPath(path) ||
     isArchiveTabPath(path) ||

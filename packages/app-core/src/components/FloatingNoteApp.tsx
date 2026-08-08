@@ -32,6 +32,7 @@ import { history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { vimAwareDefaultKeymap, vimAwareMarkdownKeymap } from '../lib/cm-vim-default-keymap'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
+import { customCodeFenceHighlightExtension } from '../lib/cm-custom-code-languages'
 import { applyVimInsertEscape } from '../lib/vim-insert-escape'
 import { applyVimKeymap } from '../lib/vim-keymap'
 import { DEFAULT_VIM_KEYMAP } from '../lib/vim-keymap-defaults'
@@ -382,6 +383,7 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
             appliedPrefsRef.current.wordWrap ? EditorView.lineWrapping : []
           ),
           markdown({ base: markdownLanguage, codeLanguages: resolveCodeLanguage, addKeymap: false }),
+          customCodeFenceHighlightExtension,
           vimAwareMarkdownKeymap,
           markdownListIndentPlugin,
           frontmatterStyle,

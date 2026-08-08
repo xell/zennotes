@@ -29,6 +29,7 @@ import {
   noteFolderSubpath,
   normalizeVaultSettings
 } from './vault-layout'
+import { runWorkflowById } from './workflow-trigger'
 import { DEMO_TOUR_START_PATH } from '@shared/demo-tour'
 
 const APP_WEBSITE_URL = 'https://zennotes.org'
@@ -417,6 +418,16 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       }
     },
     {
+      id: 'note.copy-html',
+      title: 'Copy Note as HTML (for email)',
+      category: 'Note',
+      keywords: 'copy clipboard html email rich mail paste share formatted',
+      when: () => !!getState().activeNote,
+      run: async () => {
+        await getState().copyActiveNoteAsHtml()
+      }
+    },
+    {
       id: 'note.export-pdf',
       title: 'Export Note as PDF…',
       category: 'Note',
@@ -428,6 +439,22 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
           window.zen.getAppInfo().runtime === 'web'),
       run: async () => {
         await getState().exportActiveNotePdf()
+      }
+    },
+    {
+      id: 'note.export-docx',
+      title: 'Export Note as Word Document…',
+      category: 'Note',
+      keywords: 'save word docx doc export office editable',
+      // Desktop-only: the serializer embeds local images from the main
+      // process, which the web app has no access to.
+      when: () =>
+        !!getState().activeNote &&
+        getState().workspaceMode !== 'remote' &&
+        window.zen.getAppInfo().runtime === 'desktop' &&
+        typeof window.zen.exportNoteDocx === 'function',
+      run: async () => {
+        await getState().exportActiveNoteDocx()
       }
     },
     {
@@ -1271,6 +1298,17 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       run: () => getState().openTasksView()
     },
     {
+      id: 'view.workflows',
+      title: 'Open Workflows',
+      category: 'View',
+      shortcut: ':workflows',
+      keywords: 'workflow automation pipeline graph canvas nodes run dry',
+      // Hidden entirely when the feature is switched off in Settings, so the
+      // palette never offers a command that would open nothing.
+      when: () => getState().workflowsEnabled,
+      run: () => getState().openWorkflowsView()
+    },
+    {
       id: 'view.tags',
       title: 'Open Tags',
       category: 'View',
@@ -1801,6 +1839,7 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       title: 'Open File…',
       category: 'Vault',
       keywords: 'open file markdown external outside vault one-off document proofread standalone',
+      shortcut: shortcut('global.openFile'),
       when: () =>
         window.zen.getAppInfo().runtime === 'desktop' &&
         window.zen.getCapabilities().supportsLocalFilesystemPickers,
@@ -2029,6 +2068,68 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
           return getState().connectRemoteWorkspaceProfile(profile.id)
         }
       })
+    }
+  }
+
+  /* ---------------- Workflows: the picker, and one Run entry each ---------------- */
+  // Built from the store's workflow index the same way the remote profiles
+  // above are built from theirs, so the palette always reflects the vault as
+  // of the moment it opened. Drafts are left out on purpose: a draft cannot
+  // run, and a row that only answers with an error is worse than no row.
+  {
+    const state = getState()
+    // Where a workflow could run at all: the desktop app, on a local vault.
+    // Deliberately NOT gated on the feature switch, because the tutorial below
+    // must be findable BEFORE someone has opted in: starting it IS the opt-in,
+    // exactly like the button in Settings.
+    const workflowsPossibleHere =
+      state.workspaceMode !== 'remote' &&
+      window.zen.getAppInfo().runtime === 'desktop' &&
+      typeof window.zen.applyWorkflow === 'function'
+    if (workflowsPossibleHere) {
+      cmds.push({
+        id: 'workflow.tutorial',
+        title: 'Start Workflows Tutorial',
+        category: 'Workflow',
+        keywords: 'workflow tutorial learn guide walkthrough practice lesson automation onboarding',
+        when: () => getState().workspaceMode !== 'remote',
+        run: () => {
+          // Lazy on purpose: the tutorial's chapters and seeds belong to the
+          // lazy layer, and a palette command must not drag them into boot.
+          void import('./workflow-tutorial-flow').then((mod) => mod.startWorkflowTutorial())
+        }
+      })
+    }
+    const runnableHere = state.workflowsEnabled && workflowsPossibleHere
+    if (runnableHere) {
+      // `runnableHere` gates what this build of the list contains; the `when`
+      // guard gates every LATER use of a captured command object. The vim ex
+      // registry snapshots commands at editor mount, so without `when`, a
+      // `:workflow_run_…` name kept running the full write ladder after the
+      // feature was switched off in Settings.
+      const stillOn = (): boolean => getState().workflowsEnabled
+      // The browsable list, in the same drill-down shape as `Switch Vault…`.
+      cmds.push({
+        id: 'workflow.runPicker',
+        title: 'Run Workflow…',
+        category: 'Workflow',
+        keywords: 'workflow run list pick choose automation trigger pipeline',
+        when: stillOn,
+        run: () => {
+          /* handled by CommandPalette */
+        }
+      })
+      for (const entry of state.workflowIndex) {
+        if (entry.status !== 'active') continue
+        cmds.push({
+          id: `workflow.run.${entry.id}`,
+          title: `Run: ${entry.name}`,
+          category: 'Workflow',
+          keywords: `${entry.name} ${entry.description} ${entry.id} workflow run automation trigger pipeline`,
+          when: stillOn,
+          run: () => runWorkflowById(entry.id)
+        })
+      }
     }
   }
 

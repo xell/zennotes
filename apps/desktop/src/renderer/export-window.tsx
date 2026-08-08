@@ -13,6 +13,7 @@ import {
   customThemeSlugFromId,
   resolveCustomThemeMode
 } from '@renderer/lib/custom-themes'
+import { withExportTitle } from '@shared/export-title'
 import '@renderer/styles/index.css'
 
 const PREFS_KEY = 'zen:prefs:v2'
@@ -298,7 +299,10 @@ function ExportNoteWindow({ notePath }: { notePath: string }): JSX.Element {
           selectedPath: noteContent.path,
           activeNote: noteContent
         })
-        document.title = noteContent.title
+        // The export states the note's title in the document itself (a note
+        // has no tab or breadcrumb on paper): frontmatter `title:` first,
+        // then the filename, unless the body already opens with its own H1.
+        document.title = withExportTitle(noteContent.body, noteContent.title).title
         setNote(noteContent)
       } catch (err) {
         if (cancelled) return
@@ -442,7 +446,7 @@ function ExportNoteWindow({ notePath }: { notePath: string }): JSX.Element {
       `}</style>
       <main className="export-note-shell">
         <Preview
-          markdown={note.body}
+          markdown={withExportTitle(note.body, note.title).markdown}
           notePath={note.path}
           onRendered={() => setExportState('ready')}
         />

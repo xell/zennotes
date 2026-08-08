@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  candidatePathsFromArgv,
   isMarkdownFilePath,
   markdownPathsFromArgv,
   resolveMarkdownOpenTarget,
@@ -81,4 +82,61 @@ describe('markdownPathsFromArgv', () => {
   it('returns an empty array when there are no markdown arguments', () => {
     expect(markdownPathsFromArgv(['/path/to/ZenNotes'])).toEqual([])
   })
+
+  // A `.desktop` `%U` hand-off is a Linux mechanism, and a drive-letter-less
+  // file:// URL is invalid on win32 (`fileURLToPath` refuses it), so each
+  // platform asserts its own native URL shape rather than the other's.
+  it.skipIf(process.platform === 'win32')(
+    'decodes file:// URLs from a .desktop %U hand-off, deep links stay skipped',
+    () => {
+      const argv = [
+        '/path/to/ZenNotes',
+        'file:///docs/Some%20Note.md',
+        'zennotes://open?path=x'
+      ]
+      expect(markdownPathsFromArgv(argv)).toEqual(['/docs/Some Note.md'])
+    }
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'decodes drive-letter file:// URLs on Windows, deep links stay skipped',
+    () => {
+      const argv = [
+        'C:\\app\\ZenNotes.exe',
+        'file:///C:/docs/Some%20Note.md',
+        'zennotes://open?path=x'
+      ]
+      expect(markdownPathsFromArgv(argv)).toEqual(['C:\\docs\\Some Note.md'])
+    }
+  )
+})
+
+describe('candidatePathsFromArgv file:// decoding', () => {
+  it.skipIf(process.platform === 'win32')(
+    'decodes folder and file URLs, skips other schemes and malformed URLs',
+    () => {
+      const argv = [
+        '/path/to/ZenNotes',
+        'file:///home/user/notes',
+        'file://',
+        'zennotes://open?path=x',
+        '/plain/dir'
+      ]
+      expect(candidatePathsFromArgv(argv)).toEqual(['/home/user/notes', '/plain/dir'])
+    }
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'decodes folder and file URLs on Windows, skips other schemes and malformed URLs',
+    () => {
+      const argv = [
+        'C:\\app\\ZenNotes.exe',
+        'file:///C:/home/user/notes',
+        'file://',
+        'zennotes://open?path=x',
+        'C:\\plain\\dir'
+      ]
+      expect(candidatePathsFromArgv(argv)).toEqual(['C:\\home\\user\\notes', 'C:\\plain\\dir'])
+    }
+  )
 })

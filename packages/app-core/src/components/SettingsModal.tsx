@@ -36,6 +36,8 @@ import {
   type McpServerRuntime,
 } from "@shared/mcp-clients";
 import { useStore, refreshCustomThemes, refreshOverrides } from "../store";
+import { WORKFLOW_PRESETS, hiddenPresetsInOrder } from "@shared/workflows/presets";
+import { startWorkflowTutorial } from "../lib/workflow-tutorial-flow";
 import type { LineNumberMode, WhichKeyHintMode } from "../store";
 import type {
   KeymapDefinition,
@@ -45,6 +47,7 @@ import type {
 import {
   findKeymapConflict,
   formatKeymapBinding,
+  getDefaultKeymapBinding,
   getKeymapBinding,
   getKeymapDefinitionsByGroup,
   getKeymapDisplay,
@@ -82,6 +85,7 @@ import {
   DEFAULT_SYSTEM_FOLDER_LABELS,
   getSystemFolderLabel,
 } from "../lib/system-folder-labels";
+import { DEFAULT_FOLDER_PATHS, resolveFolderPath } from "@shared/system-folder-paths";
 import {
   normalizeDailyNoteLocale,
   normalizeDailyNotesDirectory,
@@ -110,6 +114,7 @@ import { isImeComposing } from "../lib/ime";
 import { RemoteWorkspaceProfileModal } from "./RemoteWorkspaceProfileModal";
 import { Button } from "./ui/Button";
 import { TERMINAL_THEME_NAMES } from "../lib/terminal-themes";
+import { CustomCodeLanguagesSettings } from "./CustomCodeLanguagesSettings";
 
 type SettingsCategoryId =
   | "appearance"
@@ -468,6 +473,12 @@ export function SettingsModal(): JSX.Element {
   const setKeepViewModeAcrossNotes = useStore(
     (s) => s.setKeepViewModeAcrossNotes,
   );
+  const syncTitleHeadingOnRename = useStore(
+    (s) => s.syncTitleHeadingOnRename,
+  );
+  const setSyncTitleHeadingOnRename = useStore(
+    (s) => s.setSyncTitleHeadingOnRename,
+  );
   const markdownSnippets = useStore((s) => s.markdownSnippets);
   const setMarkdownSnippets = useStore((s) => s.setMarkdownSnippets);
   const autoPairs = useStore((s) => s.autoPairs);
@@ -478,6 +489,10 @@ export function SettingsModal(): JSX.Element {
   );
   const tabsEnabled = useStore((s) => s.tabsEnabled);
   const setTabsEnabled = useStore((s) => s.setTabsEnabled);
+  const workflowsEnabled = useStore((s) => s.workflowsEnabled);
+  const setWorkflowsEnabled = useStore((s) => s.setWorkflowsEnabled);
+  const hiddenWorkflowPresets = useStore((s) => s.hiddenWorkflowPresets);
+  const setHiddenWorkflowPresets = useStore((s) => s.setHiddenWorkflowPresets);
   const wrapTabs = useStore((s) => s.wrapTabs);
   const setWrapTabs = useStore((s) => s.setWrapTabs);
   const quickNoteDateTitle = useStore((s) => s.quickNoteDateTitle);
@@ -567,6 +582,8 @@ export function SettingsModal(): JSX.Element {
   const supportsCustomTemplates =
     zenBridge.getCapabilities().supportsCustomTemplates &&
     workspaceMode !== "remote";
+  const supportsCustomCodeLanguages =
+    !!zenBridge.getCapabilities().supportsCustomCodeLanguages;
   const [templateEditor, setTemplateEditor] = useState<{
     initialRaw?: string;
     sourcePath?: string;
@@ -1797,6 +1814,11 @@ export function SettingsModal(): JSX.Element {
         "shortcut",
         "task",
         "tasks",
+        "workflow",
+        "workflows",
+        "rename",
+        "title",
+        "heading",
       ],
       searchItems: [
         {
@@ -1913,6 +1935,21 @@ export function SettingsModal(): JSX.Element {
             "latex",
             "relaxed",
             "loose",
+          ],
+        },
+        {
+          id: "sync-title-heading-on-rename",
+          title: "Sync title heading on rename",
+          description:
+            "Renaming a note rewrites its leading # heading to the new name.",
+          keywords: [
+            "rename",
+            "title",
+            "heading",
+            "h1",
+            "sync",
+            "filename",
+            "first line",
           ],
         },
         {
@@ -2044,6 +2081,36 @@ export function SettingsModal(): JSX.Element {
           description:
             "Show character-level changes inline within a changed line, or show whole deleted/inserted lines.",
           keywords: ["diff", "merge", "inline", "line-level", "git"],
+        },
+        {
+          id: "custom-code-languages",
+          title: "Custom code languages",
+          description:
+            "Import TextMate grammars for custom fenced code-block highlighting.",
+          keywords: [
+            "syntax",
+            "highlight",
+            "textmate",
+            "grammar",
+            "code fence",
+            "language",
+          ],
+        },
+        {
+          id: "workflows-enabled",
+          title: "Workflows",
+          description:
+            "The Workflows canvas for running repeatable, file-changing steps over the vault.",
+          keywords: [
+            "workflow",
+            "workflows",
+            "automation",
+            "canvas",
+            "pipeline",
+            "graph",
+            "nodes",
+            "run",
+          ],
         },
       ],
       subTabs: [
@@ -2287,6 +2354,7 @@ export function SettingsModal(): JSX.Element {
             "live-preview",
             "render-tables",
             "hide-active-line-markup",
+            "sync-title-heading-on-rename",
             "markdown-overrides",
             "auto-pairs",
             "auto-pair-quotes-in-prose",
@@ -2380,6 +2448,13 @@ export function SettingsModal(): JSX.Element {
                   value={keepViewModeAcrossNotes}
                   settingId="keep-view-mode"
                   onChange={setKeepViewModeAcrossNotes}
+                />
+                <ToggleRow
+                  label="Sync title heading on rename"
+                  description="Renaming a note also rewrites its leading `# heading` to the new name, so the title line stops drifting from the filename. Only an existing top-level heading is rewritten — a note that opens with prose, a list, or a deeper heading is left alone, so deleting the `#` line opts that note out for good."
+                  value={syncTitleHeadingOnRename}
+                  settingId="sync-title-heading-on-rename"
+                  onChange={setSyncTitleHeadingOnRename}
                 />
                 <ToggleRow
                   label="Markdown snippets"
@@ -2478,6 +2553,20 @@ export function SettingsModal(): JSX.Element {
                 />
               </Section>
             </div>
+          ),
+        },
+        {
+          id: "languages",
+          title: "Languages",
+          searchIds: ["custom-code-languages"],
+          content: supportsCustomCodeLanguages ? (
+            <div {...settingsSearchTargetProps("custom-code-languages")}>
+              <CustomCodeLanguagesSettings />
+            </div>
+          ) : (
+            <InlineNote>
+              Custom code languages are available in the desktop app.
+            </InlineNote>
           ),
         },
         {
@@ -2586,6 +2675,102 @@ export function SettingsModal(): JSX.Element {
                   settingId="pdf-pinch-gap"
                   onChange={(v) => setPdfPinchTuning({ resetMs: v })}
                 />
+              </Section>
+            </div>
+          ),
+        },
+        {
+          id: "workflows",
+          title: "Workflows",
+          description:
+            "The Workflows canvas, and whether it appears in the app at all.",
+          searchIds: [
+            "workflows-enabled",
+            "workflow-hidden-recipes",
+            "workflow-tutorial",
+          ],
+          content: (
+            <div className="space-y-6">
+              <Section
+                title="Workflows"
+                description="Repeatable steps you write once and run over the vault, edited on a canvas in their own view."
+              >
+                <ToggleRow
+                  label="Workflows"
+                  description="Run saved, repeatable steps over your notes from a canvas view. Off by default; turning it on adds the Workflows view with its sidebar row, command, and Leader shortcut. Turning it off hides all of that again and closes the view if it is open."
+                  value={workflowsEnabled}
+                  settingId="workflows-enabled"
+                  onChange={setWorkflowsEnabled}
+                />
+                <div
+                  className="flex items-center justify-between gap-5 px-5 py-4"
+                  {...settingsSearchTargetProps("workflow-tutorial")}
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-ink-900">
+                      Guided tutorial
+                    </div>
+                    <div className="mt-1 text-xs leading-5 text-ink-500">
+                      A hands-on walkthrough of the whole loop: canvas, text,
+                      editing, activating, the dry run, apply, and undo. It
+                      seeds a small practice folder to learn on and removes
+                      everything it created when you finish.
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    className="shrink-0"
+                    onClick={() => void startWorkflowTutorial()}
+                  >
+                    Start tutorial
+                  </Button>
+                </div>
+                {(() => {
+                  const total = WORKFLOW_PRESETS.length;
+                  const hidden = hiddenPresetsInOrder(hiddenWorkflowPresets).length;
+                  const copy =
+                    hidden === 0
+                      ? `All ${total} shipped recipes appear in the New-workflow gallery.`
+                      : hidden === total
+                        ? "Every shipped recipe is hidden; the gallery starts from Blank."
+                        : `${hidden} of ${total} recipes are hidden from the New-workflow gallery (press x on a recipe there to hide one at a time).`;
+                  return (
+                    <div
+                      className="flex items-center justify-between gap-5 px-5 py-4"
+                      {...settingsSearchTargetProps("workflow-hidden-recipes")}
+                    >
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-ink-900">
+                          Built-in recipes
+                        </div>
+                        <div className="mt-1 text-xs leading-5 text-ink-500">
+                          {copy}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <Button
+                          size="sm"
+                          disabled={hidden === total}
+                          onClick={() =>
+                            setHiddenWorkflowPresets(
+                              WORKFLOW_PRESETS.map((preset) => preset.id),
+                            )
+                          }
+                        >
+                          Hide all
+                        </Button>
+                        <Button
+                          size="sm"
+                          disabled={hidden === 0}
+                          onClick={() => setHiddenWorkflowPresets([])}
+                        >
+                          Restore all
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })()}
               </Section>
             </div>
           ),
@@ -4242,6 +4427,10 @@ export function SettingsModal(): JSX.Element {
             "archive-label",
             "trash-label",
             "tasks-label",
+            "inbox-path",
+            "quick-notes-path",
+            "archive-path",
+            "trash-path",
           ],
           content: (
             <div className="space-y-6">
@@ -4297,6 +4486,48 @@ export function SettingsModal(): JSX.Element {
                   {getSystemFolderLabel("trash", systemFolderLabels)}, and{" "}
                   {getSystemFolderLabel("tasks", systemFolderLabels)}.
                 </InlineNote>
+              </Section>
+              <Section
+                title="Folder Paths"
+                description="Map each system folder to a directory in your vault. Leave empty for the default. Changing a path does not move existing notes."
+              >
+                <div className="space-y-6">
+                  {(
+                    [
+                      { key: "inbox" as const, label: "Inbox path", desc: "Main notes area." },
+                      { key: "quick" as const, label: "Quick Notes path", desc: "Quick-capture folder." },
+                      { key: "archive" as const, label: "Archive path", desc: "Cold-storage notes." },
+                      { key: "trash" as const, label: "Trash path", desc: "Deleted-note recovery." },
+                    ] as const
+                  ).map(({ key, label, desc }) => (
+                    <TextInputRow
+                      key={key}
+                      label={label}
+                      description={desc}
+                      value={vaultSettings.systemFolderPaths?.[key] ?? ""}
+                      placeholder={DEFAULT_FOLDER_PATHS[key]}
+                      settingId={`${key}-path`}
+                      commitOnBlur
+                      onChange={(next) => {
+                        const trimmed = (next ?? "").trim()
+                        void persistVaultSettings({
+                          ...vaultSettings,
+                          systemFolderPaths: {
+                            ...vaultSettings.systemFolderPaths,
+                            [key]: trimmed || undefined,
+                          },
+                        });
+                      }}
+                    />
+                  ))}
+                  <InlineNote>
+                    Resolved paths:{" "}
+                    {(["inbox", "quick", "archive", "trash"] as const)
+                      .map((f) => resolveFolderPath(f, vaultSettings.systemFolderPaths))
+                      .join(", ")}
+                    .
+                  </InlineNote>
+                </div>
               </Section>
             </div>
           ),
@@ -5246,7 +5477,7 @@ function KeymapSettings({
           onSave={(binding) => {
             onSetBinding(
               recording.id,
-              binding === recording.defaultBinding ? null : binding,
+              binding === getDefaultKeymapBinding(recording.id) ? null : binding,
             );
             setRecording(null);
           }}
@@ -5372,7 +5603,7 @@ function KeymapRecorderModal({
           </div>
           <div className="mt-1 text-xs text-ink-500">
             Default:{" "}
-            {formatKeymapBinding(definition.defaultBinding, definition.kind)}
+            {formatKeymapBinding(getDefaultKeymapBinding(definition.id), definition.kind)}
           </div>
         </div>
         <div className="flex items-center justify-between gap-3 border-t border-paper-300/60 px-5 py-3">

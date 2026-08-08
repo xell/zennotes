@@ -28,6 +28,11 @@ describe('autoPairInputTransaction', () => {
     expect(next.selection.main.head).toBe(1)
   })
 
+  it('marks the pair insert as typed input, so autocomplete activates on it (#514)', () => {
+    const tr = state('').update(autoPairInputTransaction(state(''), 0, 0, '[')!)
+    expect(tr.isUserEvent('input.type')).toBe(true)
+  })
+
   it('wraps the selected text', () => {
     const current = state('note', 0, 4)
     const next = current.update(autoPairInputTransaction(current, 0, 4, '{')!).state

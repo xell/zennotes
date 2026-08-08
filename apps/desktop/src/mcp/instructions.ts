@@ -41,6 +41,15 @@ the subject itself.
    path back verbatim to follow-up tools. Never construct a path by
    joining \`folder + title\` yourself, and never prefix \`inbox/\` to a
    path that came back without one.
+7. **Link the user straight into the app.** Every note object also
+   carries \`link\`, a \`zennotes://open?path=...\` URL that focuses
+   ZenNotes and opens that note (tasks carry the link of their source
+   note). Whenever you present notes to the user in chat, in search
+   results, note lists, or "created/updated X" confirmations, render
+   the title as a markdown link: \`[Title](<link value>)\`. Use the
+   \`link\` field verbatim: never construct one by hand, and never
+   print the raw URL as visible text. Keep passing \`path\` (not
+   \`link\`) back to tools.
 
 ## Vault layout: two modes
 

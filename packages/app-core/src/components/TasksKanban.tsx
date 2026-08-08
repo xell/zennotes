@@ -507,15 +507,14 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
   const mergeTasksWithPendingMoves = useCallback((incomingTasks: VaultTask[]) => {
     const pending = pendingTaskMovesRef.current
     if (pending.size === 0) return incomingTasks
-
-    for (const [key, pendingTask] of pending) {
-      const incoming = incomingTasks.find((task) => taskIdentityKey(task) === key)
-      if (incoming && sameBoardPlacement(incoming, pendingTask)) {
-        pending.delete(key)
-      }
-    }
-
-    if (pending.size === 0) return incomingTasks
+    // The overlay is NOT dropped here, even when a delivery already matches
+    // its placement. The first matching delivery is usually the store's own
+    // optimistic echo, and dropping the shield on it leaves the board naked
+    // when the stale watcher refresh from the PREVIOUS write arrives moments
+    // later: the card snaps back and the cursor is left pointing into an
+    // empty column (#503). Each entry is retired by its own persist timer in
+    // `persistTaskMutationAfterPaint`; until then overlaying a delivery that
+    // already agrees is a no-op.
     return incomingTasks.map((task) => pending.get(taskIdentityKey(task)) ?? task)
   }, [])
 
@@ -776,13 +775,17 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
   )
 
   const persistTaskMutationAfterPaint = useCallback(
-    (task: VaultTask, mutations: TaskMutation[]) => {
+    (task: VaultTask, mutations: TaskMutation[], overlayTask: VaultTask | null) => {
       const pendingKey = taskIdentityKey(task)
       const run = (): void => {
         void applyTaskMutation(task, mutations).finally(() => {
           window.setTimeout(() => {
             const pending = pendingTaskMovesRef.current
-            if (pending.has(pendingKey)) {
+            // Identity-guarded: this timer retires only the overlay entry ITS
+            // move created. In a rapid chain the same key holds a newer move's
+            // entry by now, and wiping that would revert the newer move on
+            // screen mid-flight (#503); the newer move's own timer owns it.
+            if (overlayTask !== null && pending.get(pendingKey) === overlayTask) {
               pending.delete(pendingKey)
               const mergedTasks = mergeTasksWithPendingMoves(latestTasksRef.current)
               displayTasksRef.current = mergedTasks
@@ -835,8 +838,9 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
   )
 
   const applyTaskToBoard = useCallback(
-    (task: VaultTask, mutations: TaskMutation[]) => {
-      if (mutations.length === 0) return
+    (task: VaultTask, mutations: TaskMutation[]): VaultTask | null => {
+      if (mutations.length === 0) return null
+      let overlayTask: VaultTask | null = null
       flushSync(() => {
         setDisplayTasks((current) => {
           let movedTask: VaultTask | null = null
@@ -848,11 +852,13 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
 
           if (movedTask) {
             pendingTaskMovesRef.current.set(taskIdentityKey(task), movedTask)
+            overlayTask = movedTask
           }
           displayTasksRef.current = next
           return next
         })
       })
+      return overlayTask
     },
     []
   )
@@ -868,8 +874,8 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
         placeTaskInColumnOrder(task, targetColumnId, targetIndex)
       }
       if (mutations.length === 0) return
-      applyTaskToBoard(task, mutations)
-      persistTaskMutationAfterPaint(task, mutations)
+      const overlayTask = applyTaskToBoard(task, mutations)
+      persistTaskMutationAfterPaint(task, mutations, overlayTask)
     },
     [applyTaskToBoard, persistTaskMutationAfterPaint, placeTaskInColumnOrder]
   )
@@ -885,13 +891,19 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
       if (cols.length === 0) return
       const fromIdx = Math.min(colIdx, cols.length - 1)
       const clamped = Math.max(0, Math.min(cols.length - 1, toIdx))
-      if (clamped === fromIdx) return
+      if (clamped === fromIdx) {
+        return
+      }
       const fromColumn = cols[fromIdx]
       const task = fromColumn?.tasks[Math.min(cardIdx, fromColumn.tasks.length - 1)]
-      if (!task) return
+      if (!task) {
+        return
+      }
       const targetColumn = cols[clamped]
       const mutations = dropMutationsFor(groupBy, targetColumn.id, task, today)
-      if (!mutations || mutations.length === 0) return
+      if (!mutations || mutations.length === 0) {
+        return
+      }
       const movedKey = taskIdentityKey(task)
       moveTaskOnBoard(task, mutations, targetColumn.id, null)
       // The board rebuild is flushed synchronously, so columnsRef already holds

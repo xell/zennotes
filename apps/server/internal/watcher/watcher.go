@@ -1,6 +1,7 @@
 package watcher
 
 import (
+	"encoding/json"
 	"log"
 	"os"
 	"path/filepath"
@@ -33,6 +34,47 @@ type Watcher struct {
 	// as a folder change. Only touched from the single loop goroutine (and
 	// Start, before the loop begins), so it needs no separate lock.
 	dirs map[string]struct{}
+	// folderPaths holds the systemFolderPaths from vault settings for
+	// classifying note paths to folder IDs.
+	folderPaths map[string]string
+}
+
+func (w *Watcher) SetFolderPaths(paths map[string]string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.folderPaths = paths
+}
+
+func (w *Watcher) getFolderPaths() map[string]string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.folderPaths
+}
+
+// reloadFolderPaths re-reads the folder overrides after vault.json changes.
+// The raw map goes through the vault's normalizer, exactly as the paths seeded
+// at startup did (main.go reads them from vault.GetSettings). A value the
+// normalizer rejects, `trash: "assets"` say, would otherwise make the watcher
+// route assets/ events to Trash while the vault, which classifies against the
+// normalized settings, disagrees.
+func (w *Watcher) reloadFolderPaths() {
+	settingsPath := filepath.Join(w.root, vaultSettingsFilePath)
+	raw, err := os.ReadFile(settingsPath)
+	if err != nil {
+		// A deleted vault.json means no overrides, which is what the vault
+		// reports too. Any other read error leaves the last known paths in place.
+		if os.IsNotExist(err) {
+			w.SetFolderPaths(nil)
+		}
+		return
+	}
+	var settings struct {
+		SystemFolderPaths map[string]string `json:"systemFolderPaths"`
+	}
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return
+	}
+	w.SetFolderPaths(vault.NormalizeSystemFolderPaths(settings.SystemFolderPaths))
 }
 
 func Start(root string) (*Watcher, error) {
@@ -41,11 +83,12 @@ func Start(root string) (*Watcher, error) {
 		return nil, err
 	}
 	w := &Watcher{
-		root:   root,
-		fs:     fsw,
-		subs:   map[chan vault.ChangeEvent]struct{}{},
-		stopCh: make(chan struct{}),
-		dirs:   map[string]struct{}{},
+		root:        root,
+		fs:          fsw,
+		subs:        map[chan vault.ChangeEvent]struct{}{},
+		stopCh:      make(chan struct{}),
+		dirs:        map[string]struct{}{},
+		folderPaths: nil,
 	}
 	// Recursively add all existing directories under the vault.
 	var addErrs int
@@ -222,6 +265,7 @@ func (w *Watcher) handle(ev fsnotify.Event) {
 		return
 	}
 	if relPosix == vaultSettingsFilePath {
+		w.reloadFolderPaths()
 		kind := eventKind(ev)
 		if kind == "" {
 			return
@@ -239,7 +283,7 @@ func (w *Watcher) handle(ev fsnotify.Event) {
 		if kind == "" {
 			return
 		}
-		folder, ok := vault.FolderForRelativePath(notePath)
+		folder, ok := vault.FolderForRelativePathWithSettings(notePath, w.getFolderPaths())
 		if !ok {
 			folder = vault.FolderInbox
 		}
@@ -254,7 +298,7 @@ func (w *Watcher) handle(ev fsnotify.Event) {
 	if strings.HasPrefix(relPosix, ".") || strings.Contains(relPosix, "/.") {
 		return
 	}
-	folder, ok := vault.FolderForRelativePath(relPosix)
+	folder, ok := vault.FolderForRelativePathWithSettings(relPosix, w.getFolderPaths())
 	if !ok {
 		if relPosix == vault.AssetsDir ||
 			strings.HasPrefix(relPosix, vault.AssetsDir+"/") ||
@@ -300,7 +344,7 @@ func (w *Watcher) broadcastFolder(absPath, kind string) {
 	if rel == "" {
 		return
 	}
-	folder, ok := vault.FolderForRelativePath(rel)
+	folder, ok := vault.FolderForRelativePathWithSettings(rel, w.getFolderPaths())
 	if !ok {
 		return
 	}

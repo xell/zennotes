@@ -66,7 +66,12 @@ export function autoPairInputTransaction(
     const selected = state.sliceDoc(from, to)
     return {
       changes: { from, to, insert: text + selected + close },
-      selection: EditorSelection.range(from + 1, to + 1)
+      selection: EditorSelection.range(from + 1, to + 1),
+      // The user typed this; without the annotation, listeners keyed on typed
+      // input never see it, most visibly autocompletion's activate-on-typing:
+      // `[[` (whose second bracket arrives through this handler) didn't open
+      // the wikilink picker until a query character followed (#514).
+      userEvent: 'input.type'
     }
   }
 

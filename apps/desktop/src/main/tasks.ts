@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { NoteFolder, NoteMeta } from '@shared/ipc'
 import { parseTaskFile, parseTasksFromBody, type VaultTask } from '@shared/tasks'
-import { folderForRelativePath, listNotes } from './vault'
+import { folderForRelativePath, getVaultSettings, listNotes } from './vault'
 
 /** Emit a note's file-task (if its frontmatter tags it `#task`) plus every
  *  inline `- [ ]` checkbox in its body. The file-task comes first so it heads
@@ -61,7 +61,10 @@ export async function scanTasksForPath(
   relPath: string
 ): Promise<VaultTask[]> {
   const posix = relPath.split(path.sep).join('/')
-  const folder = folderForRelativePath(posix)
+  // Settings-aware: with remapped system folders (vault.json
+  // `systemFolderPaths`) the bare classifier would file a remapped Trash's
+  // notes under inbox and leak their checkboxes into the Tasks view.
+  const folder = folderForRelativePath(posix, await getVaultSettings(root))
   if (!folder || !LIVE_FOLDERS.has(folder)) return []
 
   const abs = path.join(root, posix.split('/').join(path.sep))

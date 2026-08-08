@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { parseOpenNoteDeepLink, parseQuickCaptureDeepLink } from './deep-links'
+import {
+  buildOpenNoteDeepLink,
+  parseOpenNoteDeepLink,
+  parseQuickCaptureDeepLink
+} from './deep-links'
 
 describe('parseOpenNoteDeepLink', () => {
   it('parses encoded vault-relative paths', () => {
@@ -39,6 +43,37 @@ describe('parseOpenNoteDeepLink', () => {
     expect(parseOpenNoteDeepLink('zennotes://open?path=..%2Fsecret.md')).toBeNull()
     expect(parseOpenNoteDeepLink('zennotes://open?path=notes%2F..%2Fsecret.md')).toBeNull()
     expect(parseOpenNoteDeepLink('zennotes://open?path=C%3A%2FUsers%2Fnote.md')).toBeNull()
+  })
+})
+
+describe('buildOpenNoteDeepLink', () => {
+  it('percent-encodes segments and keeps slashes readable', () => {
+    expect(buildOpenNoteDeepLink('inbox/GitHub/Rename -master- branch.md')).toBe(
+      'zennotes://open?path=inbox/GitHub/Rename%20-master-%20branch.md'
+    )
+  })
+
+  it('encodes markdown-hostile and query-hostile characters', () => {
+    expect(buildOpenNoteDeepLink('inbox/Meeting (draft).md')).toBe(
+      'zennotes://open?path=inbox/Meeting%20%28draft%29.md'
+    )
+    expect(buildOpenNoteDeepLink('inbox/Q&A #5.md')).toBe(
+      'zennotes://open?path=inbox/Q%26A%20%235.md'
+    )
+  })
+
+  it('round-trips through the parser, unicode included', () => {
+    for (const rel of [
+      'inbox/Dune.md',
+      'inbox/GitHub/Rename -master- branch to -main- using GitHub UI.md',
+      'quick/Meeting (draft) für Q&A? #5.md',
+      'archive/日本語のノート.md'
+    ]) {
+      expect(parseOpenNoteDeepLink(buildOpenNoteDeepLink(rel))).toEqual({
+        target: 'tab',
+        path: rel
+      })
+    }
   })
 })
 

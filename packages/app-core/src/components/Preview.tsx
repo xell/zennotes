@@ -2,11 +2,11 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import type { NoteMeta } from "@shared/ipc";
+import { renderMarkdown } from "../lib/markdown";
 import {
-  renderMarkdown,
   setMarkdownLooseMathDelimiters,
   setMarkdownMathRenderer,
-} from "../lib/markdown";
+} from "../lib/markdown-settings";
 import { expandEmbeds, hasNoteEmbeds } from "../lib/transclusion";
 import { todayIso } from "../lib/task-metadata-tokens";
 import { selectTypstPreambleFor } from "../lib/typst-preamble-select";
@@ -403,6 +403,7 @@ export const Preview = memo(function Preview({
     [folders, vaultSettings],
   );
   const assetFiles = useStore((s) => s.assetFiles);
+  const customCodeLanguagesRevision = useStore((s) => s.customCodeLanguagesRevision);
   const refreshAssets = useStore((s) => s.refreshAssets);
   const deleteAssetAction = useStore((s) => s.deleteAsset);
   const renameAssetAndRewriteReferences = useStore((s) => s.renameAssetAndRewriteReferences);
@@ -528,7 +529,15 @@ export const Preview = memo(function Preview({
     setMarkdownMathRenderer(mathRenderer);
     setMarkdownLooseMathDelimiters(looseMathDelimiters);
     return renderMarkdown(expandedForCurrent ?? markdown);
-  }, [expandedForCurrent, markdown, mathRenderer, looseMathDelimiters]);
+    // customCodeLanguagesRevision re-renders when a grammar is installed,
+    // toggled, or removed; renderMarkdown keys its cache on it too.
+  }, [
+    expandedForCurrent,
+    markdown,
+    mathRenderer,
+    looseMathDelimiters,
+    customCodeLanguagesRevision,
+  ]);
   const assetFilesKey = useMemo(
     () => assetFiles.map((asset) => asset.path).join("\n"),
     [assetFiles],

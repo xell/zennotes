@@ -22,6 +22,7 @@ import {
 import { isHelpTabPath } from '@shared/help'
 import { isTagsTabPath } from '@shared/tags'
 import { isTasksTabPath } from '@shared/tasks'
+import { isWorkflowsTabPath } from '@shared/workflows-view'
 import { isArchiveTabPath } from '@shared/archive'
 import { isTrashTabPath } from '@shared/trash'
 import { isQuickNotesTabPath } from '@shared/quick-notes'
@@ -86,6 +87,19 @@ function buildEntries(deps: BuildDeps): BufferEntry[] {
         title: 'Tasks',
         subtitle: 'Vault-wide task list',
         keywords: 'tasks todos checklist vault virtual',
+        badge,
+        current: isCurrent,
+        dirty: false,
+        virtual: true
+      })
+      return
+    }
+    if (isWorkflowsTabPath(path)) {
+      entries.push({
+        path,
+        title: 'Workflows',
+        subtitle: 'Pipelines over your notes',
+        keywords: 'workflows automation pipeline graph canvas run virtual',
         badge,
         current: isCurrent,
         dirty: false,

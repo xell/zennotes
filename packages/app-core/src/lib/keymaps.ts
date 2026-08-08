@@ -14,6 +14,7 @@ export type KeymapId =
   | "global.commandPalette"
   | "global.newQuickNote"
   | "global.openSettings"
+  | "global.openFile"
   | "global.toggleSidebar"
   | "global.focusSidebar"
   | "global.filterSidebar"
@@ -52,6 +53,7 @@ export type KeymapId =
   | "global.historyForward"
   | "vim.leaderPrefix"
   | "vim.leaderOpenBuffers"
+  | "vim.leaderWorkflows"
   | "vim.leaderSearchNotes"
   | "vim.leaderSearchGroup"
   | "vim.leaderSearchVaultText"
@@ -143,6 +145,13 @@ export interface KeymapDefinition {
   title: string;
   description: string;
   defaultBinding: string;
+  /** macOS-specific default. On a Mac, Option+<printable> chords are how many
+   *  European layouts type everyday characters (`[` is Option+5 on German
+   *  keyboards), so a binding like `Alt+[` swallows the keystroke instead of
+   *  letting it type (#514). Actions whose cross-platform default is such a
+   *  chord carry a Mac-safe default here; keep this in sync with the slim
+   *  catalog in `@shared/keymaps-catalog`. */
+  defaultBindingMac?: string;
   vimOnly?: boolean;
   nonVimOnly?: boolean;
   maxTokens?: number;
@@ -194,6 +203,16 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Open settings",
     description: "Open the Settings modal.",
     defaultBinding: "Mod+,",
+  },
+  {
+    id: "global.openFile",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Open file",
+    description:
+      "Open a single markdown file from outside the vault. On macOS the File menu also binds ⌘O. In Vim mode on Windows/Linux the editor keeps Ctrl+O for the jumplist and insert-mode i_CTRL-O, so this fires when focus is outside the editor or with Vim off — rebind either to change that.",
+    defaultBinding: "Mod+O",
   },
   {
     id: "global.toggleSidebar",
@@ -574,6 +593,18 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Leader: open buffers",
     description: "Open the buffer switcher.",
     defaultBinding: "o",
+    vimOnly: true,
+    maxTokens: 1,
+  },
+  {
+    id: "vim.leaderWorkflows",
+    kind: "sequence",
+    scope: "leader",
+    group: "vim",
+    title: "Leader: open workflows",
+    // `w` already belongs to the weekly note, so this takes `a` for automation.
+    description: "Open the Workflows canvas.",
+    defaultBinding: "a",
     vimOnly: true,
     maxTokens: 1,
   },
@@ -1330,6 +1361,7 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     description:
       "Move the cursor to the far side of the next inline marker on the line — `**bold|**` becomes `**bold**|`, so finishing a formatted word never needs the arrow keys. Crosses `**`, `*`, `~~`, `==`, backticks, `$` and the bracket pairs. Works with Vim mode on or off.",
     defaultBinding: "Alt+]",
+    defaultBindingMac: "Ctrl+.",
   },
   {
     id: "editor.hopMarkerBackward",
@@ -1340,6 +1372,7 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     description:
       "Move the cursor to the near side of the previous inline marker on the line — `**bold**|` becomes `**bold|**`, and again to land before the opening `**`. Works with Vim mode on or off.",
     defaultBinding: "Alt+[",
+    defaultBindingMac: "Ctrl+,",
   },
   {
     id: "editor.moveLineUp",
@@ -1437,7 +1470,10 @@ export function getKeymapGroupLabel(group: KeymapGroup): string {
 }
 
 export function getDefaultKeymapBinding(id: KeymapId): string {
-  return getKeymapDefinition(id).defaultBinding;
+  const def = getKeymapDefinition(id);
+  return isMacPlatform() && def.defaultBindingMac
+    ? def.defaultBindingMac
+    : def.defaultBinding;
 }
 
 export function getKeymapBinding(
@@ -1478,6 +1514,17 @@ export function isMacPlatform(): boolean {
   if (runtimePlatform) return runtimePlatform === "darwin";
   if (typeof navigator === "undefined") return true;
   return /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
+}
+
+export function isLinuxPlatform(): boolean {
+  const runtimePlatform = getRuntimePlatform();
+  if (runtimePlatform) return runtimePlatform === "linux";
+  if (typeof navigator === "undefined") return false;
+  // Android's user agent also says "Linux"; the X11/Wayland desktops this
+  // distinguishes are the ones that say "Linux" without saying "Android".
+  return (
+    /Linux|X11/i.test(navigator.platform) && !/Android/i.test(navigator.userAgent)
+  );
 }
 
 function isModifierKey(key: string): boolean {
@@ -1740,7 +1787,12 @@ export function normalizeKeymapOverrides(input: unknown): KeymapOverrides {
       continue;
     }
     const normalized = normalizeKeymapBinding(definition.id, raw);
-    if (normalized && normalized !== definition.defaultBinding) {
+    // The platform's default, not the cross-platform one: a definition with a
+    // `defaultBindingMac` has two defaults, and comparing against the wrong one
+    // on macOS threw away a deliberate rebind back to the Mac default (it read
+    // as "same as default, drop it") while keeping the Mac default itself as a
+    // stored override on Windows/Linux.
+    if (normalized && normalized !== getDefaultKeymapBinding(definition.id)) {
       overrides[definition.id] = normalized;
     }
   }

@@ -6,6 +6,7 @@
  */
 import type { FolderEntry, NoteFolder, VaultSettings } from '@shared/ipc'
 import { csvPathForFormDir, formTitleFromCsvPath, isFormDirName } from '@shared/databases'
+import { resolveFolderPath } from '@shared/system-folder-paths'
 import { isPrimaryNotesAtRoot } from './vault-layout'
 import { stripWikilinkAnchor } from './wikilinks'
 
@@ -23,7 +24,9 @@ function vaultRelativeFolderPath(
   vaultSettings: VaultSettings
 ): string {
   if (folder === 'inbox' && isPrimaryNotesAtRoot(vaultSettings)) return subpath
-  return subpath ? `${folder}/${subpath}` : folder
+  return subpath
+    ? `${resolveFolderPath(folder, vaultSettings.systemFolderPaths)}/${subpath}`
+    : resolveFolderPath(folder, vaultSettings.systemFolderPaths)
 }
 
 /**

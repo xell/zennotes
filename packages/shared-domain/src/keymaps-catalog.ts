@@ -12,7 +12,22 @@ export interface KeymapCatalogEntry {
   id: string
   group: string
   defaultBinding: string
+  /** macOS-specific default. On a Mac, Option+<printable> chords are how many
+   *  European layouts type everyday characters (`[` is Option+5 on German
+   *  keyboards), so a binding like `Alt+[` swallows the keystroke instead of
+   *  letting it type (#514). Actions whose cross-platform default is such a
+   *  chord carry a Mac-safe default here. */
+  defaultBindingMac?: string
   title: string
+}
+
+/** The platform-appropriate default binding for a catalog entry (or a full
+ *  keymap definition: anything carrying the two default fields). */
+export function catalogDefaultBinding(
+  entry: { defaultBinding: string; defaultBindingMac?: string },
+  mac: boolean
+): string {
+  return mac && entry.defaultBindingMac ? entry.defaultBindingMac : entry.defaultBinding
 }
 
 /** Display order for keymap groups in the generated config reference. */
@@ -31,6 +46,7 @@ export const KEYMAP_CATALOG: KeymapCatalogEntry[] = [
   { id: "global.commandPalette", group: "global", defaultBinding: "Shift+Mod+P", title: "Open command palette" },
   { id: "global.newQuickNote", group: "global", defaultBinding: "Shift+Mod+N", title: "New quick note" },
   { id: "global.openSettings", group: "global", defaultBinding: "Mod+,", title: "Open settings" },
+  { id: "global.openFile", group: "global", defaultBinding: "Mod+O", title: "Open file" },
   { id: "global.toggleSidebar", group: "global", defaultBinding: "Mod+1", title: "Toggle sidebar" },
   { id: "global.focusSidebar", group: "global", defaultBinding: "", title: "Focus sidebar" },
   { id: "global.filterSidebar", group: "global", defaultBinding: "", title: "Filter sidebar" },
@@ -71,6 +87,7 @@ export const KEYMAP_CATALOG: KeymapCatalogEntry[] = [
   { id: "global.gitStatus", group: "global", defaultBinding: "", title: "Open git status" },
   { id: "vim.leaderPrefix", group: "vim", defaultBinding: "Space", title: "Leader key" },
   { id: "vim.leaderOpenBuffers", group: "vim", defaultBinding: "o", title: "Leader: open buffers" },
+  { id: "vim.leaderWorkflows", group: "vim", defaultBinding: "a", title: "Leader: open workflows" },
   { id: "vim.leaderSearchNotes", group: "vim", defaultBinding: "f", title: "Leader: search notes" },
   { id: "vim.leaderSearchGroup", group: "vim", defaultBinding: "s", title: "Leader: search…" },
   { id: "vim.leaderSearchVaultText", group: "vim", defaultBinding: "t", title: "Leader search: vault text" },
@@ -141,8 +158,8 @@ export const KEYMAP_CATALOG: KeymapCatalogEntry[] = [
   { id: "nav.toggleTask", group: "view-actions", defaultBinding: "x", title: "Toggle task" },
   { id: "tasks.moveTaskUp", group: "view-actions", defaultBinding: "K", title: "Move task up" },
   { id: "tasks.moveTaskDown", group: "view-actions", defaultBinding: "J", title: "Move task down" },
-  { id: "editor.hopMarkerForward", group: "view-actions", defaultBinding: "Alt+]", title: "Hop past next marker" },
-  { id: "editor.hopMarkerBackward", group: "view-actions", defaultBinding: "Alt+[", title: "Hop before previous marker" },
+  { id: "editor.hopMarkerForward", group: "view-actions", defaultBinding: "Alt+]", defaultBindingMac: "Ctrl+.", title: "Hop past next marker" },
+  { id: "editor.hopMarkerBackward", group: "view-actions", defaultBinding: "Alt+[", defaultBindingMac: "Ctrl+,", title: "Hop before previous marker" },
   { id: "editor.moveLineUp", group: "view-actions", defaultBinding: "Alt+ArrowUp", title: "Move line up" },
   { id: "editor.moveLineDown", group: "view-actions", defaultBinding: "Alt+ArrowDown", title: "Move line down" },
   { id: "editor.find", group: "view-actions", defaultBinding: "Mod+F", title: "Find in note" },

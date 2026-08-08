@@ -101,7 +101,8 @@ describe('buildVaultSwitcherEntries', () => {
         baseUrl: 'https://team.example.com',
         authConfigured: true,
         capabilities: null,
-        profileId: 'remote-current'
+        profileId: 'remote-current',
+        bootError: null
       }
     })
 
@@ -135,7 +136,8 @@ describe('buildVaultSwitcherEntries', () => {
         baseUrl: 'https://home.example.com',
         authConfigured: true,
         capabilities: null,
-        profileId: 'home'
+        profileId: 'home',
+        bootError: null
       }
     })
 

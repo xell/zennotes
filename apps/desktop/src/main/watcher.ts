@@ -1,8 +1,8 @@
 import path from 'node:path'
 import chokidar, { FSWatcher } from 'chokidar'
-import type { NoteFolder, VaultChangeEvent, VaultChangeKind } from '@shared/ipc'
+import type { NoteFolder, VaultChangeEvent, VaultChangeKind, VaultSettings } from '@shared/ipc'
 import { databaseCsvPathFor } from '@shared/databases'
-import { folderForRelativePath } from './vault'
+import { folderForRelativePath, getVaultSettings } from './vault'
 
 const ATTACHMENTS_DIRS = new Set(['assets', 'attachements', '_assets'])
 const INTERNAL_VAULT_DIR = '.zennotes'
@@ -15,9 +15,9 @@ function toPosix(p: string): string {
   return p.split(path.sep).join('/')
 }
 
-function folderOf(root: string, abs: string): NoteFolder | null {
+function folderOf(root: string, abs: string, settings: VaultSettings | null): NoteFolder | null {
   const rel = toPosix(path.relative(root, abs))
-  const folder = folderForRelativePath(rel)
+  const folder = folderForRelativePath(rel, settings)
   if (folder) return folder
   const top = rel.split('/')[0]
   return ATTACHMENTS_DIRS.has(top) ? 'inbox' : null
@@ -44,10 +44,52 @@ function commentsNotePath(root: string, abs: string): string | null {
 export class VaultWatcher {
   private watcher: FSWatcher | null = null
   private root: string | null = null
+  /** Settings snapshot for classification; refreshed when vault.json changes,
+   *  mirroring the Go watcher's reload. */
+  private settings: VaultSettings | null = null
+  /** Events that arrived before the first settings load landed. Classifying
+   *  them against the default folder names would file a remapped folder's
+   *  notes under the wrong one (or drop them), and the window is wide open:
+   *  chokidar starts reporting the moment `start()` returns. Null once the
+   *  load has settled, so steady-state events pay nothing. */
+  private pending: (() => void)[] | null = null
+
+  constructor(
+    private readonly loadSettings: (root: string) => Promise<VaultSettings> = getVaultSettings
+  ) {}
+
+  private refreshSettings(root: string): void {
+    void this.loadSettings(root)
+      .then((settings) => {
+        if (this.root === root) this.settings = settings
+      })
+      .catch(() => {})
+      .finally(() => {
+        // Even a failed load ends the wait: classification falls back to the
+        // default names, which beats never reporting a change at all.
+        if (this.root === root) this.flushPending()
+      })
+  }
+
+  private flushPending(): void {
+    const queued = this.pending
+    this.pending = null
+    if (!queued) return
+    for (const emit of queued) emit()
+  }
+
+  /** Emit now, or once the first settings load has settled. */
+  private classified(emit: () => void): void {
+    if (this.pending) this.pending.push(emit)
+    else emit()
+  }
 
   start(root: string, onEvent: (ev: VaultChangeEvent) => void): void {
     this.stop()
     this.root = root
+    this.settings = null
+    this.pending = []
+    this.refreshSettings(root)
     this.watcher = chokidar.watch(root, {
       ignoreInitial: true,
       persistent: true,
@@ -68,6 +110,7 @@ export class VaultWatcher {
       const base = path.basename(absPath)
       if (!this.root) return
       if (isVaultSettingsPath(this.root, absPath)) {
+        this.refreshSettings(this.root)
         onEvent({
           kind,
           path: VAULT_SETTINGS_RELATIVE_PATH,
@@ -87,12 +130,14 @@ export class VaultWatcher {
       }
       const commentsPath = commentsNotePath(this.root, absPath)
       if (commentsPath) {
-        onEvent({
-          kind,
-          path: commentsPath,
-          folder: folderForRelativePath(commentsPath) ?? 'inbox',
-          scope: 'comments'
-        })
+        this.classified(() =>
+          onEvent({
+            kind,
+            path: commentsPath,
+            folder: folderForRelativePath(commentsPath, this.settings) ?? 'inbox',
+            scope: 'comments'
+          })
+        )
         return
       }
       // Any database file — `<Name>.base/data.csv` or `schema.json` (or a legacy
@@ -101,21 +146,26 @@ export class VaultWatcher {
       // a `.base` folder return null here and ride the normal note path below.)
       const dbCsvPath = databaseCsvPathFor(toPosix(path.relative(this.root, absPath)))
       if (dbCsvPath) {
-        onEvent({
-          kind,
-          path: dbCsvPath,
-          folder: folderForRelativePath(dbCsvPath) ?? 'inbox',
-          scope: 'database'
-        })
+        this.classified(() =>
+          onEvent({
+            kind,
+            path: dbCsvPath,
+            folder: folderForRelativePath(dbCsvPath, this.settings) ?? 'inbox',
+            scope: 'database'
+          })
+        )
         return
       }
       if (base.startsWith('.')) return
-      const folder = folderOf(this.root, absPath)
-      if (!folder) return
-      onEvent({
-        kind,
-        path: toPosix(path.relative(this.root, absPath)),
-        folder
+      const root = this.root
+      this.classified(() => {
+        const folder = folderOf(root, absPath, this.settings)
+        if (!folder) return
+        onEvent({
+          kind,
+          path: toPosix(path.relative(root, absPath)),
+          folder
+        })
       })
     }
 
@@ -126,9 +176,11 @@ export class VaultWatcher {
       if (!this.root) return
       if (path.basename(absPath).startsWith('.')) return
       const rel = toPosix(path.relative(this.root, absPath))
-      const folder = folderForRelativePath(rel)
-      if (!folder) return
-      onEvent({ kind, path: rel, folder, scope: 'folder' })
+      this.classified(() => {
+        const folder = folderForRelativePath(rel, this.settings)
+        if (!folder) return
+        onEvent({ kind, path: rel, folder, scope: 'folder' })
+      })
     }
 
     this.watcher
@@ -144,6 +196,10 @@ export class VaultWatcher {
       void this.watcher.close()
       this.watcher = null
       this.root = null
+      // Anything still waiting on the first load belongs to the vault we just
+      // stopped watching; nobody wants it now.
+      this.pending = null
+      this.settings = null
     }
   }
 }

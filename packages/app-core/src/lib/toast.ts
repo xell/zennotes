@@ -16,7 +16,7 @@ export interface Toast {
 
 interface ToastStore {
   toasts: Toast[]
-  addToast: (message: string, type?: ToastType, action?: ToastAction) => void
+  addToast: (message: string, type?: ToastType, action?: ToastAction, durationMs?: number) => void
   removeToast: (id: string) => void
 }
 
@@ -31,12 +31,13 @@ const AUTO_DISMISS_MS = 4000
 
 export const useToastStore = create<ToastStore>((set, get) => ({
   toasts: [],
-  addToast: (message, type = 'info', action?: ToastAction) => {
+  addToast: (message, type = 'info', action?: ToastAction, durationMs?: number) => {
     const id = nextToastId()
     set((s) => ({ toasts: [...s.toasts, { id, message, type, action }] }))
     // Errors replace a blocking alert, so they stay until dismissed; success and
-    // info toasts auto-dismiss.
-    if (type !== 'error') setTimeout(() => get().removeToast(id), AUTO_DISMISS_MS)
+    // info toasts auto-dismiss. A caller offering an action (an Undo) can ask
+    // for longer, because four seconds is a deadline, not an offer.
+    if (type !== 'error') setTimeout(() => get().removeToast(id), durationMs ?? AUTO_DISMISS_MS)
   },
   removeToast: (id) => {
     set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))

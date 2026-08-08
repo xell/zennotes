@@ -186,6 +186,7 @@ The editor stack is CodeMirror 6 with a Markdown-oriented workflow:
 - configurable line numbers
 - configurable line-height and typography controls
 - syntax highlighting for fenced code blocks
+- desktop-installed TextMate grammars for custom fenced-code languages
 - wiki links, callouts, tables, footnotes, and local embeds
 - Vim block cursor and keyboard navigation
 

@@ -33,6 +33,7 @@ export function NoteHoverPreview({
   const activeNote = useStore((s) => s.activeNote)
   const vault = useStore((s) => s.vault)
   const assetFiles = useStore((s) => s.assetFiles)
+  const customCodeLanguagesRevision = useStore((s) => s.customCodeLanguagesRevision)
   const focusedPanel = useStore((s) => s.focusedPanel)
   const setFocusedPanel = useStore((s) => s.setFocusedPanel)
   const openNoteInTab = useStore((s) => s.openNoteInTab)
@@ -72,7 +73,7 @@ export function NoteHoverPreview({
   const html = useMemo(() => {
     const source = (content?.body ?? '').slice(0, 1400)
     return source ? renderMarkdown(source) : ''
-  }, [content?.body])
+  }, [content?.body, customCodeLanguagesRevision])
   const assetFilesKey = useMemo(
     () => assetFiles.map((asset) => asset.path).join('\n'),
     [assetFiles]

@@ -1,4 +1,4 @@
-export type CommandPaletteMode = 'main' | 'theme' | 'vault'
+export type CommandPaletteMode = 'main' | 'theme' | 'vault' | 'workflow'
 export type CommandPaletteInitialMode = 'main' | 'vault'
 
 /**

@@ -4,7 +4,15 @@ import path from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('node:child_process', () => ({
-  spawn: vi.fn(() => ({ unref: vi.fn() }))
+  // The command now watches the child for an immediate failure before
+  // reporting success. Firing exit(0) on the next tick models the warm
+  // hand-off to a running instance and keeps every success-path test instant.
+  spawn: vi.fn(() => ({
+    unref: vi.fn(),
+    once: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
+      if (event === 'exit') setImmediate(() => cb(0, null))
+    })
+  }))
 }))
 
 import { spawn } from 'node:child_process'
@@ -156,5 +164,19 @@ describe('cmdOpen', () => {
     expect(spawn).toHaveBeenCalledTimes(1)
     const [, argv] = vi.mocked(spawn).mock.calls[0]
     expect(argv).toEqual([mdFile, vaultDir])
+  })
+
+  it('reports a launch that dies instead of printing success', async () => {
+    // A crash in the app's first moments (no display, broken sandbox) used to
+    // be invisible: the CLI printed "Opening …" regardless.
+    vi.mocked(spawn).mockReturnValueOnce({
+      unref: vi.fn(),
+      once: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
+        if (event === 'exit') setImmediate(() => cb(1, null))
+      })
+    } as never)
+    await expect(cmdOpen('', makeArgs([mdFile]))).rejects.toThrow(
+      'exited before it could open anything'
+    )
   })
 })

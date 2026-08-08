@@ -10,10 +10,25 @@ import type {
   CustomTemplateFile,
   WriteTemplateInput
 } from '@zennotes/bridge-contract/templates'
+import type {
+  ApplyWorkflowInput,
+  ExportWorkflowInput,
+  ImportedWorkflowFile,
+  WorkflowFile,
+  WorkflowRunReceipt,
+  WorkflowRunSummary,
+  WorkflowUndoResult,
+  WriteWorkflowInput
+} from '@zennotes/bridge-contract/workflows'
 import { IPC } from '@shared/ipc'
 import type { AppConfigPortable } from '@shared/app-config'
 import type { CustomTheme } from '@shared/custom-themes'
 import type { Override } from '@shared/overrides'
+import type {
+  CustomCodeLanguage,
+  CustomCodeLanguageInstallInput,
+  CustomCodeLanguageUpdateInput
+} from '@shared/custom-code-languages'
 import type {
   AppUpdateState,
   AssetMeta,
@@ -72,7 +87,8 @@ const DESKTOP_CAPABILITIES: ZenCapabilities = {
   // ~/.local/bin symlinks. Windows uses a different model (PATH munging)
   // and is gated to a follow-up.
   supportsCliInstall: process.platform === 'darwin' || process.platform === 'linux',
-  supportsCustomTemplates: true
+  supportsCustomTemplates: true,
+  supportsCustomCodeLanguages: true
 }
 
 const DESKTOP_APP_INFO: ZenAppInfo = {
@@ -217,6 +233,11 @@ const api: ZenBridge = {
     await refreshRemoteWorkspaceInfo()
     return result
   },
+  retryWorkspaceBoot: async (): Promise<VaultInfo | null> => {
+    const result = await ipcRenderer.invoke(IPC.WORKSPACE_RETRY_BOOT)
+    await refreshRemoteWorkspaceInfo()
+    return result
+  },
   listRemoteWorkspaceProfiles: async (): Promise<RemoteWorkspaceProfile[]> =>
     ipcRenderer.invoke(IPC.WORKSPACE_LIST_REMOTE_PROFILES),
   saveRemoteWorkspaceProfile: async (
@@ -298,6 +319,29 @@ const api: ZenBridge = {
     ipcRenderer.invoke(IPC.VAULT_GENERATE_DEMO_TOUR),
   removeDemoTour: (): Promise<VaultDemoTourResult> =>
     ipcRenderer.invoke(IPC.VAULT_REMOVE_DEMO_TOUR),
+  listWorkflows: (): Promise<WorkflowFile[]> => ipcRenderer.invoke(IPC.VAULT_LIST_WORKFLOWS),
+  writeWorkflow: (input: WriteWorkflowInput): Promise<WorkflowFile> =>
+    ipcRenderer.invoke(IPC.VAULT_WRITE_WORKFLOW, input),
+  deleteWorkflow: (sourcePath: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.VAULT_DELETE_WORKFLOW, sourcePath),
+  // Sharing, both directions. A workflow is a plain `.md` file, so export is a
+  // save dialog over the bytes already on disk and import is an open dialog
+  // that READS one. Nothing here parses, and nothing here writes into the
+  // vault: an imported file goes through the review and then `writeWorkflow`.
+  exportWorkflow: (input: ExportWorkflowInput): Promise<string | null> =>
+    ipcRenderer.invoke(IPC.VAULT_EXPORT_WORKFLOW, input),
+  importWorkflowFile: (): Promise<ImportedWorkflowFile | null> =>
+    ipcRenderer.invoke(IPC.VAULT_IMPORT_WORKFLOW_FILE),
+  // Planning happens in the renderer and writes nothing; this is the separate,
+  // explicit call that applies what the dry run showed.
+  applyWorkflow: (input: ApplyWorkflowInput): Promise<WorkflowRunReceipt> =>
+    ipcRenderer.invoke(IPC.VAULT_APPLY_WORKFLOW, input),
+  undoWorkflowRun: (runId: string): Promise<WorkflowUndoResult> =>
+    ipcRenderer.invoke(IPC.VAULT_UNDO_WORKFLOW_RUN, runId),
+  listWorkflowRuns: (): Promise<WorkflowRunSummary[]> =>
+    ipcRenderer.invoke(IPC.VAULT_LIST_WORKFLOW_RUNS),
+  deleteWorkflowRuns: (workflowId: string): Promise<number> =>
+    ipcRenderer.invoke(IPC.VAULT_DELETE_WORKFLOW_RUNS, workflowId),
   listTemplates: (): Promise<CustomTemplateFile[]> =>
     ipcRenderer.invoke(IPC.VAULT_LIST_TEMPLATES),
   readTemplate: (sourcePath: string): Promise<string> =>
@@ -369,6 +413,8 @@ const api: ZenBridge = {
     ipcRenderer.invoke(IPC.VAULT_DUPLICATE_NOTE, relPath),
   exportNotePdf: (relPath: string): Promise<string | null> =>
     ipcRenderer.invoke(IPC.VAULT_EXPORT_NOTE_PDF, relPath),
+  exportNoteDocx: (relPath: string): Promise<string | null> =>
+    ipcRenderer.invoke(IPC.VAULT_EXPORT_NOTE_DOCX, relPath),
   revealNote: (relPath: string): Promise<void> => ipcRenderer.invoke(IPC.VAULT_REVEAL_NOTE, relPath),
   revealNoteTarget: (relPath: string): Promise<void> =>
     ipcRenderer.invoke(IPC.VAULT_REVEAL_NOTE_TARGET, relPath),
@@ -632,6 +678,27 @@ const api: ZenBridge = {
     const listener = (_: unknown, next: CustomTheme[]): void => cb(next)
     ipcRenderer.on(IPC.CUSTOM_THEMES_ON_CHANGE, listener)
     return () => ipcRenderer.removeListener(IPC.CUSTOM_THEMES_ON_CHANGE, listener)
+  },
+
+  listCustomCodeLanguages: (): Promise<CustomCodeLanguage[]> =>
+    ipcRenderer.invoke(IPC.CUSTOM_CODE_LANGUAGES_LIST),
+  installCustomCodeLanguage: (
+    input: CustomCodeLanguageInstallInput
+  ): Promise<CustomCodeLanguage> =>
+    ipcRenderer.invoke(IPC.CUSTOM_CODE_LANGUAGES_INSTALL, input),
+  updateCustomCodeLanguage: (
+    input: CustomCodeLanguageUpdateInput
+  ): Promise<CustomCodeLanguage> => ipcRenderer.invoke(IPC.CUSTOM_CODE_LANGUAGES_UPDATE, input),
+  revealCustomCodeLanguagesDir: (id?: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.CUSTOM_CODE_LANGUAGES_REVEAL, id),
+  deleteCustomCodeLanguage: (id: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.CUSTOM_CODE_LANGUAGES_DELETE, id),
+  onCustomCodeLanguagesChange: (
+    cb: (next: CustomCodeLanguage[]) => void
+  ): (() => void) => {
+    const listener = (_: unknown, next: CustomCodeLanguage[]): void => cb(next)
+    ipcRenderer.on(IPC.CUSTOM_CODE_LANGUAGES_ON_CHANGE, listener)
+    return () => ipcRenderer.removeListener(IPC.CUSTOM_CODE_LANGUAGES_ON_CHANGE, listener)
   },
 
   listOverrides: (): Promise<Override[]> => ipcRenderer.invoke(IPC.OVERRIDES_LIST),

@@ -20,8 +20,27 @@ describe('KEYMAP_CATALOG', () => {
         id: def.id,
         group: def.group,
         defaultBinding: def.defaultBinding,
+        ...(def.defaultBindingMac ? { defaultBindingMac: def.defaultBindingMac } : {}),
         title: def.title
       })
+    }
+  })
+
+  it('keeps the marker hops off Option+bracket on the Mac (#514)', () => {
+    // On a Mac, `[` and `]` ARE Option+5 / Option+6 on German-family layouts,
+    // so an `Alt+[` default swallows the keystroke instead of typing the
+    // bracket. The hops keep Alt+[ / Alt+] where AltGr layouts don't collide
+    // (Windows/Linux AltGr arrives as Ctrl+Alt) and use Ctrl-based chords on
+    // the Mac. No Mac default may reintroduce a bare Option+<printable> chord.
+    const bareOptionPrintable = /^Alt\+[^+]$/
+    for (const id of ['editor.hopMarkerForward', 'editor.hopMarkerBackward']) {
+      const entry = KEYMAP_CATALOG.find((e) => e.id === id)
+      expect(entry?.defaultBindingMac, `${id} needs a Mac-safe default`).toBeDefined()
+    }
+    for (const entry of KEYMAP_CATALOG) {
+      if (entry.defaultBindingMac) {
+        expect(entry.defaultBindingMac).not.toMatch(bareOptionPrintable)
+      }
     }
   })
 })

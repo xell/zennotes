@@ -1,7 +1,9 @@
+import { promises as fsPromises } from 'node:fs'
 import { chmod, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { VaultSettings } from '@shared/ipc'
 import {
   absolutePath,
   appendToNote,
@@ -10,11 +12,13 @@ import {
   duplicateAsset,
   emptyDeletedAssets,
   ensureVaultLayout,
+  folderForRelativePath,
   forgetLocalVault,
   getVaultSettings,
   importFiles,
   importPastedImage,
   invalidateNoteMetaCache,
+  invalidateVaultSettingsCache,
   listDeletedAssets,
   listNotes,
   listFolders,
@@ -31,6 +35,7 @@ import {
   searchVaultTextCapabilities,
   setVaultSettings,
   unarchiveNote,
+  vaultChangeAffectsSettings,
   writeNote
 } from './vault'
 
@@ -123,6 +128,148 @@ describe('file-location settings round-trip (#446)', () => {
     await mkdir(root, { recursive: true })
     const settings = await getVaultSettings(root)
     expect(settings.tasksLocation).toEqual({ mode: 'primary' })
+  })
+})
+
+describe('remapped system folders (#398)', () => {
+  it('creates the REMAPPED inbox on save, not a literal inbox/', async () => {
+    const root = await makeTempDir('zennotes-vault-remap-mkdir-')
+    await mkdir(root, { recursive: true })
+    const base = await getVaultSettings(root)
+    await setVaultSettings(root, {
+      ...base,
+      primaryNotesLocation: 'inbox',
+      systemFolderPaths: { inbox: '01 - Entry' }
+    })
+    expect((await stat(path.join(root, '01 - Entry'))).isDirectory()).toBe(true)
+    // The stray literal directory was the whole bug: it existed, classified as
+    // the system inbox, and every listing walked the remapped one instead.
+    await expect(stat(path.join(root, 'inbox'))).rejects.toThrow()
+  })
+
+  it('seeds the welcome note into the remapped inbox', async () => {
+    const root = await makeTempDir('zennotes-vault-remap-welcome-')
+    await mkdir(path.join(root, '.zennotes'), { recursive: true })
+    await writeFile(
+      path.join(root, '.zennotes', 'vault.json'),
+      JSON.stringify({ primaryNotesLocation: 'inbox', systemFolderPaths: { inbox: '01 - Entry' } })
+    )
+    await ensureVaultLayout(root)
+    expect((await stat(path.join(root, '01 - Entry', 'Welcome.md'))).isFile()).toBe(true)
+  })
+
+  it('classifies the remapped directory, and a leftover literal one as a user folder', async () => {
+    const settings = {
+      primaryNotesLocation: 'inbox',
+      systemFolderPaths: { archive: '99 - Archive' }
+    } as VaultSettings
+    expect(folderForRelativePath('99 - Archive/Old.md', settings)).toBe('archive')
+    // `archive/` is not the archive any more; it is an ordinary folder.
+    expect(folderForRelativePath('archive/Kept.md', settings)).toBe('inbox')
+    expect(folderForRelativePath('quick/Note.md', settings)).toBe('quick')
+    expect(folderForRelativePath('assets/pic.png', settings)).toBeNull()
+  })
+
+  it('classifies a swap by the resolved names, not the default ones', async () => {
+    // normalizeSystemFolderPaths rejects this now, but classification must not
+    // depend on that: whatever a folder resolves to is what it is.
+    const swapped = {
+      primaryNotesLocation: 'inbox',
+      systemFolderPaths: { inbox: 'archive', archive: 'inbox' }
+    } as VaultSettings
+    expect(folderForRelativePath('archive/A.md', swapped)).toBe('inbox')
+    expect(folderForRelativePath('inbox/B.md', swapped)).toBe('archive')
+  })
+})
+
+// getVaultSettings is awaited by folderOf() on every note read and write, and
+// its fallback is a whole-root readdir. A vault.json that states its
+// primaryNotesLocation answers the question by itself, so a cache hit (and
+// even a cold read of such a file) must not list the root at all.
+describe('vault settings readdir cost', () => {
+  it('performs no readdir on a cache hit', async () => {
+    const root = await makeTempDir('zennotes-vault-settings-readdir-')
+    await mkdir(root, { recursive: true })
+    const base = await getVaultSettings(root)
+    await setVaultSettings(root, { ...base, primaryNotesLocation: 'inbox' })
+    await getVaultSettings(root) // prime the cache
+
+    const spy = vi.spyOn(fsPromises, 'readdir')
+    try {
+      await getVaultSettings(root)
+      await getVaultSettings(root)
+      expect(spy).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('performs no readdir on a cold read of a vault.json that states its mode', async () => {
+    const root = await makeTempDir('zennotes-vault-settings-cold-')
+    await mkdir(path.join(root, '.zennotes'), { recursive: true })
+    await writeFile(
+      path.join(root, '.zennotes', 'vault.json'),
+      JSON.stringify({ primaryNotesLocation: 'root' })
+    )
+    invalidateVaultSettingsCache(root)
+
+    const spy = vi.spyOn(fsPromises, 'readdir')
+    try {
+      expect((await getVaultSettings(root)).primaryNotesLocation).toBe('root')
+      expect(spy).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('still infers when vault.json leaves the mode unstated', async () => {
+    const root = await makeTempDir('zennotes-vault-settings-infer-')
+    await mkdir(path.join(root, '.zennotes'), { recursive: true })
+    await mkdir(path.join(root, 'concepts'), { recursive: true })
+    await writeFile(path.join(root, '.zennotes', 'vault.json'), JSON.stringify({}))
+    invalidateVaultSettingsCache(root)
+    expect((await getVaultSettings(root)).primaryNotesLocation).toBe('root')
+  })
+})
+
+describe('vaultChangeAffectsSettings', () => {
+  it('is true for vault.json and for root-level entries the inference reads', () => {
+    expect(
+      vaultChangeAffectsSettings({
+        kind: 'change',
+        path: '.zennotes/vault.json',
+        folder: 'inbox',
+        scope: 'vault-settings'
+      })
+    ).toBe(true)
+    expect(vaultChangeAffectsSettings({ kind: 'add', path: 'Notes.md', folder: 'inbox' })).toBe(
+      true
+    )
+    expect(
+      vaultChangeAffectsSettings({ kind: 'add', path: 'concepts', folder: 'inbox', scope: 'folder' })
+    ).toBe(true)
+  })
+
+  it('is false for the nested writes a save burst is made of', () => {
+    expect(
+      vaultChangeAffectsSettings({ kind: 'change', path: 'inbox/Deep/Note.md', folder: 'inbox' })
+    ).toBe(false)
+    expect(
+      vaultChangeAffectsSettings({
+        kind: 'change',
+        path: 'inbox/Books.base/data.csv',
+        folder: 'inbox',
+        scope: 'database'
+      })
+    ).toBe(false)
+    expect(
+      vaultChangeAffectsSettings({
+        kind: 'change',
+        path: 'inbox/Note.md',
+        folder: 'inbox',
+        scope: 'comments'
+      })
+    ).toBe(false)
   })
 })
 

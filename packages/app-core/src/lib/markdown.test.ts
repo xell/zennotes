@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { renderMarkdown, setMarkdownMathRenderer } from './markdown'
+import { renderMarkdown } from './markdown'
+import { setMarkdownMathRenderer } from './markdown-settings'
 
 describe('renderMarkdown', () => {
   it('hides leading YAML/TOML frontmatter in preview output', () => {

@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => {
       editorFontSize: 16,
       editorLineHeight: 1.6,
       fzfBinaryPath: null,
+      hiddenWorkflowPresets: [],
       hideBuiltinTemplates: false,
       interfaceFont: null,
       keymapOverrides: {},

@@ -39,6 +39,16 @@ import type {
   WindowChromeState
 } from './ipc'
 import type { CustomTemplateFile, WriteTemplateInput } from './templates'
+import type {
+  ApplyWorkflowInput,
+  ExportWorkflowInput,
+  ImportedWorkflowFile,
+  WorkflowFile,
+  WorkflowRunReceipt,
+  WorkflowRunSummary,
+  WorkflowUndoResult,
+  WriteWorkflowInput
+} from './workflows'
 import type { VaultTask } from '@zennotes/shared-domain/tasks'
 import type {
   DatabaseDoc,
@@ -55,6 +65,11 @@ import type {
 import type { AppConfigPortable } from '@zennotes/shared-domain/app-config'
 import type { CustomTheme } from '@zennotes/shared-domain/custom-themes'
 import type { Override } from '@zennotes/shared-domain/overrides'
+import type {
+  CustomCodeLanguage,
+  CustomCodeLanguageInstallInput,
+  CustomCodeLanguageUpdateInput
+} from '@zennotes/shared-domain/custom-code-languages'
 
 export interface ZenCapabilities {
   supportsUpdater: boolean
@@ -65,6 +80,7 @@ export interface ZenCapabilities {
   supportsCliInstall: boolean
   /** Custom templates require local-filesystem CRUD; false on web/remote. */
   supportsCustomTemplates: boolean
+  supportsCustomCodeLanguages?: boolean
 }
 
 export interface ZenAppInfo {
@@ -105,6 +121,10 @@ export interface ZenBridge {
     authToken?: string | null
   ): Promise<{ vault: VaultInfo | null; capabilities: ServerCapabilities }>
   disconnectRemoteWorkspace(): Promise<VaultInfo | null>
+  /** Re-attempt the workspace configured on disk (used by the reconnect
+   *  screen when the server was unreachable at boot). Resolves with the
+   *  vault on success, null when the workspace still cannot be loaded. */
+  retryWorkspaceBoot(): Promise<VaultInfo | null>
   listRemoteWorkspaceProfiles(): Promise<RemoteWorkspaceProfile[]>
   saveRemoteWorkspaceProfile(input: RemoteWorkspaceProfileInput): Promise<RemoteWorkspaceProfile>
   deleteRemoteWorkspaceProfile(id: string): Promise<void>
@@ -152,6 +172,46 @@ export interface ZenBridge {
   hasAssetsDir(): Promise<boolean>
   generateDemoTour(): Promise<VaultDemoTourResult>
   removeDemoTour(): Promise<VaultDemoTourResult>
+  /**
+   * Raw contents of every `.zennotes/workflows/*.md` file, newest name order.
+   * Parsing lives in `@shared/workflows/parse` so the format has one home, the
+   * same split the templates API uses. Returns [] where the filesystem is not
+   * reachable (web, remote workspaces).
+   */
+  listWorkflows(): Promise<WorkflowFile[]>
+  /** Create or overwrite a workflow file; returns the saved file. */
+  writeWorkflow(input: WriteWorkflowInput): Promise<WorkflowFile>
+  deleteWorkflow(sourcePath: string): Promise<void>
+  /**
+   * Save a copy of a workflow file anywhere on disk, through a native save
+   * dialog. Resolves with the chosen path, or null when the dialog is
+   * cancelled.
+   *
+   * Optional because it needs a filesystem: web and remote workspaces have
+   * none, and the view hides the affordance rather than offering one that
+   * fails. Sharing there is the clipboard, which needs no bridge at all.
+   */
+  exportWorkflow?(input: ExportWorkflowInput): Promise<string | null>
+  /**
+   * Read a workflow file the user picks in a native open dialog. Resolves with
+   * null when the dialog is cancelled.
+   *
+   * Reading is ALL this does. The file is untrusted text until the renderer has
+   * parsed, validated and shown it (`@shared/workflows/share`), and nothing
+   * reaches `.zennotes/workflows` except through `writeWorkflow` afterwards.
+   */
+  importWorkflowFile?(): Promise<ImportedWorkflowFile | null>
+  /**
+   * Execute a plan's ops. The ONLY place in the product that writes on a
+   * workflow's behalf, so every guarantee (journal, atomicity, whole-run
+   * rollback) lives behind this one call.
+   */
+  applyWorkflow(input: ApplyWorkflowInput): Promise<WorkflowRunReceipt>
+  undoWorkflowRun(runId: string): Promise<WorkflowUndoResult>
+  listWorkflowRuns(): Promise<WorkflowRunSummary[]>
+  /** Remove every run ledger a workflow left behind; resolves to how many.
+   *  Exists for the guided tutorial's leave-no-trace cleanup. */
+  deleteWorkflowRuns(workflowId: string): Promise<number>
   listTemplates(): Promise<CustomTemplateFile[]>
   readTemplate(sourcePath: string): Promise<string>
   writeTemplate(input: WriteTemplateInput): Promise<CustomTemplateFile>
@@ -198,6 +258,9 @@ export interface ZenBridge {
   unarchiveNote(relPath: string): Promise<NoteMeta>
   duplicateNote(relPath: string): Promise<NoteMeta>
   exportNotePdf(relPath: string): Promise<string | null>
+  /** Export as a Word document with real Word styles; resolves to the saved
+   *  path, or null when the dialog was cancelled. Desktop, local vaults. */
+  exportNoteDocx(relPath: string): Promise<string | null>
   revealNote(relPath: string): Promise<void>
   /** Reveal the original target of a symlinked note in the OS file manager. */
   revealNoteTarget(relPath: string): Promise<void>
@@ -406,6 +469,12 @@ export interface ZenBridge {
   createCustomTheme(input: { name?: string }): Promise<string | null>
   /** Subscribe to changes in the themes directory (file added/edited/removed). */
   onCustomThemesChange(cb: (next: CustomTheme[]) => void): () => void
+  listCustomCodeLanguages(): Promise<CustomCodeLanguage[]>
+  installCustomCodeLanguage(input: CustomCodeLanguageInstallInput): Promise<CustomCodeLanguage>
+  updateCustomCodeLanguage(input: CustomCodeLanguageUpdateInput): Promise<CustomCodeLanguage>
+  revealCustomCodeLanguagesDir(id?: string): Promise<void>
+  deleteCustomCodeLanguage(id: string): Promise<void>
+  onCustomCodeLanguagesChange(cb: (next: CustomCodeLanguage[]) => void): () => void
   /** CSS overrides from `~/.config/zennotes/overrides/*.css`. Empty on web. */
   listOverrides(): Promise<Override[]>
   /** Reveal the overrides directory — or a specific override file when a name is

@@ -51,6 +51,12 @@ func main() {
 	w := watcher.StartOrDisabled(v.Root(), cfg.DisableWatcher)
 	defer w.Close()
 
+	// Seed from the vault's normalized settings; the watcher re-normalizes for
+	// itself whenever vault.json changes, so both agree on the folder layout.
+	if settings, err := v.GetSettings(); err == nil {
+		w.SetFolderPaths(settings.SystemFolderPaths)
+	}
+
 	dist, err := web.Dist()
 	if err != nil {
 		log.Printf("warning: embedded web bundle not available: %v", err)

@@ -46,6 +46,7 @@ import { registerDisplayLineMotion } from '../lib/cm-vim-display-line'
 import { toggleWrap, wrapLink } from '../lib/cm-format'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
+import { customCodeFenceHighlightExtension } from '../lib/cm-custom-code-languages'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
 import { vimImeControl } from '../lib/cm-vim-ime'
 import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
@@ -547,6 +548,7 @@ export function QuickCaptureApp(): JSX.Element {
           highlightActiveLine(),
           EditorView.lineWrapping,
           markdown({ base: markdownLanguage, codeLanguages: resolveCodeLanguage, addKeymap: false }),
+          customCodeFenceHighlightExtension,
           vimAwareMarkdownKeymap,
           markdownListIndentPlugin,
           syntaxHighlighting(captureHighlight),

@@ -5,6 +5,7 @@ import {
   globalShortcut,
   ipcMain,
   Menu,
+  nativeImage,
   protocol,
   screen,
   session,
@@ -76,6 +77,8 @@ import {
   importFiles,
   importPastedImage,
   invalidateNoteMetaCache,
+  invalidateVaultSettingsCache,
+  vaultChangeAffectsSettings,
   invalidateVaultTextSearchCache,
   listAssets,
   listFolders,
@@ -140,6 +143,20 @@ import {
 import type { AppConfigPortable } from '@shared/app-config'
 import type { CustomTheme } from '@shared/custom-themes'
 import type { Override } from '@shared/overrides'
+import type {
+  CustomCodeLanguage,
+  CustomCodeLanguageInstallInput,
+  CustomCodeLanguageUpdateInput
+} from '@shared/custom-code-languages'
+import {
+  ensureCustomCodeLanguagesDir,
+  listCustomCodeLanguages,
+  installCustomCodeLanguage,
+  updateCustomCodeLanguage,
+  deleteCustomCodeLanguage,
+  customCodeLanguageRevealTarget,
+  startWatchingCustomCodeLanguages
+} from './custom-code-languages'
 import {
   listCustomTemplates,
   readCustomTemplate,
@@ -147,6 +164,26 @@ import {
   deleteCustomTemplate
 } from './templates'
 import type { WriteTemplateInput } from '@zennotes/bridge-contract/templates'
+import {
+  deleteWorkflowFile,
+  listWorkflowFiles,
+  readWorkflowImportFile,
+  safeExportFilename,
+  writeWorkflowFile
+} from './workflows'
+import {
+  applyWorkflowOps,
+  deleteWorkflowRuns,
+  listWorkflowRuns,
+  undoWorkflowRun
+} from './workflow-apply'
+import { renderNoteDocx } from './note-docx'
+import type {
+  ApplyWorkflowInput,
+  ExportWorkflowInput,
+  ImportedWorkflowFile,
+  WriteWorkflowInput
+} from '@zennotes/bridge-contract/workflows'
 import {
   deleteRemoteWorkspaceSecret,
   getRemoteWorkspaceSecret,
@@ -162,6 +199,10 @@ import {
   createRecordPage,
   listDatabases
 } from './databases'
+import {
+  createDatabaseOps as createSharedDatabaseOps,
+  type DatabaseOps as SharedDatabaseOps
+} from '@shared/database-ops'
 import type { DatabaseSidecar, DbRow } from '@shared/databases'
 import { VaultWatcher } from './watcher'
 import { WindowVaultRegistry } from './window-vaults'
@@ -169,7 +210,7 @@ import { registerEphemeralRoot, isEphemeralRoot } from './ephemeral-vaults'
 import { renderTikz } from './tikz'
 import { resolveCommandViaLoginShell } from './login-shell-path'
 import { fetchLinkMetadata } from './link-metadata'
-import { RemoteServerClient } from './remote/server-client'
+import { RemoteRequestError, RemoteServerClient } from './remote/server-client'
 import {
   getMcpClientStatuses,
   getMcpServerRuntime,
@@ -179,6 +220,7 @@ import {
 import {
   getCliInstallStatus,
   installCli,
+  migrateLegacyCliLink,
   uninstallCli
 } from './cli-install'
 import {
@@ -252,6 +294,10 @@ let currentVault: VaultInfo | null = null
 let currentWorkspaceMode: 'local' | 'remote' = 'local'
 let remoteWorkspaceConfig: PersistedRemoteWorkspaceConfig | null = null
 let currentRemoteWorkspaceProfileId: string | null = null
+// Set when the configured remote workspace could not be reached at boot (or
+// on an explicit retry); cleared by any successful connect. Rides on
+// RemoteWorkspaceInfo so the renderer can offer reconnect instead of Welcome.
+let remoteWorkspaceBootError: string | null = null
 let remoteWorkspaceClient: RemoteServerClient | null = null
 let remoteServerCapabilities: ServerCapabilities | null = null
 let stopRemoteVaultWatch: (() => void) | null = null
@@ -261,6 +307,10 @@ const windowVaults = new WindowVaultRegistry({
   invalidateVault: (root, ev) => {
     invalidateNoteMetaCache(root, ev.scope === 'vault-settings' ? undefined : ev.path)
     invalidateVaultTextSearchCache(root)
+    // Only for events that can actually change the settings: this cache backs
+    // a whole-root readdir that every note read and write already awaits, so
+    // dropping it per event made a save burst pay for one listing per file.
+    if (vaultChangeAffectsSettings(ev)) invalidateVaultSettingsCache(root)
   },
   sendVaultChange: (windowId, ev) => {
     const win = BrowserWindow.fromId(windowId)
@@ -310,6 +360,18 @@ const readyWindowIds = new Set<number>()
 const pendingWindowNoteOpens = new Map<number, string[]>()
 let appStartupComplete = false
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
+// A denied lock means ZenNotes is already running and our argv has already
+// been handed to it: requestSingleInstanceLock delivers the notification
+// synchronously before returning false. Exit right here rather than waiting
+// for `ready` — on macOS (Electron 41) a lock-losing process doesn't get
+// `ready` for ~90 seconds, so quitting from whenReady left every `zn open`
+// against a running app as a zombie in the Dock for a minute and a half,
+// and a burst of opens looked like ZenNotes multiplying (#511). app.exit
+// skips before-quit/will-quit, which is correct: this process created
+// nothing to clean up.
+if (!gotSingleInstanceLock) {
+  app.exit(0)
+}
 
 function isMac(): boolean {
   return process.platform === 'darwin'
@@ -429,6 +491,18 @@ function focusWindow(win: BrowserWindow): void {
   if (win.isMinimized()) win.restore()
   win.show()
   win.focus()
+  // Wayland compositors (Hyprland in particular) ignore a client's own
+  // show()/focus() unless it holds an xdg-activation token, which Electron
+  // does not plumb for a second instance's argv hand-off. The always-on-top
+  // pulse is the portable nudge that survives that: momentarily claiming the
+  // top layer forces the compositor to raise the window, and dropping it
+  // immediately leaves stacking normal. A no-op visually where focus()
+  // already worked, so it runs on Linux unconditionally.
+  if (process.platform === 'linux' && !win.isFocused()) {
+    win.setAlwaysOnTop(true)
+    win.focus()
+    win.setAlwaysOnTop(false)
+  }
 }
 
 // Dispatch a note-open to a specific window, deferring until that
@@ -1333,7 +1407,14 @@ async function openTemporaryFolder(dir: string, reuseMainWindow: boolean): Promi
     focusWindow(existing)
     return true
   }
-  if (!(await folderHasMarkdown(resolved))) return false
+  // No markdown-content gate here anymore. It used to bail when a bounded scan
+  // found no markdown, which read as protection against opening junk folders,
+  // but every caller is an explicit ask (`zn open <dir>`, a folder handed to
+  // the app by the OS), and the scan's bounds made it lie: notes behind 4000
+  // other files, or inside a dot-directory, read as "no markdown" and the
+  // folder was dropped without a word while the CLI had already printed
+  // success (#498-adjacent, reported on Discord). An empty session that shows
+  // exactly what the folder holds is the honest answer either way.
   const win = await createWindow({
     initialVaultRoot: resolved,
     persistInitialVault: false,
@@ -1341,35 +1422,6 @@ async function openTemporaryFolder(dir: string, reuseMainWindow: boolean): Promi
   })
   if (!reuseMainWindow) focusWindow(win)
   return true
-}
-
-// Cheap bounded scan for at least one markdown file, so dropping a folder with
-// no docs in it doesn't spin up an empty session. Skips dotfiles/node_modules.
-async function folderHasMarkdown(dir: string): Promise<boolean> {
-  const queue: string[] = [dir]
-  let scanned = 0
-  while (queue.length > 0 && scanned < 4000) {
-    const current = queue.shift()
-    if (!current) break
-    let entries
-    try {
-      entries = await fsp.readdir(current, { withFileTypes: true })
-    } catch {
-      continue
-    }
-    for (const entry of entries) {
-      scanned++
-      const name = entry.name
-      if (name.startsWith('.')) continue
-      if (entry.isDirectory()) {
-        if (name === 'node_modules') continue
-        queue.push(path.join(current, name))
-      } else if (isMarkdownFilePath(name)) {
-        return true
-      }
-    }
-  }
-  return false
 }
 
 // Pick a local vault to move an external file into: any open local
@@ -2149,7 +2201,8 @@ async function currentRemoteWorkspaceInfo(): Promise<RemoteWorkspaceInfo | null>
     baseUrl: remoteWorkspaceConfig.baseUrl,
     authConfigured: Boolean(remoteWorkspaceClient?.authToken),
     capabilities: remoteServerCapabilities,
-    profileId: currentRemoteWorkspaceProfileId
+    profileId: currentRemoteWorkspaceProfileId,
+    bootError: remoteWorkspaceBootError
   }
 }
 
@@ -2461,6 +2514,7 @@ async function setRemoteWorkspace(
 ): Promise<{ vault: VaultInfo | null; capabilities: ServerCapabilities }> {
   const client = new RemoteServerClient({ baseUrl, authToken })
   const capabilities = await client.getCapabilities()
+  remoteWorkspaceBootError = null
   let vault = await client.getCurrentVault()
   const preferredVaultPath = options.vaultPath?.trim() || null
   if (
@@ -2549,6 +2603,97 @@ function sanitizePdfFilename(name: string): string {
     .replace(/\s+/g, ' ')
     .trim()
   return sanitized || 'Note'
+}
+
+/**
+ * Export a note as a Word document with real Word styles.
+ *
+ * Rendering happens here in the main process (markdown → docx via
+ * `note-docx.ts`) because the two things the renderer cannot do live here:
+ * the save dialog, and reading local image files for embedding. Local vaults
+ * only for now: the serializer reads assets straight off disk.
+ */
+async function exportNoteDocx(
+  relPath: string,
+  parentWindow: BrowserWindow | null | undefined
+): Promise<string | null> {
+  if (isRemoteWorkspaceActive()) {
+    throw new Error('Word export is available for local vaults only, for now.')
+  }
+  const v = requireVault()
+
+  const suggestedName = `${sanitizePdfFilename(noteTitleFromRelPath(relPath))}.docx`
+  const saveDialogOptions = {
+    title: 'Export Note as Word Document',
+    defaultPath: path.join(app.getPath('documents'), suggestedName),
+    buttonLabel: 'Export Word Document',
+    filters: [{ name: 'Word Document', extensions: ['docx'] }]
+  }
+  const result = parentWindow
+    ? await dialog.showSaveDialog(parentWindow, saveDialogOptions)
+    : await dialog.showSaveDialog(saveDialogOptions)
+  if (result.canceled || !result.filePath) return null
+  const targetPath = result.filePath.toLowerCase().endsWith('.docx')
+    ? result.filePath
+    : `${result.filePath}.docx`
+
+  const note = await readNote(v.root, relPath)
+  const noteDir = path.posix.dirname(relPath)
+  const rootAbs = path.resolve(v.root)
+
+  // Resolve a markdown image src to bytes + pixel size, or null for anything
+  // that cannot be embedded (remote URLs, files outside the vault, formats
+  // Word rejects that nativeImage cannot decode either). Null degrades to the
+  // image's alt text in the document rather than failing the export.
+  const resolveImage = async (src: string) => {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(src)) return null
+    const decoded = decodeURIComponent(src)
+    const candidates = [
+      path.resolve(rootAbs, noteDir === '.' ? '' : noteDir, decoded),
+      path.resolve(rootAbs, decoded.replace(/^\/+/, ''))
+    ]
+    for (const abs of candidates) {
+      if (abs !== rootAbs && !abs.startsWith(rootAbs + path.sep)) continue
+      let data: Buffer
+      try {
+        data = await fsp.readFile(abs)
+      } catch {
+        continue
+      }
+      const ext = path.extname(abs).toLowerCase()
+      let type: 'png' | 'jpg' | 'gif' | 'bmp'
+      if (ext === '.png') type = 'png'
+      else if (ext === '.jpg' || ext === '.jpeg') type = 'jpg'
+      else if (ext === '.gif') type = 'gif'
+      else if (ext === '.bmp') type = 'bmp'
+      else {
+        // Word will not take this format directly; if Chromium can decode it
+        // (webp, icns…), re-encode to PNG. An empty result means it could not.
+        const converted = nativeImage.createFromBuffer(data)
+        if (converted.isEmpty()) return null
+        data = converted.toPNG()
+        type = 'png'
+      }
+      const size = nativeImage.createFromBuffer(data).getSize()
+      if (size.width === 0 || size.height === 0) return null
+      // Fit the printable Letter column (6.5in at Word's 96dpi), scaling only
+      // ever DOWN so small images keep their intrinsic size.
+      const maxWidth = 624
+      const scale = size.width > maxWidth ? maxWidth / size.width : 1
+      return {
+        data,
+        width: Math.round(size.width * scale),
+        height: Math.round(size.height * scale),
+        type
+      }
+    }
+    return null
+  }
+
+  const buffer = await renderNoteDocx(note.body, note.title, resolveImage)
+  await fsp.mkdir(path.dirname(targetPath), { recursive: true })
+  await fsp.writeFile(targetPath, buffer)
+  return targetPath
 }
 
 function ensurePdfExtension(targetPath: string): string {
@@ -2836,9 +2981,18 @@ async function loadCurrentVaultFromConfig(): Promise<VaultInfo | null> {
         win && !win.isDestroyed()
           ? await ipcWindowContext.run(win, loadRemote)
           : await loadRemote()
+      remoteWorkspaceBootError = null
       return result.vault
-    } catch {
-      currentRemoteWorkspaceProfileId = null
+    } catch (err) {
+      // The workspace stays CONFIGURED: an unreachable server is a state to
+      // recover from, not a reason to pretend nothing was set up. The
+      // renderer reads bootError off getRemoteWorkspaceInfo and shows a
+      // reconnect screen instead of the first-boot Welcome; the profile id
+      // is kept so a retry reuses the saved credential.
+      remoteWorkspaceBootError =
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : `Could not connect to the ZenNotes server at ${cfg.remoteWorkspace.baseUrl}.`
       return null
     }
   }
@@ -3211,6 +3365,11 @@ function registerIpc(): void {
   handle(IPC.WORKSPACE_DISCONNECT_REMOTE, async () => {
     return await disconnectRemoteWorkspace()
   })
+  handle(IPC.WORKSPACE_RETRY_BOOT, async () => {
+    // Same path as boot: re-read config and secrets, attempt the connect.
+    // On failure loadCurrentVaultFromConfig refreshes bootError itself.
+    return await loadCurrentVaultFromConfig()
+  })
   handle(IPC.WORKSPACE_LIST_REMOTE_PROFILES, async () => {
     return await listRemoteWorkspaceProfiles()
   })
@@ -3452,6 +3611,123 @@ function registerIpc(): void {
     return await removeDemoTour(v.root)
   })
 
+  // Workflows are authored as files in the vault, so remote workspaces (which
+  // have no local `.zennotes/workflows`) simply have none.
+  handle(IPC.VAULT_LIST_WORKFLOWS, async () => {
+    if (isRemoteWorkspaceActive()) return []
+    const v = requireVault()
+    return await listWorkflowFiles(v.root)
+  })
+
+  // Authoring needs the local filesystem, so remote workspaces reject rather
+  // than resolve: a silent success would leave the editor believing it saved.
+  handle(IPC.VAULT_WRITE_WORKFLOW, async (_e, input: WriteWorkflowInput) => {
+    if (isRemoteWorkspaceActive()) {
+      throw new Error('Workflows are unavailable on remote vaults')
+    }
+    const v = requireVault()
+    return await writeWorkflowFile(v.root, input)
+  })
+
+  handle(IPC.VAULT_DELETE_WORKFLOW, async (_e, sourcePath: string) => {
+    if (isRemoteWorkspaceActive()) {
+      throw new Error('Workflows are unavailable on remote vaults')
+    }
+    const v = requireVault()
+    return await deleteWorkflowFile(v.root, sourcePath)
+  })
+
+  // Export is a save dialog and a file copy, and deliberately nothing more: a
+  // workflow IS a `.md` file, so the shareable artifact is the file. The bytes
+  // come from the renderer, which read them from the vault, so this never
+  // reinterprets a format it does not own.
+  handle(IPC.VAULT_EXPORT_WORKFLOW, async (event, input: ExportWorkflowInput) => {
+    if (isRemoteWorkspaceActive()) {
+      throw new Error('Workflows are unavailable on remote vaults')
+    }
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const options: Electron.SaveDialogOptions = {
+      title: 'Export Workflow',
+      defaultPath: path.join(app.getPath('documents'), safeExportFilename(input.suggestedName)),
+      buttonLabel: 'Export',
+      filters: [{ name: 'Markdown', extensions: ['md'] }]
+    }
+    const result = win
+      ? await dialog.showSaveDialog(win, options)
+      : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return null
+    // The dialog already asked about overwriting, and the user picked the path,
+    // so this writes exactly where they said and reports back where that was.
+    await fsp.writeFile(result.filePath, input.raw, 'utf8')
+    return result.filePath
+  })
+
+  // Import READS. It does not write into the vault, it does not parse, and it
+  // certainly does not run: the renderer reviews the text (parse, validate, and
+  // "here is every note this would change") and only then writes through
+  // `writeWorkflow` like any other create. Keeping the read separate is what
+  // makes "an import is never a silent install" a property of the plumbing
+  // rather than a promise in a comment.
+  handle(IPC.VAULT_IMPORT_WORKFLOW_FILE, async (event): Promise<ImportedWorkflowFile | null> => {
+    if (isRemoteWorkspaceActive()) {
+      throw new Error('Workflows are unavailable on remote vaults')
+    }
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const options: Electron.OpenDialogOptions = {
+      title: 'Import Workflow',
+      properties: ['openFile'],
+      buttonLabel: 'Choose',
+      filters: [
+        { name: 'Workflow', extensions: ['md'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    }
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options)
+    if (result.canceled || result.filePaths.length === 0) return null
+    return await readWorkflowImportFile(result.filePaths[0])
+  })
+
+  // Applying is deliberately a separate call from planning: the engine returns
+  // ops and cannot write, so nothing reaches the vault until the user has seen
+  // the dry run and asked for it here.
+  handle(IPC.VAULT_APPLY_WORKFLOW, async (_e, input: ApplyWorkflowInput) => {
+    if (isRemoteWorkspaceActive()) {
+      throw new Error('Workflows are unavailable on remote vaults')
+    }
+    const v = requireVault()
+    return await applyWorkflowOps(v.root, input)
+  })
+
+  // Undo restores the bytes the run recorded, so it is safe to offer for any
+  // run still in the ledger, and an error (never a silent success) for one that
+  // is unknown or already undone.
+  handle(IPC.VAULT_UNDO_WORKFLOW_RUN, async (_e, runId: string) => {
+    if (isRemoteWorkspaceActive()) {
+      throw new Error('Workflows are unavailable on remote vaults')
+    }
+    const v = requireVault()
+    return await undoWorkflowRun(v.root, runId)
+  })
+
+  // Run history is read from files in the vault, so a remote workspace simply
+  // has none, matching how it reports workflows themselves.
+  handle(IPC.VAULT_LIST_WORKFLOW_RUNS, async () => {
+    if (isRemoteWorkspaceActive()) return []
+    const v = requireVault()
+    return await listWorkflowRuns(v.root)
+  })
+
+  handle(IPC.VAULT_DELETE_WORKFLOW_RUNS, async (_e, workflowId: string) => {
+    if (isRemoteWorkspaceActive()) return 0
+    if (typeof workflowId !== 'string' || !workflowId) {
+      throw new Error('deleteWorkflowRuns needs a workflow id')
+    }
+    const v = requireVault()
+    return await deleteWorkflowRuns(v.root, workflowId)
+  })
+
   // Custom templates live on the local filesystem only; remote vaults fall
   // back to built-in templates (renderer constants), so list returns empty and
   // mutations are rejected.
@@ -3547,16 +3823,60 @@ function registerIpc(): void {
     return await scanTasksForPath(v.root, relPath)
   })
 
-  // Databases are local-vault only for now (no remote-server endpoints yet).
-  const ensureLocalForDatabases = (): void => {
-    if (isRemoteWorkspaceActive()) {
-      throw new Error('Databases are not yet supported on remote vaults')
-    }
+  // Databases on a remote workspace compose from the same generic file
+  // primitives the web app uses (@shared/database-ops): reads and writes go
+  // through the server's note endpoints (which accept any vault path,
+  // including `.base/` internals) and the `.base` folder rides the folder
+  // endpoints, so ANY server version works — no database endpoints exist or
+  // are needed (#499). Local vaults keep the direct-fs implementation in
+  // ./databases untouched. The ops are memoized per client so reconnecting
+  // (a new client instance) rebuilds them.
+  let remoteDbOps: { client: RemoteServerClient; ops: SharedDatabaseOps } | null = null
+  const databaseOpsForRemote = (): SharedDatabaseOps => {
+    const client = requireRemoteWorkspaceClient()
+    if (remoteDbOps?.client === client) return remoteDbOps.ops
+    const ops = createSharedDatabaseOps({
+      readFileTextOrNull: async (relPath) => {
+        try {
+          return (await client.readNote(relPath)).body
+        } catch (err) {
+          // "Absent" means 404 and nothing else. `openDatabase` reads an
+          // absent sidecar as "bare CSV, adopt it" and writes an inferred
+          // schema.json over whatever was there, so every error swallowed
+          // here is a schema the user loses. A 500, a dropped connection, an
+          // auth rejection all mean the file may exist perfectly well.
+          // Servers old enough to answer 500 for a missing file are no longer
+          // humored: an unopenable database is recoverable, an overwritten
+          // one is not.
+          if (err instanceof RemoteRequestError && err.status === 404) return null
+          throw err
+        }
+      },
+      writeFile: async (relPath, text) => {
+        await client.writeNote(relPath, text)
+      },
+      createFolder: (folder, subpath) => client.createFolder(folder, subpath),
+      renameFolder: (folder, oldSubpath, newSubpath) =>
+        client.renameFolder(folder, oldSubpath, newSubpath),
+      listFolders: () => client.listFolders(),
+      // Errors propagate: answering "defaults" for an unreachable server sends
+      // every database path composition to a literal `inbox/`, writing
+      // sidecars where nothing will ever look for them.
+      vaultLayout: async () => {
+        const settings = await client.getVaultSettings()
+        return {
+          primaryNotesAtRoot: settings.primaryNotesLocation === 'root',
+          systemFolderPaths: settings.systemFolderPaths
+        }
+      }
+    })
+    remoteDbOps = { client, ops }
+    return ops
   }
 
   handle(IPC.VAULT_OPEN_DATABASE, async (_e, relPath: string) => {
-    ensureLocalForDatabases()
     try {
+      if (isRemoteWorkspaceActive()) return await databaseOpsForRemote().openDatabase(relPath)
       return await readDatabase(requireVault().root, relPath)
     } catch (err) {
       // A missing database isn't exceptional — its tab can simply outlive the
@@ -3570,14 +3890,18 @@ function registerIpc(): void {
   })
 
   handle(IPC.VAULT_WRITE_DATABASE_ROWS, async (_e, relPath: string, rows: DbRow[]) => {
-    ensureLocalForDatabases()
+    if (isRemoteWorkspaceActive()) {
+      return await databaseOpsForRemote().writeDatabaseRows(relPath, rows)
+    }
     return await writeDatabaseRows(requireVault().root, relPath, rows)
   })
 
   handle(
     IPC.VAULT_WRITE_DATABASE_SCHEMA,
     async (_e, relPath: string, sidecar: DatabaseSidecar, rows: DbRow[]) => {
-      ensureLocalForDatabases()
+      if (isRemoteWorkspaceActive()) {
+        return await databaseOpsForRemote().writeDatabaseSchema(relPath, sidecar, rows)
+      }
       return await writeDatabaseSchema(requireVault().root, relPath, sidecar, rows)
     }
   )
@@ -3585,26 +3909,32 @@ function registerIpc(): void {
   handle(
     IPC.VAULT_CREATE_DATABASE,
     async (_e, folder: NoteFolder, subpath: string, title?: string) => {
-      ensureLocalForDatabases()
+      if (isRemoteWorkspaceActive()) {
+        return await databaseOpsForRemote().createDatabase(folder, subpath, title)
+      }
       return await createDatabase(requireVault().root, folder, subpath, title)
     }
   )
 
   handle(IPC.VAULT_RENAME_DATABASE, async (_e, csvPath: string, newTitle: string) => {
-    ensureLocalForDatabases()
+    if (isRemoteWorkspaceActive()) {
+      return await databaseOpsForRemote().renameDatabase(csvPath, newTitle)
+    }
     return await renameDatabase(requireVault().root, csvPath, newTitle)
   })
 
   handle(
     IPC.VAULT_CREATE_RECORD_PAGE,
     async (_e, csvPath: string, title: string, body: string) => {
-      ensureLocalForDatabases()
+      if (isRemoteWorkspaceActive()) {
+        return await databaseOpsForRemote().createRecordPage(csvPath, title, body)
+      }
       return await createRecordPage(requireVault().root, csvPath, title, body)
     }
   )
 
   handle(IPC.VAULT_LIST_DATABASES, async () => {
-    ensureLocalForDatabases()
+    if (isRemoteWorkspaceActive()) return await databaseOpsForRemote().listDatabases()
     return await listDatabases(requireVault().root)
   })
 
@@ -3760,6 +4090,10 @@ function registerIpc(): void {
 
   handle(IPC.VAULT_EXPORT_NOTE_PDF, async (event, relPath: string) => {
     return await exportNotePdf(relPath, BrowserWindow.fromWebContents(event.sender))
+  })
+
+  handle(IPC.VAULT_EXPORT_NOTE_DOCX, async (event, relPath: string) => {
+    return await exportNoteDocx(relPath, BrowserWindow.fromWebContents(event.sender))
   })
 
   handle(IPC.VAULT_REVEAL_NOTE, async (_e, relPath: string) => {
@@ -4391,6 +4725,21 @@ function registerIpc(): void {
     await deleteCustomTheme(slug)
   })
   handle(IPC.CUSTOM_THEMES_CREATE, (_event, input: { name?: string }) => createCustomTheme(input))
+  handle(IPC.CUSTOM_CODE_LANGUAGES_LIST, () => listCustomCodeLanguages())
+  handle(
+    IPC.CUSTOM_CODE_LANGUAGES_INSTALL,
+    (_event, input: CustomCodeLanguageInstallInput) => installCustomCodeLanguage(input)
+  )
+  handle(
+    IPC.CUSTOM_CODE_LANGUAGES_UPDATE,
+    (_event, input: CustomCodeLanguageUpdateInput) => updateCustomCodeLanguage(input)
+  )
+  handle(IPC.CUSTOM_CODE_LANGUAGES_REVEAL, async (_event, id?: string) => {
+    shell.showItemInFolder(await customCodeLanguageRevealTarget(id))
+  })
+  handle(IPC.CUSTOM_CODE_LANGUAGES_DELETE, async (_event, id: string) => {
+    await deleteCustomCodeLanguage(id)
+  })
   handle(IPC.OVERRIDES_LIST, () => listOverrides())
   handle(IPC.OVERRIDES_REVEAL, async (_event, name?: string) => {
     shell.showItemInFolder(await overrideRevealTarget(name))
@@ -4417,6 +4766,12 @@ function broadcastConfigChange(next: AppConfigPortable): void {
 function broadcastCustomThemesChange(next: CustomTheme[]): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send(IPC.CUSTOM_THEMES_ON_CHANGE, next)
+  }
+}
+
+function broadcastCustomCodeLanguagesChange(next: CustomCodeLanguage[]): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(IPC.CUSTOM_CODE_LANGUAGES_ON_CHANGE, next)
   }
 }
 
@@ -5111,9 +5466,10 @@ app.whenReady().then(async () => {
   // initialization — on Linux this is where fontconfig cache rebuilds and
   // desktop-portal waits land, none of it our code.
   recordBootMark('main.boot.app-ready')
-  // A second launch (e.g. double-clicking a .md on Windows/Linux) hands
-  // its argv to the primary instance via 'second-instance' below, then
-  // quits here so there's only ever one ZenNotes process.
+  // Backstop only: a lock-losing process already called app.exit(0) at
+  // module scope (see requestSingleInstanceLock above). If a future
+  // Electron ever defers that exit long enough for `ready` to fire, this
+  // still keeps a second ZenNotes from booting a full app.
   if (!gotSingleInstanceLock) {
     app.quit()
     return
@@ -5133,6 +5489,15 @@ app.whenReady().then(async () => {
   }
 
   await migrateLegacyRemoteWorkspaceSecrets()
+
+  // Fire-and-forget: heals the pre-2.10 `zen` symlink into `zn` for users who
+  // never re-ran the CLI installer. Must not delay or fail startup — a broken
+  // PATH probe is a log line, not a launch problem. (#126)
+  void migrateLegacyCliLink()
+    .then((linkPath) => {
+      if (linkPath) console.log(`[cli] migrated legacy zen symlink to ${linkPath}`)
+    })
+    .catch((err) => console.warn('[cli] legacy symlink migration failed:', err))
 
   protocol.handle(LOCAL_ASSET_SCHEME, async (request) => {
     const remote = decodeRemoteAssetRequest(request.url)
@@ -5316,6 +5681,9 @@ app.whenReady().then(async () => {
   await ensureCustomThemesDir().catch(() => {})
   startWatchingCustomThemes(broadcastCustomThemesChange)
 
+  await ensureCustomCodeLanguagesDir().catch(() => {})
+  startWatchingCustomCodeLanguages(broadcastCustomCodeLanguagesChange)
+
   // CSS overrides live in a sibling dir; same seed-then-watch dance.
   await ensureOverridesDir().catch(() => {})
   startWatchingOverrides(broadcastOverridesChange)
@@ -5448,6 +5816,11 @@ app.whenReady().then(async () => {
   })
 
   appStartupComplete = true
+  // A second instance that arrived while startup was still running queued its
+  // paths (the eager flush stands down until here, #178) and nothing else
+  // drains that queue: without this, `zn open` during app launch is silently
+  // swallowed.
+  if (pendingFileOpens.length > 0) void flushPendingFileOpens()
 })
 
 app.on('open-url', (event, url) => {

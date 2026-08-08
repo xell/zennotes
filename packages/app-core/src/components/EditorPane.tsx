@@ -52,6 +52,7 @@ import {
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { isImeComposing } from '../lib/ime'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
+import { customCodeFenceHighlightExtension } from '../lib/cm-custom-code-languages'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
 import { vimImeControl } from '../lib/cm-vim-ime'
 import { forwardOnCheckboxArrow } from '../lib/cm-forward-task'
@@ -138,6 +139,8 @@ import { MediaPlayer } from './MediaPlayer'
 import { PdfView, type PdfAssetAction } from './PdfView'
 import { readingStats, type ReadingStats } from '../lib/word-count'
 import { isTasksTabPath } from '@shared/tasks'
+import { isWorkflowsTabPath } from '@shared/workflows-view'
+import { LazyWorkflowsView } from './LazyWorkflowsView'
 import { isDatabaseTabPath, databaseTitleFromTab, databaseTabPath, isDatabaseCsvPath } from '@shared/databases'
 import { isTagsTabPath } from '@shared/tags'
 import { isHelpTabPath } from '@shared/help'
@@ -201,6 +204,7 @@ import {
   TargetIcon,
   TagIcon,
   TrashIcon,
+  WorkflowIcon,
   ZapIcon
 } from './icons'
 import { focusEditorNormalMode } from '../lib/editor-focus'
@@ -233,6 +237,13 @@ import {
 } from '../lib/pane-mode'
 import { resolveCommentAnchor, selectionToCommentAnchor } from '../lib/comments'
 import { ZEN_OPEN_EDITOR_CONTEXT_MENU_EVENT } from '../lib/keyboard-context-menu'
+import { armMiddleClickPasteGuard } from '../lib/middle-click-paste-guard'
+import {
+  CALENDAR_PANEL_CLOSED,
+  calendarPanelOnNote,
+  calendarPanelOnToggle,
+  type CalendarPanelState
+} from '../lib/calendar-panel-auto'
 import {
   assetPathFromTab,
   assetTitleFromPath,
@@ -337,6 +348,7 @@ function buildEditorKeymap(vimMode: boolean, overrides: KeymapOverrides): Extens
 function markdownEditingExtensions(): Extension[] {
   return [
     markdown({ base: markdownLanguage, codeLanguages: resolveCodeLanguage, addKeymap: false }),
+    customCodeFenceHighlightExtension,
     vimAwareMarkdownKeymap,
     // Not markdownListIndentPlugin here — it's already applied conditionally
     // via a reconfigurable Compartment elsewhere in this file (off in split
@@ -832,7 +844,8 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const [outlineOpen, setOutlineOpen] = useState(false)
   const [activeOutlineLine, setActiveOutlineLine] = useState<number | null>(null)
   const [commentsOpen, setCommentsOpen] = useState(false)
-  const [calendarOpen, setCalendarOpen] = useState(false)
+  const [calendarPanel, setCalendarPanel] = useState<CalendarPanelState>(CALENDAR_PANEL_CLOSED)
+  const calendarOpen = calendarPanel.open
   // The calendar panel is a date navigator. It auto-opens while the pane shows
   // a daily/weekly note, but stays available (Obsidian-style) on any note as
   // long as the daily or weekly feature is enabled.
@@ -1029,7 +1042,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   }, [])
 
   const toggleCalendarPanel = useCallback(() => {
-    setCalendarOpen((open) => !open)
+    setCalendarPanel(calendarPanelOnToggle)
   }, [])
 
   const applyPaneMode = useCallback((nextMode: PaneMode) => {
@@ -1124,7 +1137,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       setConnectionsOpen(false)
       setOutlineOpen(false)
       setCommentsOpen(false)
-      setCalendarOpen(false)
+      setCalendarPanel(CALENDAR_PANEL_CLOSED)
       setConnectionPreview(null)
       const panel = useStore.getState().focusedPanel
       if (panel === 'connections' || panel === 'comments' || panel === 'hoverpreview') {
@@ -1135,17 +1148,21 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     return () => window.removeEventListener('zen:close-right-panel', handler)
   }, [isActive, setConnectionPreview, setFocusedPanel])
 
-  // Auto-show the calendar when this pane lands on a daily/weekly note. On other
-  // notes we leave it as-is (Obsidian-style persistence) so it stays open while
-  // you browse, and only force it closed when the feature is turned off entirely.
-  // Keyed on the note identity (not every render) so a manual `leader c` / icon
-  // close sticks until the note changes.
+  // Auto-show the calendar when this pane lands on a daily/weekly note. A
+  // panel the USER opened keeps Obsidian-style persistence and stays open
+  // while they browse; a panel THIS effect opened is scoped to the periodic
+  // notes and closes on the way out, so a visit to a daily note can no longer
+  // overwrite a close the user made elsewhere (#502). The transitions live in
+  // `calendar-panel-auto`; keyed on the note identity (not every render) so a
+  // manual `leader c` / icon close sticks until the note changes.
   useEffect(() => {
-    if (!calendarAvailable) {
-      setCalendarOpen(false)
-      return
-    }
-    if (isDateNote && autoCalendarPanel) setCalendarOpen(true)
+    setCalendarPanel((state) =>
+      calendarPanelOnNote(state, {
+        isDateNote,
+        autoEnabled: autoCalendarPanel,
+        available: calendarAvailable
+      })
+    )
   }, [content?.path, isDateNote, autoCalendarPanel, calendarAvailable])
 
   useEffect(() => {
@@ -2679,6 +2696,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
           preview: path === previewTab,
           isQuick: false,
           isTasks: false,
+          isWorkflows: false,
           isTag: false,
           isHelp: false,
           isArchive: false,
@@ -2687,6 +2705,13 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
           isAsset: false,
           isDiagram: false,
           isDatabase: false
+        }
+        if (isWorkflowsTabPath(path)) {
+          return {
+            ...base,
+            title: 'Workflows',
+            isWorkflows: true
+          }
         }
         if (isTasksTabPath(path)) {
           return {
@@ -2829,6 +2854,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     // close, close relatives, or split them into another pane.
     if (
       isQuickNotesTabPath(path) ||
+      isWorkflowsTabPath(path) ||
       isTagsTabPath(path) ||
       isHelpTabPath(path) ||
       isArchiveTabPath(path) ||
@@ -2936,6 +2962,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
         preview: boolean
         isQuick: boolean
         isTasks: boolean
+        isWorkflows: boolean
         isTag: boolean
         isHelp: boolean
         isArchive: boolean
@@ -2950,6 +2977,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       const isVirtual =
         tab.isQuick ||
         tab.isTasks ||
+        tab.isWorkflows ||
         tab.isTag ||
         tab.isHelp ||
         tab.isArchive ||
@@ -3033,9 +3061,20 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
               e.preventDefault()
             }
           }}
+          onMouseUp={(e) => {
+            // Some Chromium paths run the Linux primary-selection paste as the
+            // mouseup default action, before auxclick can refuse it. (#498)
+            if (e.button === 1) {
+              e.preventDefault()
+            }
+          }}
           onAuxClick={(e) => {
             if (e.button === 1) {
               e.preventDefault()
+              // Under Wayland the paste can be delivered to the FOCUSED editor
+              // rather than to this tab, so cancelling events here is not
+              // enough on its own; the guard catches the paste itself. (#498)
+              armMiddleClickPasteGuard()
               void closeTabInPane(paneId, tab.path)
             }
           }}
@@ -3092,6 +3131,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
             >
               {tab.isTasks && (
                 <CheckSquareIcon width={13} height={13} className="shrink-0 text-accent" />
+              )}
+              {tab.isWorkflows && (
+                <WorkflowIcon width={13} height={13} className="shrink-0 text-accent" />
               )}
               {tab.isQuick && (
                 <ZapIcon width={13} height={13} className="shrink-0 text-accent" />
@@ -3695,7 +3737,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
               </div>
             </div>
           )}
-          {isTasksTabPath(activeTab) ? (
+          {isWorkflowsTabPath(activeTab) ? (
+            <LazyWorkflowsView />
+          ) : isTasksTabPath(activeTab) ? (
             <TasksView />
           ) : isQuickNotesTabPath(activeTab) ? (
             <QuickNotesView />

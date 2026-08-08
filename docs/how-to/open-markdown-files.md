@@ -32,6 +32,15 @@ zn open inbox/Today.md other.markdown   # one or more files
 
 `zn open` hands the files to the ZenNotes app, which opens each one the same way as a double-click — as a vault note if it's inside a vault, otherwise in a standalone editor window.
 
+Folders work too, since 2.17.0:
+
+```bash
+zn open ~/code/myproject/docs   # a folder → focused, non-persisted session
+zn open ~/notes                 # a whole vault, the same way
+```
+
+A folder opens as a temporary session scoped to just that folder: browse and edit its notes in place, close the window, and your saved vault is untouched. Nothing is written into the folder except your own note edits, and it is never registered as a vault.
+
 ## Make ZenNotes the default app for markdown
 
 Once ZenNotes is installed it registers itself as a handler for `.md` and `.markdown` files, so it shows up under "Open With". To make it the default for every markdown file:

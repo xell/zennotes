@@ -135,7 +135,7 @@ const TOOLS: ToolDef[] = [
     schema: {
       name: 'list_notes',
       description:
-        "List notes in the vault with metadata (title, folder, tags, wikilinks, excerpt, timestamps). Optional filters narrow by folder, tag, or wikilink target. Use this before editing to pick the right note. Trashed notes are included only when folder='trash' is explicit. The returned `path` field is the canonical reference — pass it back verbatim to read_note / write_note / move_note. In `primaryNotesLocation: root` vaults, inbox notes have a path WITHOUT an `inbox/` prefix (e.g. `MyNote.md`); never add one.",
+        "List notes in the vault with metadata (title, folder, tags, wikilinks, excerpt, timestamps). Optional filters narrow by folder, tag, or wikilink target. Use this before editing to pick the right note. Trashed notes are included only when folder='trash' is explicit. The returned `path` field is the canonical reference — pass it back verbatim to read_note / write_note / move_note. In `primaryNotesLocation: root` vaults, inbox notes have a path WITHOUT an `inbox/` prefix (e.g. `MyNote.md`); never add one. Each note also carries `link`, a clickable zennotes:// URL that opens it in the app; use it verbatim when rendering note titles as markdown links for the user.",
       inputSchema: {
         type: 'object',
         properties: {

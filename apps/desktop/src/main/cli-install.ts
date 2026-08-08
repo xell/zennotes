@@ -233,11 +233,12 @@ interface ExistingInstall {
   installedByThisApp: boolean
 }
 
-async function findExistingInstall(
+async function findInstallByName(
+  name: string,
   wrapper: WrapperLocation | null
 ): Promise<ExistingInstall | null> {
   for (const dir of candidateDirs()) {
-    const candidate = path.join(dir, CLI_NAME)
+    const candidate = path.join(dir, name)
     try {
       const linkTarget = await fsp.readlink(candidate)
       const resolved = path.isAbsolute(linkTarget)
@@ -258,6 +259,67 @@ async function findExistingInstall(
       }
       // ENOENT or permission errors — keep searching.
     }
+  }
+  return null
+}
+
+/**
+ * The install the status read reports: `zn` wherever it is, and failing that a
+ * ZenNotes-managed legacy `zen` (#126). The legacy pass is managed-only on
+ * purpose: a foreign `zen` on PATH is Zen Browser, not an install of ours, and
+ * reporting it would tell a browser user their CLI is installed. Without the
+ * legacy pass, everyone who installed on ≤2.9.0 reads as "not installed"
+ * forever while their old symlink keeps working — the exact state that hid the
+ * rename from them.
+ */
+async function findExistingInstall(
+  wrapper: WrapperLocation | null
+): Promise<ExistingInstall | null> {
+  const current = await findInstallByName(CLI_NAME, wrapper)
+  if (current) return current
+  for (const legacy of LEGACY_CLI_NAMES) {
+    const found = await findInstallByName(legacy, wrapper)
+    if (found?.installedByThisApp) return found
+  }
+  return null
+}
+
+/**
+ * Heal a pre-2.10 install on launch: users who ran the installer when the
+ * command was `zen` and never re-ran it have a working managed `zen` and no
+ * `zn` at all, because the rename only ever migrated inside an explicit
+ * Install click (#126). Writes `zn` beside the managed legacy link, then
+ * removes the legacy name — the same two steps Install performs, minus the
+ * click nobody had a reason to make.
+ *
+ * A cheap no-op in every other state: any `zn` on PATH (ours or foreign) means
+ * nothing to do, and a foreign `zen` (Zen Browser) is never touched. Returns
+ * the new link path, or null when nothing was migrated.
+ */
+export async function migrateLegacyCliLink(
+  wrapperOverride?: WrapperLocation | null
+): Promise<string | null> {
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return null
+  const wrapper = wrapperOverride === undefined ? await locateWrapper() : wrapperOverride
+  if (!wrapper) return null
+  // Any existing `zn` wins, even a foreign one: creating a second `zn`
+  // elsewhere on PATH would shadow-fight it, which is the confusion the
+  // rename existed to end.
+  if (await findInstallByName(CLI_NAME, wrapper)) return null
+
+  for (const legacy of LEGACY_CLI_NAMES) {
+    const found = await findInstallByName(legacy, wrapper)
+    if (!found?.installedByThisApp) continue
+    const linkPath = path.join(path.dirname(found.linkPath), CLI_NAME)
+    try {
+      await writeSymlink(wrapper.wrapperPath, linkPath)
+    } catch {
+      // A read-only bin dir at launch is not worth a dialog; the explicit
+      // Install path still exists and can elevate.
+      return null
+    }
+    await removeManagedLinks(LEGACY_CLI_NAMES, wrapper)
+    return linkPath
   }
   return null
 }

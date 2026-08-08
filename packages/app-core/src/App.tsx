@@ -1,5 +1,12 @@
 import { lazy, Suspense, useEffect, useMemo, useRef } from 'react'
-import { useStore, initConfigSync, initCustomThemes, initOverrides, initWindowChromeSync } from './store'
+import {
+  useStore,
+  initConfigSync,
+  initCustomThemes,
+  initCustomCodeLanguages,
+  initOverrides,
+  initWindowChromeSync
+} from './store'
 import { resolveAuto, findTheme } from './lib/themes'
 import {
   injectActiveTheme,
@@ -39,7 +46,10 @@ import { recordRendererPerf } from './lib/perf'
 import { focusEditorNormalMode } from './lib/editor-focus'
 import { isAppOverlayOpen } from './lib/overlay-open'
 import { installMarkdownFileDropHandler } from './lib/markdown-file-drop'
-import { setMarkdownLooseMathDelimiters, setMarkdownMathRenderer } from './lib/markdown'
+import {
+  setMarkdownLooseMathDelimiters,
+  setMarkdownMathRenderer
+} from './lib/markdown-settings'
 import {
   appUpdateNoticeLabel,
   appUpdatePrimaryActionLabel,
@@ -484,6 +494,7 @@ function App(): JSX.Element {
   useEffect(() => {
     initConfigSync()
     initCustomThemes()
+    initCustomCodeLanguages()
     initOverrides()
     initWindowChromeSync()
   }, [])
@@ -1071,6 +1082,25 @@ function App(): JSX.Element {
       if (matchesShortcut(e, overrides, 'global.openSettings')) {
         e.preventDefault()
         state.setSettingsOpen(!state.settingsOpen)
+        return
+      }
+      // Mod+O — open a single markdown file (#449's deferred Win/Linux half).
+      // On macOS the File-menu accelerator swallows ⌘O before the renderer
+      // sees it, so this effectively serves the menu-less platforms. Vim keeps
+      // every claim it already has on Ctrl+O: the capture-phase jumplist takes
+      // normal and visual mode (#488's rule), and insert mode's i_CTRL-O
+      // arrives here defaultPrevented by the editor, hence the check. So with
+      // Vim on this fires only outside the editor; with Vim off it is simply
+      // Ctrl+O. Either side is rebindable in Settings → Keymaps.
+      if (
+        matchesShortcut(e, overrides, 'global.openFile') &&
+        !e.defaultPrevented &&
+        window.zen.getAppInfo().runtime === 'desktop' &&
+        window.zen.getCapabilities().supportsLocalFilesystemPickers &&
+        typeof window.zen.openFileDialog === 'function'
+      ) {
+        e.preventDefault()
+        void window.zen.openFileDialog()
         return
       }
     }

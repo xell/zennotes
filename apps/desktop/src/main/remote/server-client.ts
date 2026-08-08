@@ -36,6 +36,21 @@ type JsonRequestInit = Omit<RequestInit, 'body'> & { body?: unknown }
 // Re-exported for the callers that grew up importing it from here.
 export { connectionErrorMessage }
 
+/** The server never answered: DNS/refused/timeout. The workspace may be
+ *  fine; the network is not. Callers must never read this as "absent". */
+export class RemoteConnectionError extends Error {}
+
+/** The server answered with a non-2xx status: it is alive and made a
+ *  decision. `status` lets callers separate a 404 from an auth failure. */
+export class RemoteRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
+    super(message)
+  }
+}
+
 export class RemoteServerClient {
   readonly baseUrl: string
   readonly authToken: string | null
@@ -324,11 +339,14 @@ export class RemoteServerClient {
         body: hasBody ? JSON.stringify(init!.body) : undefined
       })
     } catch (error) {
-      throw new Error(connectionErrorMessage(this.baseUrl, error))
+      throw new RemoteConnectionError(connectionErrorMessage(this.baseUrl, error))
     }
     if (!response.ok) {
       const text = await response.text().catch(() => '')
-      throw new Error(requestErrorMessage(this.baseUrl, path, response, text))
+      throw new RemoteRequestError(
+        requestErrorMessage(this.baseUrl, path, response, text),
+        response.status
+      )
     }
     if (response.status === 204) return undefined as T
     return (await response.json()) as T

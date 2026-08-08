@@ -22,10 +22,12 @@ import {
   type BrowseVaultSwitcherEntry,
   type VaultSwitcherEntry
 } from '../lib/vault-switcher'
+import { runWorkflowById } from '../lib/workflow-trigger'
+import type { WorkflowIndexEntry } from '../lib/workflow-index'
 import { focusEditorNormalMode } from '../lib/editor-focus'
 import { Modal } from './ui/Modal'
 
-type Mode = 'main' | 'theme' | 'vault'
+type Mode = 'main' | 'theme' | 'vault' | 'workflow'
 
 /** Picker rows: known vaults, plus the synthetic "Browse…" row (new-window mode). */
 type VaultRow = VaultSwitcherEntry | BrowseVaultSwitcherEntry
@@ -45,6 +47,7 @@ export function CommandPalette(): JSX.Element {
   const workspaceMode = useStore((s) => s.workspaceMode)
   const remoteWorkspaceInfo = useStore((s) => s.remoteWorkspaceInfo)
   const initialMode = useStore((s) => s.commandPaletteInitialMode)
+  const workflowIndex = useStore((s) => s.workflowIndex)
   const refreshLocalVaults = useStore((s) => s.refreshLocalVaults)
   const refreshRemoteWorkspaceProfiles = useStore((s) => s.refreshRemoteWorkspaceProfiles)
   const openLocalVault = useStore((s) => s.openLocalVault)
@@ -137,12 +140,31 @@ export function CommandPalette(): JSX.Element {
     [query, vaultOptions]
   )
 
+  // Only what may run: the picker's promise is that Enter does something, and
+  // a draft's answer would be an error toast.
+  const workflowOptions = useMemo(
+    () => workflowIndex.filter((entry) => entry.status === 'active'),
+    [workflowIndex]
+  )
+
+  const workflowResults = useMemo(
+    () =>
+      rankItems(workflowOptions, query, [
+        { get: (w) => w.name, weight: 1 },
+        { get: (w) => w.description, weight: 0.7 },
+        { get: (w) => w.id, weight: 0.5 }
+      ]),
+    [query, workflowOptions]
+  )
+
   const resultsLength =
     mode === 'main'
       ? commandResults.length
       : mode === 'theme'
         ? themeResults.length
-        : vaultResults.length
+        : mode === 'workflow'
+          ? workflowResults.length
+          : vaultResults.length
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -165,10 +187,14 @@ export function CommandPalette(): JSX.Element {
       setActive(vaultResults.length > 0 ? 0 : -1)
       return
     }
+    if (mode === 'workflow') {
+      setActive(workflowResults.length > 0 ? 0 : -1)
+      return
+    }
     const currentId = useStore.getState().themeId
     const idx = themeResults.findIndex((t) => t.id === currentId)
     setActive(idx)
-  }, [query, mode, themeResults, vaultResults.length])
+  }, [query, mode, themeResults, vaultResults.length, workflowResults.length])
 
   // Keep the active row in view.
   useEffect(() => {
@@ -215,6 +241,16 @@ export function CommandPalette(): JSX.Element {
     inputRef.current?.focus()
   }
 
+  const enterWorkflowMode = (): void => {
+    setMode('workflow')
+    setQuery('')
+    setActive(0)
+    // Same courtesy the vault picker pays: re-read on entry, so a workflow
+    // created since the index last loaded is already in the list.
+    void useStore.getState().loadWorkflowIndex()
+    inputRef.current?.focus()
+  }
+
   const returnToMain = (): void => {
     if (mode === 'theme') revertTheme()
     setMode('main')
@@ -254,6 +290,10 @@ export function CommandPalette(): JSX.Element {
       enterVaultMode('new-window')
       return
     }
+    if (cmd.id === 'workflow.runPicker') {
+      enterWorkflowMode()
+      return
+    }
     setOpen(false)
     try {
       await cmd.run()
@@ -285,6 +325,13 @@ export function CommandPalette(): JSX.Element {
     focusEditorNormalMode()
   }
 
+  const runPickedWorkflow = (entry: WorkflowIndexEntry): void => {
+    // Close first: the trigger flow opens its own confirmation, and a palette
+    // still up behind it would catch the keystrokes meant for the dialog.
+    setOpen(false)
+    void runWorkflowById(entry.id)
+  }
+
   const switchVault = async (entry: VaultRow): Promise<void> => {
     setOpen(false)
     if (vaultAction === 'new-window') {
@@ -306,9 +353,11 @@ export function CommandPalette(): JSX.Element {
       ? 'Type a command…'
       : mode === 'theme'
         ? 'Pick a color theme'
-        : vaultAction === 'new-window'
-          ? 'Open a vault in a new window…'
-          : 'Pick a vault'
+        : mode === 'workflow'
+          ? 'Pick a workflow to run'
+          : vaultAction === 'new-window'
+            ? 'Open a vault in a new window…'
+            : 'Pick a vault'
 
   return (
     <Modal size="md" layer="palette" onClose={() => closePalette()} closeOnEsc={false}>
@@ -326,9 +375,11 @@ export function CommandPalette(): JSX.Element {
             <span className="uppercase tracking-wide">
               {mode === 'theme'
                 ? 'Theme preview — ↵ to keep, esc to revert'
-                : vaultAction === 'new-window'
-                  ? 'Open vault in new window — ↵ to open, esc to return'
-                  : 'Switch vault — ↵ to open, esc to return'}
+                : mode === 'workflow'
+                  ? 'Run workflow — ↵ to run, esc to return'
+                  : vaultAction === 'new-window'
+                    ? 'Open vault in new window — ↵ to open, esc to return'
+                    : 'Switch vault — ↵ to open, esc to return'}
             </span>
           </div>
         )}
@@ -357,6 +408,9 @@ export function CommandPalette(): JSX.Element {
                 } else if (mode === 'theme') {
                   const theme = themeResults[active]
                   if (theme) commitTheme(theme)
+                } else if (mode === 'workflow') {
+                  const entry = workflowResults[active]
+                  if (entry) runPickedWorkflow(entry)
                 } else {
                   const vault = vaultResults[active]
                   if (vault) void switchVault(vault)
@@ -384,7 +438,9 @@ export function CommandPalette(): JSX.Element {
                 ? 'No matching commands.'
                 : mode === 'theme'
                   ? 'No matching themes.'
-                  : 'No vaults.'}
+                  : mode === 'workflow'
+                    ? 'No active workflows. Activate one in the Workflows view first.'
+                    : 'No vaults.'}
             </div>
           ) : mode === 'main' ? (
             commandResults.map((cmd, i) => (
@@ -458,6 +514,39 @@ export function CommandPalette(): JSX.Element {
                 </button>
               )
             })
+          ) : mode === 'workflow' ? (
+            workflowResults.map((entry, i) => (
+              <button
+                key={entry.id}
+                data-cmd-idx={i}
+                onClick={() => runPickedWorkflow(entry)}
+                onMouseMove={() => setActive(i)}
+                className={[
+                  'flex w-full min-w-0 items-center gap-3 px-4 py-2 text-left',
+                  i === active ? 'bg-paper-200' : 'hover:bg-paper-200/70'
+                ].join(' ')}
+              >
+                <span className="shrink-0 text-xs uppercase tracking-wide text-ink-400">
+                  Run
+                </span>
+                <span className="min-w-0 flex-1 truncate text-sm text-ink-900">
+                  {entry.name}
+                </span>
+                {entry.description !== '' && (
+                  <span className="min-w-0 max-w-[45%] truncate text-xs text-ink-400">
+                    {entry.description}
+                  </span>
+                )}
+                {entry.mutates && (
+                  <span
+                    title="This workflow changes notes. Running it asks for confirmation first."
+                    className="shrink-0 text-xs text-ink-400"
+                  >
+                    writes
+                  </span>
+                )}
+              </button>
+            ))
           ) : (
             vaultResults.map((entry, i) => (
               <button
@@ -501,7 +590,11 @@ export function CommandPalette(): JSX.Element {
           </span>
           <span>
             <kbd className="rounded bg-paper-200 px-1">↵</kbd>{' '}
-            {mode === 'main' ? 'run' : mode === 'theme' ? 'keep theme' : 'switch'}
+            {mode === 'main' || mode === 'workflow'
+              ? 'run'
+              : mode === 'theme'
+                ? 'keep theme'
+                : 'switch'}
           </span>
           <span>
             <kbd className="rounded bg-paper-200 px-1">esc</kbd>{' '}

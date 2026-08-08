@@ -78,6 +78,33 @@ function escapeForAttr(value: string): string {
 // #309: how quickly a Space press+release inside an Excalidraw canvas counts as
 // a "tap" (arm the leader) rather than a hold (let Excalidraw's Hand tool pan).
 // Tuned so a deliberate hold-to-pan clears it while a natural tap stays under it.
+/**
+ * Surfaces that run their own keyboard, which this listener must not touch.
+ *
+ * This handler is CAPTURE-PHASE on window and calls stopImmediatePropagation,
+ * so by default it wins every key in the app and routes it into sidebar and
+ * note-list navigation. Any panel with its own focus and its own keys has to be
+ * excluded here, and forgetting does not look like a routing bug: the panel
+ * simply appears to have no keyboard at all. Both Workflows surfaces shipped
+ * with exactly that symptom (arrows moved the SIDEBAR cursor, Backspace
+ * "focused the left sidebar", m opened the sidebar folder menu), and each was
+ * diagnosed from scratch because the previous fix was an anonymous copy of the
+ * same three lines.
+ *
+ * One list and one condition, so a new surface is one entry rather than a
+ * fourth near-identical block, and the Ctrl+W passthrough cannot be got wrong
+ * per surface. Ctrl+W and its pending direction key always survive, so a panel
+ * can still hand off to pane and tab navigation.
+ */
+const SELF_KEYED_SURFACES = [
+  // Runs its own vim-style motion grid.
+  '[data-zen-db-grid]',
+  // This fork's seekable media player owns its transport keys.
+  '[data-zen-media-player]',
+  '[data-workflow-list-pane]',
+  '[data-workflow-canvas]'
+].join(', ')
+
 const EXCALIDRAW_LEADER_TAP_MS = 250
 
 export function VimNav(): JSX.Element | null {
@@ -402,7 +429,12 @@ export function VimNav(): JSX.Element | null {
       if (
         document.querySelector('[data-ctx-menu]') ||
         document.querySelector('[data-prompt-modal]') ||
-        document.querySelector('[data-confirm-modal]')
+        document.querySelector('[data-confirm-modal]') ||
+        // The workflow import review focuses a BUTTON, not a text field, so
+        // the INPUT/TEXTAREA escape below does not cover it: without this
+        // marker, Space armed the leader instead of pressing the focused
+        // button and leader chords fired underneath the dialog.
+        document.querySelector('[data-workflow-import]')
       ) return
 
       // Hint mode — handled entirely by HintOverlay's own listener
@@ -693,8 +725,13 @@ export function VimNav(): JSX.Element | null {
       // being a black hole. Ctrl+W (and its pending direction key) is still let
       // through so the surface hands off to pane/tab navigation like every
       // other one.
+      // Upstream put a copy of this yield check BEFORE the global shortcuts
+      // (see SELF_KEYED_SURFACES); it stays here instead, deliberately, because
+      // an earlier copy turns a focused db-grid into the key black hole the
+      // comment above describes. The upstream list is reused so the workflow
+      // canvas and list pane yield too.
       if (
-        target?.closest('[data-zen-db-grid], [data-zen-media-player]') &&
+        target?.closest(SELF_KEYED_SURFACES) &&
         !ctrlWPending.current &&
         sequenceTokenFromEvent(e) !== panePrefixToken
       ) {
@@ -921,6 +958,15 @@ export function VimNav(): JSX.Element | null {
           e.stopImmediatePropagation()
           resetLeader()
           state.setBufferPaletteOpen(true)
+          return
+        }
+        // Skipped outright when Workflows is off, so the key falls through as
+        // an unbound leader press instead of arming a dead view.
+        if (state.workflowsEnabled && matchesSequenceToken(e, overrides, 'vim.leaderWorkflows')) {
+          e.preventDefault()
+          e.stopImmediatePropagation()
+          resetLeader()
+          void state.openWorkflowsView()
           return
         }
         if (matchesSequenceToken(e, overrides, 'vim.hintMode')) {
