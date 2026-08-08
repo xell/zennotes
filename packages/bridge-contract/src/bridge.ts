@@ -65,11 +65,6 @@ import type {
 import type { AppConfigPortable } from '@zennotes/shared-domain/app-config'
 import type { CustomTheme } from '@zennotes/shared-domain/custom-themes'
 import type { Override } from '@zennotes/shared-domain/overrides'
-import type {
-  CustomCodeLanguage,
-  CustomCodeLanguageInstallInput,
-  CustomCodeLanguageUpdateInput
-} from '@zennotes/shared-domain/custom-code-languages'
 
 export interface ZenCapabilities {
   supportsUpdater: boolean
@@ -80,7 +75,6 @@ export interface ZenCapabilities {
   supportsCliInstall: boolean
   /** Custom templates require local-filesystem CRUD; false on web/remote. */
   supportsCustomTemplates: boolean
-  supportsCustomCodeLanguages?: boolean
 }
 
 export interface ZenAppInfo {
@@ -469,12 +463,6 @@ export interface ZenBridge {
   createCustomTheme(input: { name?: string }): Promise<string | null>
   /** Subscribe to changes in the themes directory (file added/edited/removed). */
   onCustomThemesChange(cb: (next: CustomTheme[]) => void): () => void
-  listCustomCodeLanguages(): Promise<CustomCodeLanguage[]>
-  installCustomCodeLanguage(input: CustomCodeLanguageInstallInput): Promise<CustomCodeLanguage>
-  updateCustomCodeLanguage(input: CustomCodeLanguageUpdateInput): Promise<CustomCodeLanguage>
-  revealCustomCodeLanguagesDir(id?: string): Promise<void>
-  deleteCustomCodeLanguage(id: string): Promise<void>
-  onCustomCodeLanguagesChange(cb: (next: CustomCodeLanguage[]) => void): () => void
   /** CSS overrides from `~/.config/zennotes/overrides/*.css`. Empty on web. */
   listOverrides(): Promise<Override[]>
   /** Reveal the overrides directory — or a specific override file when a name is

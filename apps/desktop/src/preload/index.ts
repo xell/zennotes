@@ -25,11 +25,6 @@ import type { AppConfigPortable } from '@shared/app-config'
 import type { CustomTheme } from '@shared/custom-themes'
 import type { Override } from '@shared/overrides'
 import type {
-  CustomCodeLanguage,
-  CustomCodeLanguageInstallInput,
-  CustomCodeLanguageUpdateInput
-} from '@shared/custom-code-languages'
-import type {
   AppUpdateState,
   AssetMeta,
   CliInstallStatus,
@@ -87,8 +82,7 @@ const DESKTOP_CAPABILITIES: ZenCapabilities = {
   // ~/.local/bin symlinks. Windows uses a different model (PATH munging)
   // and is gated to a follow-up.
   supportsCliInstall: process.platform === 'darwin' || process.platform === 'linux',
-  supportsCustomTemplates: true,
-  supportsCustomCodeLanguages: true
+  supportsCustomTemplates: true
 }
 
 const DESKTOP_APP_INFO: ZenAppInfo = {
@@ -678,27 +672,6 @@ const api: ZenBridge = {
     const listener = (_: unknown, next: CustomTheme[]): void => cb(next)
     ipcRenderer.on(IPC.CUSTOM_THEMES_ON_CHANGE, listener)
     return () => ipcRenderer.removeListener(IPC.CUSTOM_THEMES_ON_CHANGE, listener)
-  },
-
-  listCustomCodeLanguages: (): Promise<CustomCodeLanguage[]> =>
-    ipcRenderer.invoke(IPC.CUSTOM_CODE_LANGUAGES_LIST),
-  installCustomCodeLanguage: (
-    input: CustomCodeLanguageInstallInput
-  ): Promise<CustomCodeLanguage> =>
-    ipcRenderer.invoke(IPC.CUSTOM_CODE_LANGUAGES_INSTALL, input),
-  updateCustomCodeLanguage: (
-    input: CustomCodeLanguageUpdateInput
-  ): Promise<CustomCodeLanguage> => ipcRenderer.invoke(IPC.CUSTOM_CODE_LANGUAGES_UPDATE, input),
-  revealCustomCodeLanguagesDir: (id?: string): Promise<void> =>
-    ipcRenderer.invoke(IPC.CUSTOM_CODE_LANGUAGES_REVEAL, id),
-  deleteCustomCodeLanguage: (id: string): Promise<void> =>
-    ipcRenderer.invoke(IPC.CUSTOM_CODE_LANGUAGES_DELETE, id),
-  onCustomCodeLanguagesChange: (
-    cb: (next: CustomCodeLanguage[]) => void
-  ): (() => void) => {
-    const listener = (_: unknown, next: CustomCodeLanguage[]): void => cb(next)
-    ipcRenderer.on(IPC.CUSTOM_CODE_LANGUAGES_ON_CHANGE, listener)
-    return () => ipcRenderer.removeListener(IPC.CUSTOM_CODE_LANGUAGES_ON_CHANGE, listener)
   },
 
   listOverrides: (): Promise<Override[]> => ipcRenderer.invoke(IPC.OVERRIDES_LIST),

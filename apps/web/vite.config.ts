@@ -1,4 +1,4 @@
-import { createReadStream, readFileSync } from 'node:fs'
+import { createReadStream } from 'node:fs'
 import { cp } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, resolve, sep } from 'node:path'
@@ -17,27 +17,6 @@ const excalidrawFontsDir = resolve(
   'fonts'
 )
 const EXCALIDRAW_FONTS_URL_PREFIX = '/excalidraw-assets/fonts/'
-
-function onigurumaDataUrl(): Plugin {
-  const virtualId = '\0zennotes:oniguruma-wasm-data-url'
-  const wasmPath = createRequire(resolve(__dirname, 'package.json')).resolve(
-    'vscode-oniguruma/release/onig.wasm'
-  )
-  return {
-    name: 'zennotes-oniguruma-data-url',
-    enforce: 'pre',
-    resolveId(id) {
-      if (id === 'vscode-oniguruma/release/onig.wasm?url') return virtualId
-      return null
-    },
-    load(id) {
-      if (id !== virtualId) return null
-      const bytes = readFileSync(wasmPath)
-      const url = `data:application/wasm;base64,${bytes.toString('base64')}`
-      return `export default ${JSON.stringify(url)}`
-    }
-  }
-}
 
 function excalidrawFontMime(path: string): string {
   if (/\.woff2$/i.test(path)) return 'font/woff2'
@@ -142,10 +121,6 @@ function rendererManualChunk(id: string): string | undefined {
     return 'vendor-highlight'
   }
 
-  if (id.includes('/vscode-textmate/') || id.includes('/vscode-oniguruma/')) {
-    return 'vendor-textmate'
-  }
-
   // No manualChunks rule for mermaid / cytoscape / dagre on purpose. Mermaid is
   // only ever reached through a dynamic import (Preview.tsx does
   // `import("mermaid")`, behind LazyPreview), but forcing its modules into a
@@ -199,7 +174,6 @@ function isDeferredRendererPreload(dep: string): boolean {
     dep.includes('wardley-') ||
     dep.includes('vendor-markdown') ||
     dep.includes('vendor-highlight') ||
-    dep.includes('vendor-textmate') ||
     dep.includes('vendor-d3') ||
     // Mermaid is no longer one named chunk; it splits into mermaid.core plus a
     // chunk per diagram type, with cytoscape/dagre alongside.
@@ -306,7 +280,7 @@ export default defineConfig({
       }
     }
   },
-  plugins: [onigurumaDataUrl(), react(), excalidrawFonts()],
+  plugins: [react(), excalidrawFonts()],
   // Typst ships a WASM compiler loaded lazily via `?url` + dynamic import; keep
   // it out of the esbuild dep pre-bundler so the wasm glue stays intact.
   optimizeDeps: {

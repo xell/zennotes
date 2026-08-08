@@ -108,8 +108,6 @@ import { isCustomThemeId } from './lib/custom-themes'
 import { isTableRenderMode, type TableRenderMode } from './lib/table-render-mode'
 import { customThemeSlugFromId, type CustomTheme } from '@shared/custom-themes'
 import type { Override } from '@shared/overrides'
-import type { CustomCodeLanguage } from '@shared/custom-code-languages'
-import { customCodeLanguageRegistry } from './lib/custom-code-languages'
 import { formatMarkdown } from './lib/format-markdown'
 import { confirmMoveToTrash } from './lib/confirm-trash'
 import { confirmApp, confirmAppChoice } from './lib/confirm-requests'
@@ -3111,9 +3109,6 @@ interface Store {
   /** User themes parsed from ~/.config/zennotes/themes. Loaded + watched by
    *  `initCustomThemes`; the CSS is injected as it changes. */
   customThemes: CustomTheme[]
-  /** User-installed TextMate grammars and a revision used to refresh previews. */
-  customCodeLanguages: CustomCodeLanguage[]
-  customCodeLanguagesRevision: number
   /** User CSS overrides parsed from ~/.config/zennotes/overrides. Loaded + watched
    *  by `initOverrides`; enabled ones are injected on top of the active theme. */
   overrides: Override[]
@@ -4939,8 +4934,6 @@ export const useStore = create<Store>((set, get) => {
   terminalFontSize: loadPrefs().terminalFontSize,
   vaultTasks: [],
   customThemes: [],
-  customCodeLanguages: [],
-  customCodeLanguagesRevision: 0,
   overrides: [],
   tasksLoading: false,
   tasksFilter: '',
@@ -10449,38 +10442,6 @@ export function initCustomThemes(): void {
   if (typeof bridge.onCustomThemesChange === 'function') {
     try {
       bridge.onCustomThemesChange(applyCustomThemes)
-    } catch {
-      /* ignore */
-    }
-  }
-}
-
-async function applyCustomCodeLanguages(languages: CustomCodeLanguage[]): Promise<void> {
-  useStore.setState({ customCodeLanguages: languages })
-  try {
-    await customCodeLanguageRegistry.replace(languages)
-  } finally {
-    useStore.setState((state) => ({
-      customCodeLanguagesRevision: state.customCodeLanguagesRevision + 1
-    }))
-  }
-}
-
-export function refreshCustomCodeLanguages(): void {
-  const bridge = typeof window !== 'undefined' ? window.zen : undefined
-  if (!bridge || typeof bridge.listCustomCodeLanguages !== 'function') return
-  void bridge.listCustomCodeLanguages().then(applyCustomCodeLanguages).catch(() => {})
-}
-
-export function initCustomCodeLanguages(): void {
-  const bridge = typeof window !== 'undefined' ? window.zen : undefined
-  if (!bridge || typeof bridge.listCustomCodeLanguages !== 'function') return
-  refreshCustomCodeLanguages()
-  if (typeof bridge.onCustomCodeLanguagesChange === 'function') {
-    try {
-      bridge.onCustomCodeLanguagesChange((next) => {
-        void applyCustomCodeLanguages(next)
-      })
     } catch {
       /* ignore */
     }

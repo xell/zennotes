@@ -3,7 +3,6 @@ import {
   useStore,
   initConfigSync,
   initCustomThemes,
-  initCustomCodeLanguages,
   initOverrides,
   initWindowChromeSync
 } from './store'
@@ -494,7 +493,6 @@ function App(): JSX.Element {
   useEffect(() => {
     initConfigSync()
     initCustomThemes()
-    initCustomCodeLanguages()
     initOverrides()
     initWindowChromeSync()
   }, [])

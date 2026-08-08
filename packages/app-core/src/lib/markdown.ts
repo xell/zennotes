@@ -22,10 +22,6 @@ import { parseEmbedSizeHint, parseImageEmbedLabel } from './embed-size'
 import { parseColWidthsComment } from './markdown-table'
 import { scanTaskMetadata, type TaskMetaToken } from './task-metadata-tokens'
 import {
-  customCodeLanguageRegistry,
-  PREVIEW_TOKEN_CLASS
-} from './custom-code-languages'
-import {
   markdownLooseMathDelimiters,
   markdownMathRenderer,
   markdownSettingsRevision
@@ -573,48 +569,6 @@ function rehypeMathDiagrams() {
   }
 }
 
-/** Highlight unknown fenced tags through the user-installed TextMate registry. */
-function rehypeCustomCodeLanguages() {
-  return (tree: HastRoot): void => {
-    // Skip the tree walk when no grammar is installed — the usual case.
-    if (customCodeLanguageRegistry.isEmpty) return
-    visit(tree, 'element', (node) => {
-      if (node.tagName !== 'code') return
-      const classNames = (node.properties?.className as string[] | undefined) ?? []
-      const languageClass = classNames.find((name) => name.startsWith('language-'))
-      if (!languageClass) return
-      const tag = languageClass.slice('language-'.length)
-      if (!customCodeLanguageRegistry.resolve(tag)) return
-      const textContent = (child: HastElement['children'][number]): string => {
-        if (child.type === 'text') return child.value
-        if (child.type === 'element') return child.children.map(textContent).join('')
-        return ''
-      }
-      const source = node.children.map(textContent).join('')
-      const tokens = customCodeLanguageRegistry.tokenize(tag, source)
-      if (tokens.length === 0) return
-      const children: HastElement['children'] = []
-      let offset = 0
-      for (const token of tokens) {
-        if (token.from > offset) children.push({ type: 'text', value: source.slice(offset, token.from) })
-        children.push({
-          type: 'element',
-          tagName: 'span',
-          properties: { className: PREVIEW_TOKEN_CLASS[token.kind].split(' ') },
-          children: [{ type: 'text', value: source.slice(token.from, token.to) }]
-        })
-        offset = token.to
-      }
-      if (offset < source.length) children.push({ type: 'text', value: source.slice(offset) })
-      node.children = children
-      node.properties = {
-        ...node.properties,
-        className: Array.from(new Set([...classNames, 'hljs']))
-      }
-    })
-  }
-}
-
 /**
  * Honor a `<!-- zen:cols=120,auto,90 -->` width hint that follows a table (#294):
  * turn it into a <colgroup> so the preview and PDF export render the columns at
@@ -768,9 +722,6 @@ function createProcessor(mathRenderer: 'katex' | 'typst') {
     .use(rehypeMermaid)
     .use(rehypeMathDiagrams)
     .use(rehypeHighlight, { detect: true, ignoreMissing: true })
-    // After rehype-highlight so a user-installed TextMate grammar wins over
-    // highlight.js' guess for a fence tag it does not actually know.
-    .use(rehypeCustomCodeLanguages)
 
   const withKatex =
     mathRenderer === 'katex' ? rehyped.use(rehypeKatex) : rehyped
@@ -994,7 +945,7 @@ function normalizeBlockMathFences(src: string, loose = false): string {
 }
 
 export function renderMarkdown(src: string): string {
-  const cacheKey = `${customCodeLanguageRegistry.revision}\0${markdownSettingsRevision()}\0${src}`
+  const cacheKey = `${markdownSettingsRevision()}\0${src}`
   const cached = getCachedMarkdown(cacheKey)
   if (cached != null) {
     recordRendererPerf('markdown.render.cache-hit', 0, { chars: src.length })
@@ -1010,7 +961,7 @@ export function renderMarkdown(src: string): string {
         )
       )
     )
-    cacheRenderedMarkdown(cacheKey, html)
+    cacheRenderedMarkdown(src, html)
     recordRendererPerf('markdown.render', performance.now() - startedAt, {
       chars: src.length
     })

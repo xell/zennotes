@@ -143,20 +143,6 @@ import {
 import type { AppConfigPortable } from '@shared/app-config'
 import type { CustomTheme } from '@shared/custom-themes'
 import type { Override } from '@shared/overrides'
-import type {
-  CustomCodeLanguage,
-  CustomCodeLanguageInstallInput,
-  CustomCodeLanguageUpdateInput
-} from '@shared/custom-code-languages'
-import {
-  ensureCustomCodeLanguagesDir,
-  listCustomCodeLanguages,
-  installCustomCodeLanguage,
-  updateCustomCodeLanguage,
-  deleteCustomCodeLanguage,
-  customCodeLanguageRevealTarget,
-  startWatchingCustomCodeLanguages
-} from './custom-code-languages'
 import {
   listCustomTemplates,
   readCustomTemplate,
@@ -4725,21 +4711,6 @@ function registerIpc(): void {
     await deleteCustomTheme(slug)
   })
   handle(IPC.CUSTOM_THEMES_CREATE, (_event, input: { name?: string }) => createCustomTheme(input))
-  handle(IPC.CUSTOM_CODE_LANGUAGES_LIST, () => listCustomCodeLanguages())
-  handle(
-    IPC.CUSTOM_CODE_LANGUAGES_INSTALL,
-    (_event, input: CustomCodeLanguageInstallInput) => installCustomCodeLanguage(input)
-  )
-  handle(
-    IPC.CUSTOM_CODE_LANGUAGES_UPDATE,
-    (_event, input: CustomCodeLanguageUpdateInput) => updateCustomCodeLanguage(input)
-  )
-  handle(IPC.CUSTOM_CODE_LANGUAGES_REVEAL, async (_event, id?: string) => {
-    shell.showItemInFolder(await customCodeLanguageRevealTarget(id))
-  })
-  handle(IPC.CUSTOM_CODE_LANGUAGES_DELETE, async (_event, id: string) => {
-    await deleteCustomCodeLanguage(id)
-  })
   handle(IPC.OVERRIDES_LIST, () => listOverrides())
   handle(IPC.OVERRIDES_REVEAL, async (_event, name?: string) => {
     shell.showItemInFolder(await overrideRevealTarget(name))
@@ -4766,12 +4737,6 @@ function broadcastConfigChange(next: AppConfigPortable): void {
 function broadcastCustomThemesChange(next: CustomTheme[]): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send(IPC.CUSTOM_THEMES_ON_CHANGE, next)
-  }
-}
-
-function broadcastCustomCodeLanguagesChange(next: CustomCodeLanguage[]): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) win.webContents.send(IPC.CUSTOM_CODE_LANGUAGES_ON_CHANGE, next)
   }
 }
 
@@ -5680,9 +5645,6 @@ app.whenReady().then(async () => {
   // attaches to a directory that already exists.
   await ensureCustomThemesDir().catch(() => {})
   startWatchingCustomThemes(broadcastCustomThemesChange)
-
-  await ensureCustomCodeLanguagesDir().catch(() => {})
-  startWatchingCustomCodeLanguages(broadcastCustomCodeLanguagesChange)
 
   // CSS overrides live in a sibling dir; same seed-then-watch dance.
   await ensureOverridesDir().catch(() => {})

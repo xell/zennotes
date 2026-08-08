@@ -87,8 +87,6 @@
     "smol-toml": "^1.7.0",
     "unified": "^11.0.5",
     "unist-util-visit": "^5.0.0",
-    "vscode-oniguruma": "^2.0.1",
-    "vscode-textmate": "^9.3.2",
     "ws": "^8.20.0",
     "zustand": "^5.0.2"
   },

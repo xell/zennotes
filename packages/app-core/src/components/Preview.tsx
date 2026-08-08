@@ -403,7 +403,6 @@ export const Preview = memo(function Preview({
     [folders, vaultSettings],
   );
   const assetFiles = useStore((s) => s.assetFiles);
-  const customCodeLanguagesRevision = useStore((s) => s.customCodeLanguagesRevision);
   const refreshAssets = useStore((s) => s.refreshAssets);
   const deleteAssetAction = useStore((s) => s.deleteAsset);
   const renameAssetAndRewriteReferences = useStore((s) => s.renameAssetAndRewriteReferences);
@@ -529,14 +528,11 @@ export const Preview = memo(function Preview({
     setMarkdownMathRenderer(mathRenderer);
     setMarkdownLooseMathDelimiters(looseMathDelimiters);
     return renderMarkdown(expandedForCurrent ?? markdown);
-    // customCodeLanguagesRevision re-renders when a grammar is installed,
-    // toggled, or removed; renderMarkdown keys its cache on it too.
   }, [
     expandedForCurrent,
     markdown,
     mathRenderer,
     looseMathDelimiters,
-    customCodeLanguagesRevision,
   ]);
   const assetFilesKey = useMemo(
     () => assetFiles.map((asset) => asset.path).join("\n"),

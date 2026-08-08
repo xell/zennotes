@@ -20,7 +20,6 @@ import { useStore } from '../store'
 import { parseFrontmatter, slugifyTemplateName } from '@shared/template-files'
 import { renderTemplate } from '../lib/template-render'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
-import { customCodeFenceHighlightExtension } from '../lib/cm-custom-code-languages'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
 import { vimImeControl } from '../lib/cm-vim-ime'
 import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
@@ -130,7 +129,6 @@ export function TemplateEditorModal({
             addKeymap: false
           })
         }),
-        customCodeFenceHighlightExtension,
         vimAwareMarkdownKeymap,
         markdownListIndentPlugin,
         syntaxHighlighting(templateHighlight),
