@@ -5,10 +5,11 @@
 
 export const FENCE_RE = /^(\s*)(```|~~~)/
 // Group 2 is the checkbox state char: space (open), x/X (done), `>` (forwarded
-// to another note, #316), or `-` (cancelled — intentionally abandoned, #450).
+// to another note, #316), `-` (cancelled — intentionally abandoned, #450), or
+// `/` (in progress: started, not finished, #512).
 // The leading `(?:>\s*)*` is a blockquote prefix — a different `>`, unrelated to
 // the state char inside the brackets.
-export const TASK_LINE_RE = /^(\s*(?:>\s*)*(?:[-+*]|\d+[.)])\s+\[)( |x|X|>|-)(\].*)$/
+export const TASK_LINE_RE = /^(\s*(?:>\s*)*(?:[-+*]|\d+[.)])\s+\[)( |x|X|>|-|\/)(\].*)$/
 
 export type TaskPriority = 'high' | 'med' | 'low'
 
@@ -299,6 +300,20 @@ export function setTaskForwardedAtIndex(
   })
 }
 
+/** Mark the task line at `taskIndex` as in progress (`[/]`) when `inProgress`,
+ *  or flip it back to open (`[ ]`) when not. In progress = started but not
+ *  finished, so it stays an OPEN task everywhere: it keeps its place in Today,
+ *  stays on the calendar, and rolls forward with the unfinished work (#512). */
+export function setTaskInProgressAtIndex(
+  markdown: string,
+  taskIndex: number,
+  inProgress: boolean
+): string {
+  return editTaskAtIndex(markdown, taskIndex, (match) => {
+    return `${match[1]}${inProgress ? '/' : ' '}${match[3]}`
+  })
+}
+
 /** Mark the task line at `taskIndex` as cancelled (`[-]`) when `cancelled`, or
  *  flip it back to open (`[ ]`) when not. Cancelled = intentionally abandoned,
  *  distinct from done or forwarded (#450). */
@@ -362,13 +377,20 @@ function leadingIndentWidth(line: string): number {
 }
 
 /**
- * Pull every UNCHECKED task line — together with its indented continuation /
- * child lines — out of `markdown`. Used to roll unfinished tasks forward from
- * past daily notes into today's note.
+ * Pull every OPEN task line — together with its indented continuation / child
+ * lines — out of `markdown`. Used to roll unfinished tasks forward from past
+ * daily notes into today's note.
  *
+ * - Open means `- [ ]` or `- [/]`: work not yet finished. A half-done task is
+ *   the likeliest thing to want in front of you tomorrow, so it travels with
+ *   its `/` intact rather than being left behind in a note nobody reopens
+ *   (#512).
  * - Lines are moved verbatim, so any `due:`/`!priority`/`#tag` tokens travel
  *   with the task unchanged.
- * - Checked tasks (`- [x]`) stay put — they're history.
+ * - The three closed states stay put: checked (`- [x]`) is history, forwarded
+ *   (`- [>]`) already has a record pointing where it went, and cancelled
+ *   (`- [-]`) was abandoned on purpose. Carrying those forward would undo the
+ *   decision the state records.
  * - `- [ ]` inside fenced code blocks is ignored (never a real task).
  * - A task's indented children (deeper-indented following lines, up to the
  *   first blank line, dedent, or fence) move with it so sub-bullets aren't
@@ -376,7 +398,7 @@ function leadingIndentWidth(line: string): number {
  *
  * Returns the moved raw lines (in document order) and the remaining body.
  */
-export function extractUncheckedTaskBlocks(markdown: string): {
+export function extractOpenTaskBlocks(markdown: string): {
   moved: string[]
   rest: string
 } {
@@ -404,7 +426,7 @@ export function extractUncheckedTaskBlocks(markdown: string): {
 
     const taskMatch = line.match(TASK_LINE_RE)
     if (!taskMatch) continue
-    if (taskMatch[2] !== ' ') continue // only unchecked tasks roll over
+    if (taskMatch[2] !== ' ' && taskMatch[2] !== '/') continue // only open tasks roll over
 
     const baseIndent = leadingIndentWidth(line)
     moved.push(line)

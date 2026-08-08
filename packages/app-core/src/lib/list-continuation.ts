@@ -16,7 +16,10 @@
  *   "plain text"   → null
  */
 export function listContinuationPrefix(lineText: string): string | null {
-  const match = lineText.match(/^([ \t]*)(?:([-+*])|(\d{1,9})([.)]))[ \t]+(\[[ xX]\][ \t]+)?/)
+  // Any task state continues the list, and always as a fresh `[ ]`: pressing
+  // Enter under a `[/]`, `[>]` or `[-]` line means "another task", never
+  // "another task that inherits this one's state". (#512)
+  const match = lineText.match(/^([ \t]*)(?:([-+*])|(\d{1,9})([.)]))[ \t]+(\[[ xX>/-]\][ \t]+)?/)
   if (!match) return null
   const [, indent, bullet, orderedNumber, orderedDelimiter, checkbox] = match
   const marker = bullet ?? `${Number.parseInt(orderedNumber, 10) + 1}${orderedDelimiter}`

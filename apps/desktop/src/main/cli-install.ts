@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import os from 'node:os'
 import type { CliInstallStatus } from '@shared/ipc'
+import { resolveLoginShellPathDirs } from './login-shell-path'
 
 const execFileAsync = promisify(execFile)
 
@@ -96,7 +97,7 @@ async function ensureDevWrapper(cliJsPath: string): Promise<string> {
  * dirs come first so we never reach for sudo when something nearby
  * already works.
  */
-function candidateDirs(): string[] {
+async function candidateDirs(): Promise<string[]> {
   const home = os.homedir()
   const seen = new Set<string>()
   const out: string[] = []
@@ -114,21 +115,31 @@ function candidateDirs(): string[] {
   // language toolchains (~/.cargo/bin, ~/go/bin, ~/.nvm/.../bin) are
   // common. Add them at the end so they're considered after the
   // conventional homes.
-  const pathDirs = (process.env.PATH ?? '')
-    .split(path.delimiter)
-    .map((p) => p.trim())
-    .filter(Boolean)
-  for (const dir of pathDirs) push(dir)
+  for (const dir of await userPathDirs()) push(dir)
   return out
 }
 
-function pathDirsOnPath(): Set<string> {
+/**
+ * The PATH entries that matter here, which is the user's, not this process's.
+ *
+ * Both are used: the login shell's PATH answers "will `zn` be callable in a
+ * terminal?", and this process's own PATH is kept as a fallback for the case
+ * where no shell answers (and because a terminal-launched app already has the
+ * right one). Reading only `process.env.PATH` is what made a Finder-launched
+ * app on macOS insist `~/.local/bin` was missing from a PATH that had it (#528):
+ * launchd hands GUI apps a minimal PATH and never sources the user's profile.
+ */
+async function userPathDirs(): Promise<string[]> {
+  const fromLoginShell = await resolveLoginShellPathDirs().catch(() => [] as string[])
+  const fromProcess = (process.env.PATH ?? '').split(path.delimiter)
+  return [...fromLoginShell, ...fromProcess].map((entry) => entry.trim()).filter(Boolean)
+}
+
+async function pathDirsOnPath(): Promise<Set<string>> {
   const out = new Set<string>()
-  for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
-    const trimmed = dir.trim()
-    if (!trimmed) continue
+  for (const dir of await userPathDirs()) {
     try {
-      out.add(path.resolve(trimmed))
+      out.add(path.resolve(dir))
     } catch {
       /* skip malformed PATH entries */
     }
@@ -160,9 +171,9 @@ interface InstallTarget {
 }
 
 async function pickInstallTarget(): Promise<InstallTarget> {
-  const onPath = pathDirsOnPath()
+  const onPath = await pathDirsOnPath()
   const home = os.homedir()
-  const candidates = candidateDirs()
+  const candidates = await candidateDirs()
 
   // Pass 1: a candidate that is BOTH on PATH AND user-writable.
   // This is the no-sudo, no-shell-edit happy path.
@@ -237,7 +248,7 @@ async function findInstallByName(
   name: string,
   wrapper: WrapperLocation | null
 ): Promise<ExistingInstall | null> {
-  for (const dir of candidateDirs()) {
+  for (const dir of await candidateDirs()) {
     const candidate = path.join(dir, name)
     try {
       const linkTarget = await fsp.readlink(candidate)
@@ -380,7 +391,7 @@ export async function removeManagedLinks(
   wrapper: WrapperLocation | null
 ): Promise<string[]> {
   const removed: string[] = []
-  for (const dir of candidateDirs()) {
+  for (const dir of await candidateDirs()) {
     for (const name of names) {
       const candidate = path.join(dir, name)
       try {
@@ -423,7 +434,7 @@ export async function installCli(): Promise<CliInstallStatus> {
   if (existing && existing.installedByThisApp) {
     target = {
       linkPath: existing.linkPath,
-      onPath: pathDirsOnPath().has(path.dirname(existing.linkPath)),
+      onPath: (await pathDirsOnPath()).has(path.dirname(existing.linkPath)),
       requiresSudo: !(await isWritableDir(path.dirname(existing.linkPath))),
       pathHint: null
     }

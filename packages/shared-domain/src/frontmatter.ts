@@ -171,6 +171,17 @@ export function setTaskFileCancelled(body: string, cancelled: boolean): string {
   })
 }
 
+/** Flip a file-task's in-progress state in its frontmatter: `status: in-progress`
+ *  when starting, back to `open` when un-starting. `in-progress` is TaskNotes'
+ *  spelling, so a vault shared with it round-trips. Still open work, so nothing
+ *  is stamped as completed. (#512) */
+export function setTaskFileInProgress(body: string, inProgress: boolean): string {
+  return updateFrontmatterFields(body, {
+    status: inProgress ? 'in-progress' : 'open',
+    completedDate: null
+  })
+}
+
 /** ZenNotes priority -> the value written to a task file's frontmatter, using
  *  TaskNotes' vocabulary (`high` / `normal` / `low`) for interop. `null` clears. */
 export function taskFilePriorityValue(priority: TaskPriority | null | undefined): string | null {

@@ -620,6 +620,28 @@ const DURATION_RE = /^\d+[dhwm]$/
 // itself indexes, and accept the digit-leading `#2024` that `INLINE_TAG_RE`
 // in apply-ops would then silently decline to write.
 const TAG_RE = /^#?\p{L}[\p{L}\d_/-]*$/u
+/** Everything `TAG_RE` would not accept inside a tag. Same alphabet, same flag. */
+const TAG_CHARS_RE = /[^\p{L}\d_/-]/gu
+
+/**
+ * Drop the characters a tag cannot hold, keeping the ones `TAG_RE` accepts.
+ *
+ * Exported because the canvas inspector sanitizes a tag AS IT IS TYPED while
+ * this module REJECTS a finished token, and those two jobs still have to agree
+ * on one alphabet. They did not. The inspector kept its own copy written with
+ * `\w`, which is ASCII, so it deleted every Cyrillic character the moment it
+ * was typed while `bindParams` right here would have accepted the tag without
+ * complaint (#532). That is precisely the failure the comment above `TAG_RE`
+ * warns about, made by the copy rather than the original, so the alphabet now
+ * lives in one place and is imported.
+ *
+ * Leading `#` goes because the stored argument never carries one. Note this
+ * does NOT enforce the letter-first rule: a half-typed tag is allowed to be
+ * briefly invalid, since refusing a keystroke reads as a broken field.
+ */
+export function sanitizeTagChars(input: string): string {
+  return input.replace(/^#+/, '').replace(TAG_CHARS_RE, '')
+}
 
 /**
  * Bind raw tokens to a node's declared params, coercing and validating each.

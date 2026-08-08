@@ -24,7 +24,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 
-import { COMPARE_OPS, RENDER_STYLES, nodeDef } from '@shared/workflows/nodes'
+import { COMPARE_OPS, RENDER_STYLES, nodeDef, sanitizeTagChars } from '@shared/workflows/nodes'
 import type { NodeDef, ParamSpec } from '@shared/workflows/nodes'
 import { RAW_ARG } from '@shared/workflows/parse'
 import type { ArgValue, WorkflowStatement, WorkflowStep } from '@shared/workflows/types'
@@ -80,12 +80,17 @@ function optionsFor(all: readonly string[], text: string): string[] {
 /*  Values                                                                    */
 /* -------------------------------------------------------------------------- */
 
-// Both regexes are copies of private ones in `@shared/workflows/nodes`. They are
-// duplicated rather than exported because what they express here is different:
-// the binder uses them to REJECT a token, and the inspector uses them to stop an
+// `DURATION_RE` is a copy of a private one in `@shared/workflows/nodes`,
+// duplicated rather than exported because what it expresses here is different:
+// the binder uses it to REJECT a token, and the inspector uses it to stop an
 // invalid value being written at all, so the argument never disappears mid-type.
+//
+// The tag alphabet used to be copied the same way and drifted, which is what
+// #532 was: this file's copy was written with `\w` (ASCII), so it deleted every
+// Cyrillic character as it was typed while the binder accepted the same tag
+// happily. Sanitizing and rejecting are still different jobs, but they have to
+// share one alphabet, so that one is imported now.
 const DURATION_RE = /^\d+[dhwm]$/
-const TAG_CHARS_RE = /[^\w/-]/g
 
 /** Wire names the grammar accepts. Mirrors `NAME_RE` in the parser. */
 const WIRE_NAME_RE = /^[A-Za-z_][\w-]*$/
@@ -264,7 +269,7 @@ function ParamControl({
         // Sanitized rather than rejected: a space in a tag is a typo, not an
         // intention, and silently refusing the keystroke reads as a broken
         // field. `bindParams` strips the `#`, so the stored value never has one.
-        const clean = next.replace(/^#+/, '').replace(TAG_CHARS_RE, '')
+        const clean = sanitizeTagChars(next)
         setText(clean)
         onChange(clean)
         return

@@ -100,6 +100,10 @@ describe('TOML serialization', () => {
       themeMode: 'dark',
       autoPairs: false,
       autoPairQuotesInProse: true,
+      showHeadingLevelLabels: true,
+      editorTabSize: 2,
+      textReplacementsEnabled: true,
+      textReplacements: { '->': '→', '(c)': '©' },
       vaultTextSearchBackend: 'ripgrep',
       ripgrepBinaryPath: null,
       interfaceFont: null,
@@ -121,6 +125,10 @@ describe('TOML serialization', () => {
     expect(round.themeFamily).toBe('nord')
     expect(round.autoPairs).toBe(false)
     expect(round.autoPairQuotesInProse).toBe(true)
+    expect(round.showHeadingLevelLabels).toBe(true)
+    expect(round.editorTabSize).toBe(2)
+    expect(round.textReplacementsEnabled).toBe(true)
+    expect(round.textReplacements).toEqual({ '->': '→', '(c)': '©' })
     expect(round.vaultTextSearchBackend).toBe('ripgrep')
     expect(round.keymapOverrides).toEqual({ 'global.searchNotes': 'Mod+P' })
     expect(round.kanbanColumnTitles).toEqual({ 'status:todo': 'To Do' })
@@ -157,6 +165,8 @@ describe('TOML serialization', () => {
     expect(text).toContain('# Example: inbox = "Notes"')
     expect(text).toContain('[kanban_column_titles]')
     expect(text).toContain('[tweaks]')
+    expect(text).toContain('[text_replacements]')
+    expect(text).toContain('# Example: "->" = "→"')
     // And it must still parse back cleanly to the defaults.
     const { portable } = deserializeConfig(text)
     expect(portable.themeMode).toBe('dark')

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { NODE_DEFS, bindParams, nodeDef } from './nodes'
+import { NODE_DEFS, bindParams, nodeDef, sanitizeTagChars } from './nodes'
 import type { NodeDef } from './nodes'
 import { parseWorkflow } from './parse'
 import { RAW_ARG } from './types'
@@ -121,5 +121,39 @@ describe('bindParams parks what it cannot bind', () => {
     expect(digits.args.tag).toBeUndefined()
     expect(digits.args[RAW_ARG]).toBe('#2024')
     expect(digits.diagnostics.some((d) => d.severity === 'error')).toBe(true)
+  })
+})
+
+describe('sanitizeTagChars — what survives typing a tag (#532)', () => {
+  // The canvas inspector runs every keystroke through this. It has to keep
+  // exactly what `bindParams` would accept, in any script: an ASCII-only
+  // alphabet here deletes Cyrillic as fast as it is typed while the file
+  // format, the vault's own tag index, and the binder all take it happily.
+  it('keeps letters from any script', () => {
+    expect(sanitizeTagChars('кириллица-работает')).toBe('кириллица-работает')
+    expect(sanitizeTagChars('café')).toBe('café')
+    expect(sanitizeTagChars('ελληνικά')).toBe('ελληνικά')
+    expect(sanitizeTagChars('日本語')).toBe('日本語')
+  })
+
+  it('keeps the punctuation a tag may contain, and drops the rest', () => {
+    expect(sanitizeTagChars('project/sub_task-2024')).toBe('project/sub_task-2024')
+    expect(sanitizeTagChars('two words')).toBe('twowords')
+    expect(sanitizeTagChars('bad!chars?here')).toBe('badcharshere')
+  })
+
+  it('strips the leading # the stored argument never carries', () => {
+    expect(sanitizeTagChars('#кириллица')).toBe('кириллица')
+    expect(sanitizeTagChars('##double')).toBe('double')
+  })
+
+  it('agrees with the binder: whatever it produces, bindParams accepts', () => {
+    const def = nodeDef('tagged')
+    expect(def).not.toBeNull()
+    for (const typed of ['#кириллица-работает', 'café', '日本語', 'project/sub']) {
+      const clean = sanitizeTagChars(typed)
+      const bound = bindParams(def!, [`#${clean}`], 1)
+      expect(bound.diagnostics).toEqual([])
+    }
   })
 })

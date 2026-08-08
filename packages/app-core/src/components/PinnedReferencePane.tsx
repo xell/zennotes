@@ -46,6 +46,7 @@ import { autocompletion } from '@codemirror/autocomplete'
 import { useStore } from '../store'
 import type { LineNumberMode } from '../store'
 import { wysiwygExtensions } from '../lib/cm-wysiwyg-compose'
+import { documentDiagramTheme } from '../lib/use-diagram-theme-mode'
 import { headingFolding } from '../lib/cm-heading-fold'
 import { frontmatterStyle } from '../lib/cm-frontmatter'
 import { slashCommandSource, slashCommandRender } from '../lib/cm-slash-commands'
@@ -66,6 +67,7 @@ import { CalendarIcon, DocumentTextIcon, ListIcon, PinIcon, TerminalIcon } from 
 import { ModeDropdown } from './ModeDropdown'
 import type { NoteMeta } from '@shared/ipc'
 import { allLeaves } from '../lib/pane-layout'
+import { editorTabSize } from '../lib/editor-tab-size'
 
 const PINNED_REF_PANE_ID = 'pinned-ref'
 export const pinnedRefPaneId = PINNED_REF_PANE_ID
@@ -175,7 +177,9 @@ export function PinnedReferencePane(): JSX.Element | null {
   const livePreview = useStore((s) => s.livePreview)
   const isGitRepo = useStore((s) => s.isGitRepo)
   const diffInlineDiffs = useStore((s) => s.diffInlineDiffs)
+  const showHeadingLevelLabels = useStore((s) => s.showHeadingLevelLabels)
   const lineNumberMode = useStore((s) => s.lineNumberMode)
+  const editorTabSizeValue = useStore((s) => s.editorTabSize)
   const editorFontSize = useStore((s) => s.editorFontSize)
   const editorLineHeight = useStore((s) => s.editorLineHeight)
   const textFont = useStore((s) => s.textFont)
@@ -192,6 +196,8 @@ export function PinnedReferencePane(): JSX.Element | null {
 
   const rightPaneTab = useStore((s) => s.rightPaneTab)
   const setRightPaneTab = useStore((s) => s.setRightPaneTab)
+  const headingCompartmentRef = useRef<Compartment | null>(null)
+  const tabSizeCompartmentRef = useRef<Compartment | null>(null)
 
   const [resizing, setResizing] = useState(false)
   const [showPicker, setShowPicker] = useState(false)
@@ -245,6 +251,13 @@ export function PinnedReferencePane(): JSX.Element | null {
       livePreviewCompartmentRef.current = livePreviewCompartment
       lineNumbersCompartmentRef.current = lineNumbersCompartment
       diffCompartmentRef.current = diffCompartment
+      const headingCompartment = new Compartment()
+      const tabSizeCompartment = new Compartment()
+      vimCompartmentRef.current = vimCompartment
+      livePreviewCompartmentRef.current = livePreviewCompartment
+      lineNumbersCompartmentRef.current = lineNumbersCompartment
+      headingCompartmentRef.current = headingCompartment
+      tabSizeCompartmentRef.current = tabSizeCompartment
       const s0 = useStore.getState()
       const initialPath = s0.pinnedRefPath
       const initialContent = initialPath ? s0.noteContents[initialPath] ?? null : null
@@ -262,6 +275,7 @@ export function PinnedReferencePane(): JSX.Element | null {
           vimCompartment.of(s0.vimMode ? vim() : []),
           history(),
           drawSelection(),
+          tabSizeCompartment.of(editorTabSize(s0.editorTabSize)),
           highlightActiveLine(),
           EditorView.lineWrapping,
           markdown({ base: markdownLanguage, codeLanguages: resolveCodeLanguage, addKeymap: false }),
@@ -269,13 +283,16 @@ export function PinnedReferencePane(): JSX.Element | null {
           markdownListIndentPlugin,
           frontmatterStyle,
           orderedListRenumber,
-          headingFolding(),
+          headingCompartment.of(
+            headingFolding({ showLevelLabels: s0.showHeadingLevelLabels })
+          ),
           codeBlockFontPlugin,
           syntaxHighlighting(paperHighlight),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
           livePreviewCompartment.of(
             s0.livePreview
-              ? wysiwygExtensions(s0.renderTablesInLivePreview, s0.mathRenderer, '')
+              ? wysiwygExtensions(s0.renderTablesInLivePreview, s0.mathRenderer, '',
+                documentDiagramTheme())
               : []
           ),
           lineNumbersCompartment.of(lineNumberExtension(s0.lineNumberMode)),
@@ -373,7 +390,8 @@ export function PinnedReferencePane(): JSX.Element | null {
     view.dispatch({
       effects: comp.reconfigure(
         livePreview
-          ? wysiwygExtensions(renderTablesInLivePreview, mathRenderer, '')
+          ? wysiwygExtensions(renderTablesInLivePreview, mathRenderer, '',
+                documentDiagramTheme())
           : []
       )
     })
@@ -384,6 +402,22 @@ export function PinnedReferencePane(): JSX.Element | null {
     if (!view || !comp) return
     view.dispatch({ effects: comp.reconfigure(lineNumberExtension(lineNumberMode)) })
   }, [lineNumberMode])
+  useEffect(() => {
+    const view = viewRef.current
+    const comp = headingCompartmentRef.current
+    if (!view || !comp) return
+    view.dispatch({
+      effects: comp.reconfigure(
+        headingFolding({ showLevelLabels: showHeadingLevelLabels })
+      )
+    })
+  }, [showHeadingLevelLabels])
+  useEffect(() => {
+    const view = viewRef.current
+    const comp = tabSizeCompartmentRef.current
+    if (!view || !comp) return
+    view.dispatch({ effects: comp.reconfigure(editorTabSize(editorTabSizeValue)) })
+  }, [editorTabSizeValue])
 
   /* -------- Diff mode: load the git-index version and diff against it -------- */
   useEffect(() => {
@@ -421,7 +455,15 @@ export function PinnedReferencePane(): JSX.Element | null {
     if (!view) return
     const raf = requestAnimationFrame(() => view.requestMeasure())
     return () => cancelAnimationFrame(raf)
-  }, [editorFontSize, editorLineHeight, lineNumberMode, textFont, pinnedRefWidth, pinnedRefMode])
+  }, [
+    editorFontSize,
+    editorLineHeight,
+    editorTabSizeValue,
+    lineNumberMode,
+    textFont,
+    pinnedRefWidth,
+    pinnedRefMode
+  ])
 
   /* -------- Flush pending save on unmount -------- */
   const pathRef = useRef<string | null>(pinnedRefPath)

@@ -30,8 +30,11 @@ import type { NoteFolder } from '@shared/ipc'
 import type { VaultTask } from '@shared/tasks'
 import { groupTasks, isOverdue as isTaskOverdue, toIsoDateLocal } from '@shared/tasks'
 import { useStore, type KanbanGroupBy, type TaskMutation } from '../store'
+import { ContextMenu, type ContextMenuItem } from './ContextMenu'
+import { buildTaskMenuItems } from '../lib/task-context-menu'
 import { ArrowUpRightIcon, PencilIcon } from './icons'
 import { InlineMarkdown } from '../lib/inline-markdown'
+import { TaskStateBox } from './TaskStateBox'
 import { isImeComposing } from '../lib/ime'
 
 interface Props {
@@ -185,7 +188,7 @@ const FOLDER_LABEL: Record<NoteFolder, string> = {
   trash: 'Trash'
 }
 
-function folderColumns(tasks: VaultTask[]): Column[] {
+function folderColumns(tasks: VaultTask[], showArchived: boolean): Column[] {
   const map = new Map<NoteFolder, VaultTask[]>()
   for (const task of tasks) {
     if (task.checked) continue
@@ -193,7 +196,10 @@ function folderColumns(tasks: VaultTask[]): Column[] {
     if (list) list.push(task)
     else map.set(task.noteFolder, [task])
   }
-  return FOLDER_ORDER.map((folder) => ({
+  // With archived tasks hidden (#540) the Archive column would only ever be
+  // empty, so it leaves the board instead of standing as a hollow promise.
+  const order = showArchived ? FOLDER_ORDER : FOLDER_ORDER.filter((f) => f !== 'archive')
+  return order.map((folder) => ({
     id: folder,
     label: FOLDER_LABEL[folder],
     tasks: map.get(folder) ?? []
@@ -273,10 +279,11 @@ function buildColumns(
   groupBy: KanbanGroupBy,
   tasks: VaultTask[],
   today: Date,
-  statuses: string[]
+  statuses: string[],
+  showArchived: boolean
 ): Column[] {
   if (groupBy === 'priority') return priorityColumns(tasks)
-  if (groupBy === 'folder') return folderColumns(tasks)
+  if (groupBy === 'folder') return folderColumns(tasks, showArchived)
   const fieldKey = fieldKeyOf(groupBy)
   if (fieldKey) {
     // The status field keeps its friendly `kanban_statuses` order; other fields
@@ -374,7 +381,10 @@ function columnOrderKey(groupBy: KanbanGroupBy, columnId: string): string {
   return `${groupBy}:${columnId}`
 }
 
-function applyColumnOrder(
+/** Replay a manual card arrangement onto built columns. Listed cards sort
+ *  first in their saved order; unlisted cards keep their built position after
+ *  them, so new tasks appear and stale entries decay harmlessly. */
+export function applyColumnOrder(
   groupBy: KanbanGroupBy,
   columns: Column[],
   orderMap: Map<string, string[]>
@@ -469,8 +479,13 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
   const setKanbanColumnTitle = useStore((s) => s.setKanbanColumnTitle)
   const kanbanColumnOrder = useStore((s) => s.kanbanColumnOrder)
   const setKanbanColumnOrder = useStore((s) => s.setKanbanColumnOrder)
+  const setKanbanCardOrder = useStore((s) => s.setKanbanCardOrder)
   const kanbanStatuses = useStore((s) => s.kanbanStatuses)
+  const showArchivedTasks = useStore((s) => s.showArchivedTasks)
   const applyTaskMutation = useStore((s) => s.applyTaskMutation)
+  const startTaskFromList = useStore((s) => s.startTaskFromList)
+  const cancelTaskFromList = useStore((s) => s.cancelTaskFromList)
+  const vimMode = useStore((s) => s.vimMode)
   const [colIdx, setColIdx] = useState(0)
   const [cardIdx, setCardIdx] = useState(0)
   const [draggingId, setDraggingId] = useState<string | null>(null)
@@ -483,10 +498,23 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
   const [columnDropTarget, setColumnDropTarget] = useState<{ id: string; after: boolean } | null>(
     null
   )
+  const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null)
   const latestTasksRef = useRef(tasks)
   const displayTasksRef = useRef(tasks)
   const pendingTaskMovesRef = useRef(new Map<string, VaultTask>())
-  const columnOrderRef = useRef(new Map<string, string[]>())
+  // Seeded from the persisted pref exactly once, before the first columns
+  // build, so a hand-arranged column comes back arranged instead of flashing
+  // the default sort. After mount the ref is the live truth and the store
+  // trails it (every drop writes both through setKanbanCardOrder), so later
+  // store changes are deliberately not re-imported.
+  const [initialCardOrder] = useState(() => {
+    const map = new Map<string, string[]>()
+    for (const [key, order] of Object.entries(useStore.getState().kanbanCardOrder)) {
+      map.set(key, [...order])
+    }
+    return map
+  })
+  const columnOrderRef = useRef(initialCardOrder)
   const columnsRef = useRef<Column[]>([])
   const columnTitleInputRef = useRef<HTMLInputElement | null>(null)
   const boardRef = useRef<HTMLDivElement | null>(null)
@@ -503,6 +531,19 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
   const dragOverColumnRef = useRef<string | null>(null)
   const dragOverElementRef = useRef<HTMLElement | null>(null)
   const suppressCardClickUntilRef = useRef(0)
+
+  const openTaskMenu = useCallback(
+    (e: React.MouseEvent, task: VaultTask): void => {
+      e.preventDefault()
+      e.stopPropagation()
+      setMenu({
+        x: e.clientX,
+        y: e.clientY,
+        items: buildTaskMenuItems(task, { today, showKeyHints: vimMode })
+      })
+    },
+    [today, vimMode]
+  )
 
   const mergeTasksWithPendingMoves = useCallback((incomingTasks: VaultTask[]) => {
     const pending = pendingTaskMovesRef.current
@@ -530,7 +571,7 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
       const orderedColumns = applyColumnOrder(
         groupBy,
         arrangeColumns(
-          buildColumns(groupBy, displayTasks, today, kanbanStatuses),
+          buildColumns(groupBy, displayTasks, today, kanbanStatuses, showArchivedTasks),
           kanbanColumnOrder[groupBy] ?? []
         ),
         columnOrderRef.current
@@ -547,6 +588,7 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
       kanbanColumnOrder,
       kanbanColumnTitles,
       kanbanStatuses,
+      showArchivedTasks,
       today
     ]
   )
@@ -817,6 +859,7 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
 
       const movingKey = taskIdentityKey(task)
       const nextOrderMap = new Map(columnOrderRef.current)
+      const persistedEntries: Record<string, string[]> = {}
 
       for (const column of columnsRef.current) {
         const keys = column.tasks
@@ -829,12 +872,17 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
         }
 
         nextOrderMap.set(columnOrderKey(groupBy, column.id), keys)
+        persistedEntries[columnOrderKey(groupBy, column.id)] = keys
       }
 
       columnOrderRef.current = nextOrderMap
       setColumnOrderVersion((version) => version + 1)
+      // Persist the whole board's arrangement, not just the touched column:
+      // the lists carry only tasks currently on the board, so each write also
+      // prunes entries for tasks that were completed, deleted, or moved away.
+      setKanbanCardOrder(persistedEntries)
     },
-    [groupBy]
+    [groupBy, setKanbanCardOrder]
   )
 
   const applyTaskToBoard = useCallback(
@@ -1031,18 +1079,30 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
   )
 
   const finishPointerDrag = useCallback(
-    (drag: ActivePointerDrag): void => {
-      const columnId = drag.lastColumnId
-      if (!columnId || !dndEnabled) return
+    (drag: ActivePointerDrag, releaseX: number, releaseY: number): void => {
+      if (!dndEnabled) return
+      // The drop belongs to the column under the RELEASE point. `lastColumnId`
+      // trails the last delivered pointermove, and a fast flick can release a
+      // column past it: the hand says Today, the trailing state says Upcoming,
+      // and the "moved to Today" card comes back due tomorrow. Falling back to
+      // the last hovered column covers a release the board can't resolve (the
+      // gap between columns, the padding above them), where the indicator the
+      // user last saw is still the honest target.
+      const releaseTarget = columnAtPoint(releaseX, releaseY)
+      const columnId = releaseTarget?.id ?? drag.lastColumnId
+      if (!columnId) return
+      // The remembered insertion index was computed for the hovered column; a
+      // release that resolves elsewhere appends instead of importing it.
+      const insertionIndex = columnId === drag.lastColumnId ? drag.lastInsertionIndex : null
       const mutations =
         columnId === drag.sourceColumnId
           ? []
           : dropMutationsFor(groupBy, columnId, drag.task, today)
       if (mutations) {
-        moveTaskOnBoard(drag.task, mutations, columnId, drag.lastInsertionIndex)
+        moveTaskOnBoard(drag.task, mutations, columnId, insertionIndex)
       }
     },
-    [dndEnabled, groupBy, moveTaskOnBoard, today]
+    [columnAtPoint, dndEnabled, groupBy, moveTaskOnBoard, today]
   )
 
   const beginPointerDrag = useCallback(
@@ -1118,7 +1178,7 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
       if (drag.dragging) {
         e.preventDefault()
         setDraggingId(null)
-        finishPointerDrag(drag)
+        finishPointerDrag(drag, e.clientX, e.clientY)
         suppressCardClickUntilRef.current = Date.now() + 140
       } else {
         setDraggingId(null)
@@ -1258,6 +1318,22 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
             onToggleTask(focusedTask)
           }
           return
+        // Same task states the list and the right-click menu offer, so a card
+        // is not a second-class task. Vim-gated, per the rule that single-key
+        // shortcuts only exist in Vim mode; the menu hides its key hints in
+        // step, so it never advertises a key that would do nothing here.
+        case 'i':
+          if (vimMode && focusedTask) {
+            consume()
+            void startTaskFromList(focusedTask)
+          }
+          return
+        case 'c':
+          if (vimMode && focusedTask) {
+            consume()
+            void cancelTaskFromList(focusedTask)
+          }
+          return
         default:
           return
       }
@@ -1295,8 +1371,8 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
         </div>
         <div className="text-xs text-current/40">
           {dndEnabled
-            ? 'Drag or Shift+H·L move card · drag header or </> reorder columns · h/l · j/k · g group-by · Space · Enter'
-            : 'Drag header or </> reorder columns · h/l column · j/k card · g group-by · Space · Enter'}
+            ? 'Drag or Shift+H·L move card · drag header or </> reorder columns · h/l · j/k · g group-by · x · Enter · right-click actions'
+            : 'Drag header or </> reorder columns · h/l column · j/k card · g group-by · x · Enter · right-click actions'}
         </div>
       </div>
 
@@ -1450,6 +1526,7 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
                           shouldSuppressClick={shouldSuppressCardClick}
                           onToggle={() => onToggleTask(task)}
                           onPointerDown={(e) => beginPointerDrag(task, e)}
+                          onContextMenu={openTaskMenu}
                         />
                       )
                     })}
@@ -1497,6 +1574,10 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
         className="task-kanban-drop-indicator pointer-events-none fixed left-0 top-0 z-[999]"
         aria-hidden="true"
       />
+
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
+      )}
     </div>
   )
 }
@@ -1514,6 +1595,8 @@ interface CardProps {
   shouldSuppressClick: () => boolean
   onToggle: () => void
   onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
+  /** Right-click actions. Omitted on the drag preview, which is not a real card. */
+  onContextMenu?: (e: React.MouseEvent, task: VaultTask) => void
 }
 
 function formatDue(iso: string | undefined): string {
@@ -1535,13 +1618,24 @@ function TaskCard({
   onOpen,
   shouldSuppressClick,
   onToggle,
-  onPointerDown
+  onPointerDown,
+  onContextMenu
 }: CardProps): JSX.Element {
   return (
     <div
       ref={cardRef ?? undefined}
       hidden={isDragging}
       data-kanban-task-id={taskDomId}
+      onContextMenu={
+        onContextMenu
+          ? (e) => {
+              // Focus the card first, so the menu and the keyboard agree on
+              // which task is being acted on.
+              onClickRow()
+              onContextMenu(e, task)
+            }
+          : undefined
+      }
       onClick={() => {
         if (shouldSuppressClick()) return
         onClickRow()
@@ -1562,39 +1656,12 @@ function TaskCard({
     >
       <div className="flex items-start gap-2">
         {/* Interactive controls stop pointerdown so they do not start a card drag. */}
-        <button
-          type="button"
-          role="checkbox"
-          aria-checked={task.checked}
-          draggable={false}
-          onPointerDown={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation()
-            onToggle()
-          }}
-          className={[
-            'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded transition-colors',
-            task.checked
-              ? 'border border-accent bg-accent text-white'
-              : 'border border-paper-400/70 hover:bg-paper-200/80'
-          ].join(' ')}
-        >
-          {task.checked && (
-            <svg
-              viewBox="0 0 24 24"
-              width="11"
-              height="11"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="3.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="m5 12 5 5L20 7" />
-            </svg>
-          )}
-        </button>
+        <TaskStateBox
+          task={task}
+          onToggle={onToggle}
+          idleClassName="border border-paper-400/70 hover:bg-paper-200/80"
+          stopPointerEvents
+        />
         {/* The card body stays focusable so clicks open the note and drags move it. */}
         <div
           role="button"

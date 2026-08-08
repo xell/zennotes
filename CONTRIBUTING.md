@@ -23,17 +23,21 @@ npm run dev
 
 Useful scripts:
 
-- `npm run dev` — run the app with hot reload
-- `npm test` — run the test suite
-- `npm run build` — produce a production build
-- `npm run lint` — run the linter
+- `npm run dev` — run the desktop app with hot reload (`dev:web`, `dev:server`, and `dev:web-stack` cover the web client and Go server)
+- `npm run typecheck` — TypeScript across every workspace
+- `npm run test:run` — the full test suite, non-interactive (`npm test` is the watch variant)
+- `npm run build` — production build of the web client, desktop app, and Go server
+- `cd apps/server && go test ./...` — the Go server's own tests
+
+There is no lint step; match the style of the surrounding code (Prettier is available
+if a file you touched is already formatted with it).
 
 ## Working on a change
 
 1. Fork the repo and create a feature branch from `main`.
 2. Keep commits focused. A clear commit message beats a long PR description.
 3. Add or update tests when you change behavior.
-4. Make sure `npm test` and `npm run build` pass locally.
+4. Make sure `npm run typecheck`, `npm run test:run`, and `npm run build` pass locally.
 5. Open a pull request against `main`.
 
 ## Pull request requirements

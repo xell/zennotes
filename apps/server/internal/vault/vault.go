@@ -1118,9 +1118,16 @@ func (v *Vault) ListNotes() ([]NoteMeta, error) {
 				if strings.HasPrefix(d.Name(), ".") && path != folderRoot {
 					return filepath.SkipDir
 				}
-				if isFormDirName(d.Name()) {
-					return filepath.SkipDir
-				}
+				// A `<Name>.base` folder is NOT skipped here. Its record pages are
+				// real notes: the user opens them, writes in them, and links to
+				// them, and the desktop lists them exactly like any other note.
+				// Skipping the folder made every wikilink into a database resolve
+				// to nothing on a remote vault while working locally (#527). Only
+				// `.md` files are collected below, so the database's own data.csv
+				// and schema.json still never surface as notes. ListFolders and
+				// ListAssets DO skip it, deliberately: the internals are not loose
+				// folders or attachments, and the renderer draws the database
+				// itself rather than its directory.
 				if isPrimaryRoot && path != folderRoot {
 					parent := filepath.Dir(path)
 					if filepath.Clean(parent) == filepath.Clean(folderRoot) {
@@ -1442,6 +1449,11 @@ func (v *Vault) ReadNote(rel string) (NoteContent, error) {
 	if err != nil {
 		return NoteContent{}, err
 	}
+	// The stat above already knows the answer, so say it here instead of
+	// reading and then guessing from the platform's errno.
+	if info.IsDir() {
+		return NoteContent{}, ErrIsDirectory
+	}
 	body, err := os.ReadFile(abs)
 	if err != nil {
 		return NoteContent{}, err
@@ -1730,7 +1742,13 @@ func (v *Vault) CreateNote(folder NoteFolder, title, subpath string) (NoteMeta, 
 		return NoteMeta{}, err
 	}
 	abs := uniquePath(dir, title, ".md")
-	if err := os.WriteFile(abs, []byte(""), v.fileMode); err != nil {
+	// Seed the same `# Title` body the desktop app writes (main vault.ts and
+	// the MCP vault-ops both do), from the FINAL on-disk stem so a deduped
+	// "Title 2" heads itself correctly. A remote vault otherwise creates
+	// blank notes where a local one has its title, which is most visible on
+	// daily notes, whose date heading is the whole point.
+	stem := strings.TrimSuffix(filepath.Base(abs), ".md")
+	if err := os.WriteFile(abs, fmt.Appendf(nil, "# %s\n\n", stem), v.fileMode); err != nil {
 		return NoteMeta{}, err
 	}
 	v.invalidateTextSearchCache()
@@ -2178,9 +2196,10 @@ func (v *Vault) ScanTasks() ([]Task, error) {
 				if strings.HasPrefix(d.Name(), ".") && path != folderRoot {
 					return filepath.SkipDir
 				}
-				if isFormDirName(d.Name()) {
-					return filepath.SkipDir // database folder — not loose notes
-				}
+				// Not skipped, for the same reason as ListNotes: a database's
+				// record pages are notes, and a task written in one counts. The
+				// desktop scans tasks straight off its note list, so skipping here
+				// would have the two disagree about what a note is (#527).
 				if isPrimaryRoot && path != folderRoot {
 					parent := filepath.Dir(path)
 					if filepath.Clean(parent) == filepath.Clean(folderRoot) {

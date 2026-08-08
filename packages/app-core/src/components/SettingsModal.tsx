@@ -21,6 +21,7 @@ import {
 import type {
   AppUpdateState,
   CliInstallStatus,
+  NoteFolder,
   RaycastExtensionStatus,
   RemoteWorkspaceProfile,
   RemoteWorkspaceProfileInput,
@@ -85,7 +86,11 @@ import {
   DEFAULT_SYSTEM_FOLDER_LABELS,
   getSystemFolderLabel,
 } from "../lib/system-folder-labels";
-import { DEFAULT_FOLDER_PATHS, resolveFolderPath } from "@shared/system-folder-paths";
+import {
+  DEFAULT_FOLDER_PATHS,
+  describeSystemFolderPathIssue,
+  resolveFolderPath,
+} from "@shared/system-folder-paths";
 import {
   normalizeDailyNoteLocale,
   normalizeDailyNotesDirectory,
@@ -114,6 +119,7 @@ import { isImeComposing } from "../lib/ime";
 import { RemoteWorkspaceProfileModal } from "./RemoteWorkspaceProfileModal";
 import { Button } from "./ui/Button";
 import { TERMINAL_THEME_NAMES } from "../lib/terminal-themes";
+import { TextReplacementsSettings } from "./TextReplacementsSettings";
 
 type SettingsCategoryId =
   | "appearance"
@@ -462,6 +468,8 @@ export function SettingsModal(): JSX.Element {
   const setHideActiveLineMarkup = useStore((s) => s.setHideActiveLineMarkup);
   const completedTaskStyle = useStore((s) => s.completedTaskStyle);
   const setCompletedTaskStyle = useStore((s) => s.setCompletedTaskStyle);
+  const showArchivedTasks = useStore((s) => s.showArchivedTasks);
+  const setShowArchivedTasks = useStore((s) => s.setShowArchivedTasks);
   const mathRenderer = useStore((s) => s.mathRenderer);
   const typstTagPreambles = useStore((s) => s.typstTagPreambles);
   const setTypstTagPreambles = useStore((s) => s.setTypstTagPreambles);
@@ -480,6 +488,20 @@ export function SettingsModal(): JSX.Element {
   );
   const markdownSnippets = useStore((s) => s.markdownSnippets);
   const setMarkdownSnippets = useStore((s) => s.setMarkdownSnippets);
+  const showHeadingLevelLabels = useStore((s) => s.showHeadingLevelLabels);
+  const setShowHeadingLevelLabels = useStore(
+    (s) => s.setShowHeadingLevelLabels,
+  );
+  const editorTabSize = useStore((s) => s.editorTabSize);
+  const setEditorTabSize = useStore((s) => s.setEditorTabSize);
+  const textReplacementsEnabled = useStore(
+    (s) => s.textReplacementsEnabled,
+  );
+  const setTextReplacementsEnabled = useStore(
+    (s) => s.setTextReplacementsEnabled,
+  );
+  const textReplacements = useStore((s) => s.textReplacements);
+  const setTextReplacements = useStore((s) => s.setTextReplacements);
   const autoPairs = useStore((s) => s.autoPairs);
   const setAutoPairs = useStore((s) => s.setAutoPairs);
   const autoPairQuotesInProse = useStore((s) => s.autoPairQuotesInProse);
@@ -698,6 +720,11 @@ export function SettingsModal(): JSX.Element {
   // Lazy-load the system font list on mount. Retried on every mount
   // when the list comes back empty (IPC failure / no fonts yet).
   const [systemFonts, setSystemFonts] = useState<string[]>([]);
+  // Why a folder-path edit was refused, per folder. Cleared as soon as the same
+  // row accepts a value (#533).
+  const [folderPathIssues, setFolderPathIssues] = useState<
+    Partial<Record<NoteFolder, string | null>>
+  >({});
   const [vaultTextSearchCapabilities, setVaultTextSearchCapabilities] =
     useState<VaultTextSearchCapabilities | null>(null);
   const searchToolPaths = useMemo<VaultTextSearchToolPaths>(
@@ -1951,7 +1978,7 @@ export function SettingsModal(): JSX.Element {
         },
         {
           id: "markdown-overrides",
-          title: "Markdown snippets",
+          title: "Auto-close Markdown",
           description:
             "Auto-close markdown delimiters as you type (** then Space, ``` then Enter).",
           keywords: [
@@ -1963,6 +1990,24 @@ export function SettingsModal(): JSX.Element {
             "markdown",
             "completion",
           ],
+        },
+        {
+          id: "heading-level-labels",
+          title: "Heading level labels",
+          description: "Show H1, H2, H3, and other level labels beside headings.",
+          keywords: ["heading", "header", "h1", "h2", "outline", "level"],
+        },
+        {
+          id: "editor-tab-size",
+          title: "Tab size",
+          description: "Choose how many spaces a tab occupies in the editor.",
+          keywords: ["tab", "indent", "spaces", "width"],
+        },
+        {
+          id: "text-replacements-enabled",
+          title: "Text replacements",
+          description: "Replace typed snippets such as -> with →.",
+          keywords: ["snippet", "replacement", "arrow", "autocorrect", "expand"],
         },
         {
           id: "auto-pairs",
@@ -2339,6 +2384,8 @@ export function SettingsModal(): JSX.Element {
             "hide-active-line-markup",
             "sync-title-heading-on-rename",
             "markdown-overrides",
+            "heading-level-labels",
+            "editor-tab-size",
             "auto-pairs",
             "auto-pair-quotes-in-prose",
             "note-tabs",
@@ -2440,11 +2487,29 @@ export function SettingsModal(): JSX.Element {
                   onChange={setSyncTitleHeadingOnRename}
                 />
                 <ToggleRow
-                  label="Markdown snippets"
+                  label="Auto-close Markdown"
                   description="Auto-close markdown as you type: ** / __ / ~~ / ` / == / [[ / %% then Space wrap the cursor, and ``` / ~~~ / $$ then Enter expand a fenced block. In Vim mode this only applies in insert mode."
                   value={markdownSnippets}
                   settingId="markdown-overrides"
                   onChange={setMarkdownSnippets}
+                />
+                <ToggleRow
+                  label="Heading level labels"
+                  description="Show H1, H2, H3, and other level labels before headings. Heading fold arrows remain available either way."
+                  value={showHeadingLevelLabels}
+                  settingId="heading-level-labels"
+                  onChange={setShowHeadingLevelLabels}
+                />
+                <SliderRow
+                  label="Tab size"
+                  description="How many spaces a tab occupies in the editor and when indenting."
+                  value={editorTabSize}
+                  min={1}
+                  max={8}
+                  step={1}
+                  unit=" spaces"
+                  settingId="editor-tab-size"
+                  onChange={setEditorTabSize}
                 />
                 <ToggleRow
                   label="Auto-pair brackets and delimiters"
@@ -2533,6 +2598,32 @@ export function SettingsModal(): JSX.Element {
                   placeholder="Quick Note"
                   settingId="quick-note-prefix"
                   onChange={setQuickNoteTitlePrefix}
+                />
+              </Section>
+            </div>
+          ),
+        },
+        {
+          id: "text-replacements",
+          title: "Text replacements",
+          description: "Expand short triggers into symbols, words, or phrases as you type.",
+          searchIds: ["text-replacements-enabled"],
+          content: (
+            <div className="space-y-6">
+              <Section
+                title="Text replacements"
+                description="Create snippets that expand immediately in the note editor."
+              >
+                <ToggleRow
+                  label="Enable text replacements"
+                  description="Replace matching text as you type. The default rule turns -> into →. In Vim mode, replacements run only in insert mode."
+                  value={textReplacementsEnabled}
+                  settingId="text-replacements-enabled"
+                  onChange={setTextReplacementsEnabled}
+                />
+                <TextReplacementsSettings
+                  replacements={textReplacements}
+                  onChange={setTextReplacements}
                 />
               </Section>
             </div>
@@ -2700,10 +2791,10 @@ export function SettingsModal(): JSX.Element {
                   const hidden = hiddenPresetsInOrder(hiddenWorkflowPresets).length;
                   const copy =
                     hidden === 0
-                      ? `All ${total} shipped recipes appear in the New-workflow gallery.`
+                      ? `All ${total} shipped recipes appear in the recipe gallery, behind New workflow in the Workflows view.`
                       : hidden === total
-                        ? "Every shipped recipe is hidden; the gallery starts from Blank."
-                        : `${hidden} of ${total} recipes are hidden from the New-workflow gallery (press x on a recipe there to hide one at a time).`;
+                        ? "Every shipped recipe is hidden; the recipe gallery (New workflow) starts from Blank."
+                        : `${hidden} of ${total} recipes are hidden from the recipe gallery, behind New workflow (press x on a recipe there to hide one at a time).`;
                   return (
                     <div
                       className="flex items-center justify-between gap-5 px-5 py-4"
@@ -2932,6 +3023,21 @@ export function SettingsModal(): JSX.Element {
             "workflow",
           ],
         },
+        {
+          id: "show-archived-tasks",
+          title: "Show tasks from archived notes",
+          description:
+            "Keep archived notes' tasks in the Tasks list, boards, and calendars instead of retiring them with the note.",
+          keywords: [
+            "archive",
+            "archived",
+            "retire",
+            "hide",
+            "done",
+            "history",
+            "old",
+          ],
+        },
       ],
       content: (
         <div className="space-y-6">
@@ -2953,6 +3059,18 @@ export function SettingsModal(): JSX.Element {
               settingId="planner-url"
               commitOnBlur
               onChange={(next) => setPlannerUrl(next ?? "")}
+            />
+          </Section>
+          <Section
+            title="Archived notes"
+            description="What happens to a note's tasks when the note moves to the Archive."
+          >
+            <ToggleRow
+              label="Show tasks from archived notes"
+              description="Keep archived notes' tasks in the Tasks list, boards, and calendars. Off by default: archiving a note retires its tasks with it (the markdown is untouched, and un-archiving brings them back). Archiving a note that still has open tasks always asks first."
+              value={showArchivedTasks}
+              settingId="show-archived-tasks"
+              onChange={setShowArchivedTasks}
             />
           </Section>
           <button
@@ -4458,7 +4576,7 @@ export function SettingsModal(): JSX.Element {
               </Section>
               <Section
                 title="Folder Paths"
-                description="Map each system folder to a directory in your vault. Leave empty for the default. Changing a path does not move existing notes."
+                description="Point each system folder at a directory in your vault: one folder name at the top level, not a nested path. Leave empty for the default. Changing a path does not move existing notes."
               >
                 <div className="space-y-6">
                   {(
@@ -4477,8 +4595,21 @@ export function SettingsModal(): JSX.Element {
                       placeholder={DEFAULT_FOLDER_PATHS[key]}
                       settingId={`${key}-path`}
                       commitOnBlur
+                      issue={folderPathIssues[key] ?? null}
                       onChange={(next) => {
                         const trimmed = (next ?? "").trim()
+                        // Say why, rather than saving nothing and letting the
+                        // field snap back to its old value. The normalizer on
+                        // the way in drops what it does not like, which is
+                        // right for a hand-edited file and silent for a person
+                        // typing (#533).
+                        const problem = describeSystemFolderPathIssue(
+                          key,
+                          trimmed,
+                          vaultSettings.systemFolderPaths,
+                        );
+                        setFolderPathIssues((current) => ({ ...current, [key]: problem }));
+                        if (problem) return;
                         void persistVaultSettings({
                           ...vaultSettings,
                           systemFolderPaths: {
@@ -6073,6 +6204,7 @@ function TextInputRow({
   placeholder,
   settingId,
   commitOnBlur = false,
+  issue,
   onChange,
 }: {
   label: string;
@@ -6081,6 +6213,9 @@ function TextInputRow({
   placeholder?: string;
   settingId?: string;
   commitOnBlur?: boolean;
+  /** Why the last value was refused. Shown under the description, in place of
+   *  the field quietly reverting and leaving the user to guess. */
+  issue?: string | null;
   onChange: (next: string | null) => void;
 }): JSX.Element {
   const [draft, setDraft] = useState(value);
@@ -6106,6 +6241,11 @@ function TextInputRow({
         {description && (
           <div className="mt-1 text-xs leading-5 text-ink-500">
             {description}
+          </div>
+        )}
+        {issue && (
+          <div className="mt-1 text-xs leading-5 text-[color:rgb(var(--z-red))]" role="alert">
+            {issue}
           </div>
         )}
       </div>

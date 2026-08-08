@@ -422,6 +422,7 @@ export interface VaultViewSettings {
   kanbanGroupBy?: string
   kanbanColumnTitles?: Record<string, string>
   kanbanColumnOrder?: Record<string, string[]>
+  kanbanCardOrder?: Record<string, string[]>
   kanbanStatuses?: string[]
   autoReveal?: boolean
   systemFolderLabels?: Record<string, unknown>
@@ -765,6 +766,10 @@ export interface ServerCapabilities {
   supportsVaultSelection: boolean
   supportsDirectoryBrowsing: boolean
   supportsWatch: boolean
+  /** The server answers 404 (not 500) for a file that is not there. Optional
+   *  because no server before 2.20.2 said so, and its ABSENCE is the useful
+   *  half: it marks the servers whose 500 might only mean "missing". */
+  reportsMissingAsNotFound?: boolean
 }
 
 export interface ServerSessionStatus {

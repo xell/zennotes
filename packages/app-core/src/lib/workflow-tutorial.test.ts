@@ -6,15 +6,22 @@ import type { VaultReader, WorkflowNote } from '@shared/workflows/types'
 import type { WorkflowFile } from '@bridge-contract/workflows'
 import { extractTags } from './tags'
 import {
-  TUTORIAL_FOLDER,
-  TUTORIAL_NOTES,
+  TUTORIAL_FOLDER_SUBPATH,
   TUTORIAL_STEPS,
-  TUTORIAL_WORKFLOW_RAW,
   TUTORIAL_WORKFLOW_SLUG,
   cleanupWorkflowTutorial,
   seedWorkflowTutorial,
+  tutorialNotes,
+  tutorialWorkflowRaw,
   type TutorialBridge
 } from './workflow-tutorial'
+import { vaultRelativeFolderPath } from './vault-layout'
+
+// The default-layout path. Every vault shape the app supports is covered in
+// "where the practice material lands" below.
+const TUTORIAL_FOLDER = `inbox/${TUTORIAL_FOLDER_SUBPATH}`
+const TUTORIAL_NOTES = tutorialNotes(TUTORIAL_FOLDER)
+const TUTORIAL_WORKFLOW_RAW = tutorialWorkflowRaw(TUTORIAL_FOLDER)
 
 // The tutorial teaches by example, so its example carries the same burden the
 // gallery presets do: it must parse clean, validate clean, and actually DO
@@ -157,7 +164,7 @@ describe('seed and cleanup', () => {
 
   it('seed leads with cleanup, then creates the folder, the notes, the workflow', async () => {
     const { bridge, calls } = fakeBridge()
-    await seedWorkflowTutorial(bridge)
+    await seedWorkflowTutorial(bridge, TUTORIAL_FOLDER)
 
     expect(calls.deleteFolder).toHaveLength(1)
     expect(calls.createFolder?.[0]).toEqual(['inbox', 'Workflow tutorial'])
@@ -196,5 +203,59 @@ describe('seed and cleanup', () => {
     const { bridge } = fakeBridge()
     delete (bridge as Partial<TutorialBridge>).deleteWorkflowRuns
     await expect(cleanupWorkflowTutorial(bridge)).resolves.toBeUndefined()
+  })
+
+  // #525: seeding wrote to a literal `inbox/Workflow tutorial` while cleanup
+  // deleted through the folder API, which resolves 'inbox' against the vault's
+  // layout. On any vault that is not laid out the default way those are two
+  // different directories, so Finish removed an empty folder and left every
+  // practice note behind. The invariant is one sentence: whatever prefix the
+  // notes are written under, cleanup's (folder, subpath) pair must resolve to
+  // exactly that.
+  describe('where the practice material lands', () => {
+    const SHAPES = [
+      { name: 'a default vault', settings: null, expected: 'inbox/Workflow tutorial' },
+      {
+        name: 'a vault that keeps its notes at the root',
+        settings: { primaryNotesLocation: 'root' },
+        expected: 'Workflow tutorial'
+      },
+      {
+        name: 'a vault whose Inbox is remapped',
+        settings: { systemFolderPaths: { inbox: '01 - Entry' } },
+        expected: '01 - Entry/Workflow tutorial'
+      }
+    ] as const
+
+    for (const shape of SHAPES) {
+      it(`seeds inside the folder cleanup deletes, on ${shape.name}`, async () => {
+        const folderPath = vaultRelativeFolderPath(
+          'inbox',
+          TUTORIAL_FOLDER_SUBPATH,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          shape.settings as any
+        )
+        expect(folderPath).toBe(shape.expected)
+
+        const { bridge, calls } = fakeBridge()
+        await seedWorkflowTutorial(bridge, folderPath)
+
+        // Every seeded note, and the workflow's own folder source and write
+        // target, sit under the resolved path.
+        const written = (calls.writeNote ?? []).map((args) => String(args[0]))
+        expect(written.length).toBeGreaterThan(0)
+        for (const path of written) expect(path.startsWith(`${folderPath}/`)).toBe(true)
+        const raw = String(
+          (calls.writeWorkflow?.[0]?.[0] as { raw: string } | undefined)?.raw ?? ''
+        )
+        expect(raw).toContain(`folder "${folderPath}"`)
+        expect(raw).toContain(`write-section "${folderPath}/Reading list.md"`)
+
+        // And cleanup names the folder by (folder, subpath), which is what
+        // resolves back to that same directory.
+        expect(calls.createFolder?.[0]).toEqual(['inbox', TUTORIAL_FOLDER_SUBPATH])
+        expect(calls.deleteFolder?.[0]).toEqual(['inbox', TUTORIAL_FOLDER_SUBPATH])
+      })
+    }
   })
 })

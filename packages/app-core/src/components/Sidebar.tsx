@@ -565,6 +565,11 @@ export function Sidebar(): JSX.Element {
   const pinReference = useStore((s) => s.pinReference);
   const sidebarWidth = useStore((s) => s.sidebarWidth);
   const setSidebarWidth = useStore((s) => s.setSidebarWidth);
+  // Footer degrade ladder (#539). The width is the pref, which is exactly the
+  // rendered width (the aside is fixed-width and shrink-0), so this stays a
+  // plain prop check instead of a resize observer.
+  const footerShowsCount = sidebarWidth >= 310;
+  const footerShowsLabels = sidebarWidth >= 265;
   const noteSortOrder = useStore((s) => s.noteSortOrder);
   const manualNoteOrder = useStore((s) => s.manualNoteOrder);
   const setNoteSortOrder = useStore((s) => s.setNoteSortOrder);
@@ -2519,6 +2524,8 @@ export function Sidebar(): JSX.Element {
         label: `Move ${archivableNotes.length} note${archivableNotes.length === 1 ? "" : "s"} to ${folderLabels.archive}`,
         icon: <ArchiveIcon />,
         onSelect: async () => {
+          const paths = archivableNotes.map((note) => note.path);
+          if (!(await useStore.getState().confirmArchiveNotes(paths))) return;
           for (const note of archivableNotes) {
             await window.zen.archiveNote(note.path);
           }
@@ -3327,6 +3334,7 @@ export function Sidebar(): JSX.Element {
         label: folderLabels.archive,
         icon: <ArchiveIcon />,
         onSelect: async () => {
+          if (!(await useStore.getState().confirmArchiveNotes([n.path]))) return;
           await window.zen.archiveNote(n.path);
           await refreshNotes();
           if (selectedPath === n.path) await selectNote(null);
@@ -4095,12 +4103,15 @@ export function Sidebar(): JSX.Element {
         </div>
       </div>
 
-      {/* Search + toolbar on one row */}
       {/* One row of icon buttons, left-aligned so a widened sidebar's extra
           space falls to the right. Filter (this fork's feature) sits first,
           then Search (opens the file-search modal), then the note/folder/sort
-          actions. */}
-      <div className="flex items-center gap-0.5 px-3">
+          actions. Upstream instead puts a full-width Search button here with
+          the icons in a shrink-0 strip beside it; this fork replaced that with
+          the compact icon (c5789e2), so only #539's `flex-wrap` is adopted —
+          it keeps the icons from overflowing through the border when the
+          sidebar is narrow, which is the same bug in this layout. */}
+      <div className="flex flex-wrap items-center gap-0.5 px-3">
           <IconBtn
             title={sidebarFilter.active ? "Close filter" : "Filter sidebar"}
             onClick={() =>
@@ -5035,7 +5046,13 @@ export function Sidebar(): JSX.Element {
       {/* Footer — vault-level utilities. Kept deliberately small so the
        *  main tree area dominates; Help and Settings are also reachable
        *  from the command palette and (for Settings) ⌘,. Trash lives in
-       *  the main tree above and opens its dedicated recovery view. */}
+       *  the main tree above and opens its dedicated recovery view.
+       *
+       *  The three labeled actions need ~306px with the file-count badge and
+       *  ~260px without it, but the sidebar resizes down to 160. Below those
+       *  widths the row degrades instead of painting labels over each other
+       *  (#539): first the count folds into the Files tooltip, then the
+       *  labels drop and the icons stand alone. */}
       <div
         className="zn-sidebar-footer-safe mt-2 grid h-16 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 px-3"
         style={{ borderTop: "1px solid var(--glass-stroke)" }}
@@ -5044,7 +5061,9 @@ export function Sidebar(): JSX.Element {
           <SidebarFooterAction
             icon={<FolderGlyphIcon />}
             label="Files"
-            count={assetFiles.length}
+            title={footerShowsCount ? undefined : `Files · ${assetFiles.length}`}
+            count={footerShowsCount ? assetFiles.length : undefined}
+            iconOnly={!footerShowsLabels}
             onClick={() => void revealAssetsDir()}
             sidebarIdx={idxCounter.current.value++}
             vimHighlight={vimCursor === idxCounter.current.value - 1}
@@ -5056,6 +5075,7 @@ export function Sidebar(): JSX.Element {
         <SidebarFooterAction
           icon={<DocumentIcon />}
           label="Help"
+          iconOnly={!footerShowsLabels}
           active={helpViewActive}
           onClick={() => void openHelpView()}
           sidebarIdx={idxCounter.current.value++}
@@ -5068,6 +5088,7 @@ export function Sidebar(): JSX.Element {
           label="Settings"
           title={appUpdateSettingsTitle}
           badgeLabel={appUpdateBadge ?? undefined}
+          iconOnly={!footerShowsLabels}
           onClick={() => setSettingsOpen(true)}
           sidebarIdx={idxCounter.current.value++}
           vimHighlight={vimCursor === idxCounter.current.value - 1}
@@ -7542,6 +7563,7 @@ function SidebarFooterAction({
   count,
   badgeLabel,
   active,
+  iconOnly,
   onClick,
   sidebarIdx,
   vimHighlight,
@@ -7554,6 +7576,9 @@ function SidebarFooterAction({
   count?: number;
   badgeLabel?: string;
   active?: boolean;
+  /** Narrow-sidebar mode (#539): the label is dropped and the tooltip and
+   *  aria-label carry it instead, so the row never outgrows the sidebar. */
+  iconOnly?: boolean;
   onClick: () => void;
   sidebarIdx?: number;
   vimHighlight?: boolean;
@@ -7569,7 +7594,7 @@ function SidebarFooterAction({
       title={resolvedTitle}
       aria-label={resolvedTitle}
       className={[
-        "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium leading-none transition-colors whitespace-nowrap",
+        "inline-flex h-8 min-w-0 items-center gap-1.5 overflow-hidden rounded-lg px-2.5 text-xs font-medium leading-none transition-colors whitespace-nowrap",
         active
           ? vimHighlight
             ? "vim-cursor-on-active bg-paper-300/70 text-ink-900 font-medium"
@@ -7592,11 +7617,11 @@ function SidebarFooterAction({
       >
         {icon}
       </span>
-      <span className="truncate">{label}</span>
-      {typeof count === "number" && (
+      {!iconOnly && <span className="truncate">{label}</span>}
+      {!iconOnly && typeof count === "number" && (
         <span
           className={[
-            "rounded-full px-1.5 py-0.5 text-2xs",
+            "shrink-0 rounded-full px-1.5 py-0.5 text-2xs",
             strongActive
               ? "bg-ink-900/10 text-ink-700"
               : "bg-paper-200/80 text-ink-500",
@@ -7608,7 +7633,7 @@ function SidebarFooterAction({
       {badgeLabel && (
         <span
           className={[
-            "rounded-full px-1.5 py-0.5 text-2xs font-semibold",
+            "shrink-0 rounded-full px-1.5 py-0.5 text-2xs font-semibold",
             strongActive
               ? "bg-accent/20 text-accent"
               : "bg-accent/12 text-accent",

@@ -58,6 +58,29 @@ describe('mcp note links (#509)', () => {
   })
 })
 
+// The MCP scanner hand-rolls its own task-line parser (it cannot import the
+// app-core one), so the state chars are a copy that drifts silently. This pins
+// them against shared-domain: a state the app understands must never make a
+// task invisible to a model reading the same vault.
+describe('mcp task states', () => {
+  it('scans every state char, flagging in progress and cancelled', async () => {
+    await writeFile(
+      path.join(root, 'inbox', 'States.md'),
+      '# States\n\n- [ ] open\n- [/] started\n- [x] done\n- [-] scrapped\n- [>] gone\n'
+    )
+    const tasks = await scanAllTasks(root)
+    const byContent = new Map(tasks.map((t) => [t.content, t]))
+    expect([...byContent.keys()].sort()).toEqual(
+      ['actually do it', 'done', 'gone', 'open', 'scrapped', 'started'].sort()
+    )
+    expect(byContent.get('started')?.inProgress).toBe(true)
+    expect(byContent.get('started')?.checked).toBe(false)
+    expect(byContent.get('scrapped')?.cancelled).toBe(true)
+    expect(byContent.get('open')?.inProgress).toBe(false)
+    expect(byContent.get('done')?.checked).toBe(true)
+  })
+})
+
 describe('remapped system folders (#398)', () => {
   it('classifies a remapped trash directory as trash and keeps its tasks out', async () => {
     await mkdir(path.join(root, '.zennotes'), { recursive: true })

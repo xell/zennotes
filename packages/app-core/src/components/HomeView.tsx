@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { NoteMeta } from '@shared/ipc'
-import type { VaultTask } from '@shared/tasks'
+import { filterTasksForDisplay, type VaultTask } from '@shared/tasks'
 import { useStore } from '../store'
 import { computeTasksRender } from '../lib/tasks-filter'
 import { InlineMarkdown } from '../lib/inline-markdown'
@@ -60,6 +60,7 @@ export function HomeView({
 }): JSX.Element {
   const notes = useStore((s) => s.notes)
   const vaultTasks = useStore((s) => s.vaultTasks)
+  const showArchivedTasks = useStore((s) => s.showArchivedTasks)
   const tasksLoading = useStore((s) => s.tasksLoading)
   const vimMode = useStore((s) => s.vimMode)
   const selectNote = useStore((s) => s.selectNote)
@@ -145,9 +146,14 @@ export function HomeView({
   )
 
   const { today, overdueCount } = useMemo(() => {
-    const render = computeTasksRender(vaultTasks, '', new Date(now), NO_COLLAPSE)
+    const render = computeTasksRender(
+      filterTasksForDisplay(vaultTasks, showArchivedTasks),
+      '',
+      new Date(now),
+      NO_COLLAPSE
+    )
     return { today: render.groups.today, overdueCount: render.groups.overdueCount }
-  }, [vaultTasks, now])
+  }, [vaultTasks, showArchivedTasks, now])
 
   const visibleTasks = today.slice(0, MAX_TASKS)
   const hiddenTaskCount = today.length - visibleTasks.length

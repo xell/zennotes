@@ -81,6 +81,54 @@ export function normalizeSystemFolderPaths(
   return next
 }
 
+/**
+ * Why `value` cannot be used as `folder`'s directory, or null when it can.
+ *
+ * `normalizeSystemFolderPaths` above answers the same question by dropping what
+ * it does not like, which is right for reading a file that may have been edited
+ * by hand, and wrong for a person typing into a box: the value vanishes and
+ * they are left guessing. Reported as "custom folder paths do not work" when
+ * what actually happened was a nested path being discarded without a word
+ * (#533). Same rules, in the other direction, so the two cannot disagree.
+ */
+export function describeSystemFolderPathIssue(
+  folder: NoteFolder,
+  value: string,
+  overrides?: SystemFolderPaths | null
+): string | null {
+  const trimmed = value.trim()
+  // Empty means "use the default", which is always allowed.
+  if (!trimmed) return null
+  if (trimmed.length > MAX_PATH_LENGTH) {
+    return `Too long: keep it under ${MAX_PATH_LENGTH} characters.`
+  }
+  if (trimmed.includes('/') || trimmed.includes('\\')) {
+    return 'Use a single folder name at the top level of your vault, not a path. Nested locations like `docs/notes/quick` are not supported.'
+  }
+  if (trimmed === '.' || trimmed === '..' || trimmed.startsWith('.')) {
+    return 'A folder name cannot start with a dot.'
+  }
+  if (INVALID_CHARS_RE.test(trimmed)) {
+    return 'That name contains characters a folder cannot hold.'
+  }
+  const lower = trimmed.toLowerCase()
+  for (const other of FOLDER_IDS) {
+    if (other !== folder && lower === DEFAULT_FOLDER_PATHS[other]) {
+      return `\`${trimmed}\` is the default name of the ${other} folder. Even when that folder has moved, the swap reads backwards to everything that classifies a note by its top folder, including other apps looking at the same directory.`
+    }
+  }
+  if (RESERVED_ROOT_NAMES.has(lower)) {
+    return `\`${trimmed}\` is reserved for ZenNotes' own files.`
+  }
+  for (const other of FOLDER_IDS) {
+    if (other === folder) continue
+    if (resolveFolderPath(other, overrides).toLowerCase() === lower) {
+      return `\`${trimmed}\` is already used by the ${other} folder.`
+    }
+  }
+  return null
+}
+
 export function resolveFolderPath(
   folder: NoteFolder,
   overrides?: SystemFolderPaths | null

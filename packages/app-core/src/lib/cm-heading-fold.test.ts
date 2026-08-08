@@ -1,8 +1,16 @@
+// @vitest-environment jsdom
+
 import { describe, it, expect } from 'vitest'
 import { EditorState } from '@codemirror/state'
 import { foldService, foldable } from '@codemirror/language'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
-import { headingFolding, headingFoldRanges } from './cm-heading-fold'
+import { EditorView } from '@codemirror/view'
+import {
+  foldHeadingAtCursor,
+  headingFolding,
+  headingFoldRanges,
+  unfoldHeadingAtCursor
+} from './cm-heading-fold'
 
 /** Run the heading fold service over a given line; returns its fold range. */
 function foldRangeAtLine(doc: string, lineNumber: number): { from: number; to: number } | null {
@@ -85,5 +93,69 @@ describe('heading folding', () => {
     expect(state.doc.line(4).text).toBe('')
     expect(state.doc.line(5).text).toBe('# H2')
     expect(chosen!.to).toBe(state.doc.line(4).to)
+  })
+
+  it('shows the heading level before a heading when labels are enabled', () => {
+    const parent = document.createElement('div')
+    document.body.append(parent)
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: '## Design\n\nDetails',
+        extensions: [
+          markdown({ base: markdownLanguage }),
+          headingFolding({ showLevelLabels: true })
+        ]
+      })
+    })
+
+    expect(parent.querySelector('.cm-heading-level-label')?.textContent).toBe('H2')
+
+    view.destroy()
+    parent.remove()
+  })
+
+  it('keeps heading level labels out of the editor by default', () => {
+    const parent = document.createElement('div')
+    document.body.append(parent)
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: '# Design\n\nDetails',
+        extensions: [markdown({ base: markdownLanguage }), headingFolding()]
+      })
+    })
+
+    expect(parent.querySelector('.cm-heading-level-label')).toBeNull()
+
+    view.destroy()
+    parent.remove()
+  })
+
+  it('folds and unfolds the heading at the cursor through commands', () => {
+    const parent = document.createElement('div')
+    document.body.append(parent)
+    const doc = '# Top\n\nIntro\n\n## Fold me\n\nBody\n\n## Next\n'
+    const cursor = doc.indexOf('## Fold me')
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc,
+        selection: { anchor: cursor },
+        extensions: [markdown({ base: markdownLanguage }), headingFolding()]
+      })
+    })
+
+    expect(foldHeadingAtCursor(view)).toBe(true)
+    expect(
+      Array.from(parent.querySelectorAll('.cm-heading-line-folded')).some((line) =>
+        line.textContent?.includes('Fold me')
+      )
+    ).toBe(true)
+    expect(unfoldHeadingAtCursor(view)).toBe(true)
+    expect(parent.querySelector('.cm-heading-line-folded')).toBeNull()
+
+    view.destroy()
+    parent.remove()
   })
 })

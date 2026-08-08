@@ -24,6 +24,16 @@ describe('desktop packaging', () => {
     expect(PACKAGED_CLI_RUNTIME_PACKAGES).toContain('@modelcontextprotocol/sdk')
   })
 
+  // #524: shipped as an external in 2.20.2, so `zn` died on its first line with
+  // `Cannot find module 'smol-toml'` for everyone. Resources/ has no
+  // node_modules, so this list is the only thing keeping the CLI runnable. The
+  // check that it is COMPLETE cannot live here, it needs the build output:
+  // tooling/scripts/verify-packaged-cli.mjs runs the built CLI with nothing to
+  // resolve from, and the desktop build gates on it.
+  it('bundles the TOML parser the CLI reads config.toml with', () => {
+    expect(PACKAGED_CLI_RUNTIME_PACKAGES).toContain('smol-toml')
+  })
+
   it('ships the Raycast extension source without vendored dependencies', () => {
     const resources = desktopPackage.build.extraResources as ExtraResource[]
     const raycastResource = resources.find((resource) => resource.to === 'raycast/zennotes')

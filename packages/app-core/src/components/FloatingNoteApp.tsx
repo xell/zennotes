@@ -35,6 +35,7 @@ import { resolveCodeLanguage } from '../lib/cm-code-languages'
 import { applyVimInsertEscape } from '../lib/vim-insert-escape'
 import { applyVimKeymap } from '../lib/vim-keymap'
 import { DEFAULT_VIM_KEYMAP } from '../lib/vim-keymap-defaults'
+import { registerDisplayLineMotion } from '../lib/cm-vim-display-line'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
 import {
   orderedListRenumber,
@@ -54,6 +55,7 @@ import { completionNavKeymap } from '../lib/cm-completion-nav'
 import type { NoteContent, VaultChangeEvent } from '@shared/ipc'
 import type { LineNumberMode } from '../store'
 import { wysiwygExtensions } from '../lib/cm-wysiwyg-compose'
+import { documentDiagramTheme } from '../lib/use-diagram-theme-mode'
 import { useStore } from '../store'
 import { headingFolding } from '../lib/cm-heading-fold'
 import { frontmatterStyle } from '../lib/cm-frontmatter'
@@ -68,6 +70,7 @@ import {
   type ThemeFamily,
   type ThemeMode
 } from '../lib/themes'
+import { editorTabSize, normalizeEditorTabSize } from '../lib/editor-tab-size'
 
 const PREFS_KEY = 'zen:prefs:v2'
 const SAVE_DEBOUNCE_MS = 350
@@ -119,6 +122,8 @@ export interface FloatingPrefs {
   themeMode: ThemeMode
   editorFontSize: number
   editorLineHeight: number
+  editorTabSize: number
+  showHeadingLevelLabels: boolean
   lineNumberMode: LineNumberMode
   wordWrap: boolean
   interfaceFont: string | null
@@ -137,6 +142,8 @@ export function loadFloatingPrefs(): FloatingPrefs {
     themeMode: 'dark',
     editorFontSize: 16,
     editorLineHeight: 1.7,
+    editorTabSize: 4,
+    showHeadingLevelLabels: false,
     lineNumberMode: 'off',
     wordWrap: true,
     interfaceFont: null,
@@ -158,7 +165,8 @@ export function loadFloatingPrefs(): FloatingPrefs {
       ...parsed,
       themeFamily: (parsed.themeFamily as ThemeFamily) ?? fallback.themeFamily,
       themeMode: (parsed.themeMode as ThemeMode) ?? fallback.themeMode,
-      lineNumberMode
+      lineNumberMode,
+      editorTabSize: normalizeEditorTabSize(parsed.editorTabSize)
     }
   } catch {
     return fallback
@@ -377,6 +385,7 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
           new Compartment().of(prefs.vimMode ? vim() : []),
           history(),
           drawSelection(),
+          editorTabSize(prefs.editorTabSize),
           highlightActiveLine(),
           wordWrapCompartment.of(
             appliedPrefsRef.current.wordWrap ? EditorView.lineWrapping : []
@@ -386,7 +395,7 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
           markdownListIndentPlugin,
           frontmatterStyle,
           orderedListRenumber,
-          headingFolding(),
+          headingFolding({ showLevelLabels: prefs.showHeadingLevelLabels }),
           codeBlockFontPlugin,
           syntaxHighlighting(paperHighlight),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
@@ -396,7 +405,8 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
                   useStore.getState().renderTablesInLivePreview,
                   useStore.getState().mathRenderer,
                   // See ExternalFileApp: tag preambles are main-pane only.
-                  ''
+                  '',
+                  documentDiagramTheme()
                 )
               : []
           ),
@@ -467,7 +477,8 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
             ? wysiwygExtensions(
                 useStore.getState().renderTablesInLivePreview,
                 useStore.getState().mathRenderer,
-                ''
+                '',
+                documentDiagramTheme()
               )
             : []
         )
@@ -748,6 +759,8 @@ function deferredClose(): void {
 function registerFloatingVimCommands(): void {
   if (floatingVimRegistered) return
   floatingVimRegistered = true
+
+  registerDisplayLineMotion()
 
   Vim.defineEx('write', 'w', () => {
     void floatingHandlers.persist?.()

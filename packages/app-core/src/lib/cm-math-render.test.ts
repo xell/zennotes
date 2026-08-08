@@ -38,6 +38,30 @@ describe('mathRenderExtension', () => {
     view.destroy()
   })
 
+  it('numbers equation environments in document order', () => {
+    const view = mount(
+      [
+        'start',
+        '',
+        '$$',
+        '\\begin{equation}a=b\\end{equation}',
+        '$$',
+        '',
+        '$$',
+        '\\begin{equation}c=d\\end{equation}',
+        '$$',
+        '',
+        'end'
+      ].join('\n')
+    )
+    expect(
+      Array.from(view.dom.querySelectorAll('.katex-html .tag')).map((node) =>
+        node.textContent?.replace(/[\s\u200b]/g, '')
+      )
+    ).toEqual(['(1)', '(2)'])
+    view.destroy()
+  })
+
   it('leaves currency literal (space before the closing $)', () => {
     const view = mount('I paid $5 and got $10 back.\n\nend')
     expect(view.dom.querySelectorAll('.cm-math-inline').length).toBe(0)

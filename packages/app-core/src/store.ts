@@ -49,6 +49,7 @@ import {
   composeTaskFile,
   setTaskFileStatus,
   setTaskFileCancelled,
+  setTaskFileInProgress,
   taskFilePriorityValue,
   updateFrontmatterFields
 } from '@shared/frontmatter'
@@ -86,7 +87,7 @@ import { invalidateExcalidrawPreview } from './lib/excalidraw-preview'
 import {
   FENCE_RE,
   TASK_LINE_RE,
-  extractUncheckedTaskBlocks,
+  extractOpenTaskBlocks,
   insertTasksUnderTasksHeading,
   moveTaskLine,
   removeTaskAtIndex,
@@ -95,6 +96,7 @@ import {
   setTaskDueAtIndex,
   setTaskForwardedAtIndex,
   setTaskCancelledAtIndex,
+  setTaskInProgressAtIndex,
   setTaskPriorityAtIndex,
   setTaskFieldAtIndex,
   setTaskTextAtIndex,
@@ -211,6 +213,12 @@ import {
   type PaneLeaf
 } from './lib/pane-layout'
 import { paneModesWithPathMode, type PaneMode, type PaneModesByPath } from './lib/pane-mode'
+import {
+  normalizeTextReplacements,
+  type TextReplacements
+} from './lib/cm-text-replacements'
+import { normalizeEditorTabSize } from './lib/editor-tab-size'
+import { recentNoteToggleTarget } from './lib/recent-note-toggle'
 
 export type NoteSortOrder =
   | 'none'
@@ -580,6 +588,8 @@ interface Prefs {
    *  the cursor doesn't flash marks in and out. Off keeps Obsidian-style
    *  reveal-on-active-line for editing the syntax. */
   hideActiveLineMarkup: boolean
+  /** Show an H1 through H6 badge before Markdown headings in the editor. */
+  showHeadingLevelLabels: boolean
   /** How a completed task's text is styled (strike / gray / both / none) in the
    *  editor and preview. Applied via `html[data-completed-task-style]`. */
   completedTaskStyle: CompletedTaskStyle
@@ -602,6 +612,10 @@ interface Prefs {
   /** Auto-close markdown delimiters while typing: `**`+Space → `**|**`,
    *  ```` ``` ````+Enter expands a fenced block. Off restores plain typing. */
   markdownSnippets: boolean
+  /** Expand user-defined text triggers while typing. */
+  textReplacementsEnabled: boolean
+  /** Trigger to replacement mappings, such as `->` to `→`. */
+  textReplacements: TextReplacements
   /** Auto-insert matching `[]`, `()`, and `{}` delimiters while typing. */
   autoPairs: boolean
   /** Also auto-insert matching quotes outside Markdown code spans and blocks. */
@@ -614,6 +628,7 @@ interface Prefs {
   themeMode: ThemeMode
   editorFontSize: number    // px — affects editor + preview
   editorLineHeight: number  // unitless multiplier
+  editorTabSize: number     // columns used to render and indent a tab
   editorScrollOff: number   // vim scrolloff — lines kept above/below the cursor (0 = off)
   timeFormat: TimeFormat    // clock format for the @time macro
   previewMaxWidth: number   // px — max reading width for preview surfaces
@@ -738,6 +753,10 @@ interface Prefs {
   calendarShowWeekNumbers: boolean
   /** Last selected view inside the Tasks tab. List is the v1 default. */
   tasksViewMode: TasksViewMode
+  /** Keep tasks from archived notes on the Tasks surfaces. Off by default:
+   *  archiving a note retires its tasks from the list, boards, and calendars
+   *  (the markdown is untouched; un-archiving brings them back). (#540) */
+  showArchivedTasks: boolean
   /** Column source used when the Tasks Kanban view is active. */
   kanbanGroupBy: KanbanGroupBy
   /** Display-only Kanban column title overrides. Keyed by `${groupBy}:${columnId}`. */
@@ -745,6 +764,12 @@ interface Prefs {
   /** Manual Kanban column arrangement per board. Keyed by groupBy → ordered
    *  column ids; unlisted columns fall to the end in their built order. */
   kanbanColumnOrder: Record<string, string[]>
+  /** Manual card arrangement inside Kanban columns. Keyed by
+   *  `${groupBy}:${columnId}` → ordered task identity keys
+   *  (`${sourcePath}\0${taskIndex}`). Listed cards sort first, unlisted ones
+   *  keep their built order after them, so entries whose task moved or vanished
+   *  decay toward the default sort instead of misplacing cards. */
+  kanbanCardOrder: Record<string, string[]>
   /** Ordered status ids for the custom-status Kanban board (group-by "custom").
    *  Each id matches an inline `@status:<id>` task token. Config-driven. (#354) */
   kanbanStatuses: string[]
@@ -870,6 +895,44 @@ function normalizeKanbanColumnOrder(raw: unknown): Record<string, string[]> {
   return out
 }
 
+const MAX_KANBAN_CARD_ORDER_COLUMNS = 64
+const MAX_KANBAN_CARD_ORDER_CARDS = 512
+const MAX_TASK_IDENTITY_KEY_LENGTH = 1024
+
+// Manual card arrangement inside Kanban columns:
+// `{ "<groupBy>:<columnId>": ["<sourcePath>\0<taskIndex>", ...] }`. Column keys
+// share the column-title key grammar; card entries are opaque task identity
+// keys (note paths are free-form, so only length is validated). Entries that no
+// longer match a task are harmless: replay ranks listed cards first and leaves
+// the rest in built order, so stale entries decay instead of misplacing cards.
+export function normalizeKanbanCardOrder(raw: unknown): Record<string, string[]> {
+  if (!raw || typeof raw !== 'object') return {}
+  const out: Record<string, string[]> = {}
+  let columns = 0
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(value)) continue
+    const isStatic =
+      STATIC_COLUMN_TITLE_KEY_RE.test(key) &&
+      STATIC_KANBAN_GROUP_BYS.some((group) => key.startsWith(`${group}:`))
+    const isField = FIELD_COLUMN_TITLE_KEY_RE.test(key)
+    if (!isStatic && !isField) continue
+    const cards: string[] = []
+    const seen = new Set<string>()
+    for (const entry of value) {
+      if (typeof entry !== 'string') continue
+      if (!entry || entry.length > MAX_TASK_IDENTITY_KEY_LENGTH || seen.has(entry)) continue
+      seen.add(entry)
+      cards.push(entry)
+      if (cards.length >= MAX_KANBAN_CARD_ORDER_CARDS) break
+    }
+    if (!cards.length) continue
+    out[key] = cards
+    columns += 1
+    if (columns >= MAX_KANBAN_CARD_ORDER_COLUMNS) break
+  }
+  return out
+}
+
 // A status id is a tag-like slug, matching the `@status:<id>` grammar the task
 // parser accepts (see INLINE_STATUS_RE). Lower-cased, de-duplicated, capped. (#354)
 const KANBAN_STATUS_ID_RE = /^[\p{L}\d][\p{L}\d/_-]*$/u
@@ -955,6 +1018,9 @@ export function viewPrefsFromVault(settings: VaultSettings | null | undefined): 
   if (v.kanbanColumnOrder && typeof v.kanbanColumnOrder === 'object') {
     patch.kanbanColumnOrder = normalizeKanbanColumnOrder(v.kanbanColumnOrder)
   }
+  if (v.kanbanCardOrder && typeof v.kanbanCardOrder === 'object') {
+    patch.kanbanCardOrder = normalizeKanbanCardOrder(v.kanbanCardOrder)
+  }
   if (Array.isArray(v.kanbanStatuses)) {
     patch.kanbanStatuses = normalizeKanbanStatuses(v.kanbanStatuses)
   }
@@ -1008,6 +1074,7 @@ export const DEFAULT_PREFS: Prefs = {
   livePreview: true,
   renderTablesInLivePreview: 'rich',
   hideActiveLineMarkup: false,
+  showHeadingLevelLabels: false,
   completedTaskStyle: 'none',
   mathRenderer: 'katex',
   typstTagPreambles: false,
@@ -1015,6 +1082,8 @@ export const DEFAULT_PREFS: Prefs = {
   keepViewModeAcrossNotes: false,
   syncTitleHeadingOnRename: true,
   markdownSnippets: true,
+  textReplacementsEnabled: true,
+  textReplacements: { '->': '→' },
   autoPairs: true,
   autoPairQuotesInProse: false,
   hideBuiltinTemplates: false,
@@ -1027,6 +1096,7 @@ export const DEFAULT_PREFS: Prefs = {
   themeTweaks: {},
   editorFontSize: 16,
   editorLineHeight: 1.7,
+  editorTabSize: 4,
   editorScrollOff: 0,
   timeFormat: defaultTimeFormat(),
   previewMaxWidth: 920,
@@ -1086,9 +1156,11 @@ export const DEFAULT_PREFS: Prefs = {
   calendarWeekStart: 'monday',
   calendarShowWeekNumbers: true,
   tasksViewMode: 'list',
+  showArchivedTasks: false,
   kanbanGroupBy: 'status',
   kanbanColumnTitles: {},
   kanbanColumnOrder: {},
+  kanbanCardOrder: {},
   kanbanStatuses: [],
   plannerUrl: DEFAULT_PLANNER_URL,
   hasCompletedOnboarding: false,
@@ -1167,6 +1239,10 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
         : DEFAULT_PREFS.imeEnglishLayoutId,
     livePreview:
       typeof p.livePreview === 'boolean' ? p.livePreview : DEFAULT_PREFS.livePreview,
+    showHeadingLevelLabels:
+      typeof p.showHeadingLevelLabels === 'boolean'
+        ? p.showHeadingLevelLabels
+        : DEFAULT_PREFS.showHeadingLevelLabels,
     renderTablesInLivePreview: isTableRenderMode(p.renderTablesInLivePreview)
       ? p.renderTablesInLivePreview
       : // Migrate the old boolean: true → the rich widget, false → plain markdown.
@@ -1210,6 +1286,13 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
       typeof p.markdownSnippets === 'boolean'
         ? p.markdownSnippets
         : DEFAULT_PREFS.markdownSnippets,
+    textReplacementsEnabled:
+      typeof p.textReplacementsEnabled === 'boolean'
+        ? p.textReplacementsEnabled
+        : DEFAULT_PREFS.textReplacementsEnabled,
+    textReplacements: normalizeTextReplacements(
+      p.textReplacements ?? DEFAULT_PREFS.textReplacements
+    ),
     autoPairs: typeof p.autoPairs === 'boolean' ? p.autoPairs : DEFAULT_PREFS.autoPairs,
     autoPairQuotesInProse:
       typeof p.autoPairQuotesInProse === 'boolean'
@@ -1234,6 +1317,7 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
       typeof p.editorLineHeight === 'number'
         ? p.editorLineHeight
         : DEFAULT_PREFS.editorLineHeight,
+    editorTabSize: normalizeEditorTabSize(p.editorTabSize),
     editorScrollOff:
       typeof p.editorScrollOff === 'number' && p.editorScrollOff >= 0
         ? Math.floor(p.editorScrollOff)
@@ -1418,9 +1502,14 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
       p.tasksViewMode && VALID_TASKS_VIEW_MODES.includes(p.tasksViewMode)
         ? p.tasksViewMode
         : DEFAULT_PREFS.tasksViewMode,
+    showArchivedTasks:
+      typeof p.showArchivedTasks === 'boolean'
+        ? p.showArchivedTasks
+        : DEFAULT_PREFS.showArchivedTasks,
     kanbanGroupBy: normalizeKanbanGroupBy(p.kanbanGroupBy),
     kanbanColumnTitles: normalizeKanbanColumnTitles(p.kanbanColumnTitles),
     kanbanColumnOrder: normalizeKanbanColumnOrder(p.kanbanColumnOrder),
+    kanbanCardOrder: normalizeKanbanCardOrder(p.kanbanCardOrder),
     kanbanStatuses: normalizeKanbanStatuses(p.kanbanStatuses),
     plannerUrl: normalizePlannerUrl(p.plannerUrl),
     hasCompletedOnboarding:
@@ -1871,23 +1960,58 @@ function scheduleManualOrderReload(): void {
 // Which vault root the in-memory manual order was loaded for; reloaded on switch.
 let manualOrderLoadedForRoot: string | null = null
 
+type InlineTaskMarker = 'open' | 'done' | 'forwarded' | 'cancelled' | 'in-progress'
+
+/** A checkbox line has exactly one state character. Mirror that exclusivity in
+ * the optimistic task object so grouping and styling cannot observe both the
+ * old and new state while the watcher catches up. `waiting` is an independent
+ * inline metadata token and intentionally survives marker changes. */
+function withInlineTaskMarker(task: VaultTask, marker: InlineTaskMarker): VaultTask {
+  return {
+    ...task,
+    checked: marker === 'done',
+    forwarded: marker === 'forwarded',
+    cancelled: marker === 'cancelled',
+    inProgress: marker === 'in-progress'
+  }
+}
+
+type FileTaskStatus = 'open' | 'done' | 'cancelled' | 'in-progress' | 'waiting'
+
+/** Whole-note tasks encode their one workflow state in frontmatter `status`.
+ * Keep all derived booleans and the Kanban field in sync in one operation. */
+function withFileTaskStatus(task: VaultTask, status: FileTaskStatus): VaultTask {
+  return {
+    ...task,
+    checked: status === 'done',
+    forwarded: false,
+    cancelled: status === 'cancelled',
+    inProgress: status === 'in-progress',
+    waiting: status === 'waiting',
+    status,
+    fields: { ...task.fields, status }
+  }
+}
+
 function applyTaskMutationsToTask(task: VaultTask, mutations: TaskMutation[]): VaultTask {
   let next = task
   for (const m of mutations) {
     switch (m.kind) {
       case 'set-checked':
         if (next.checked !== m.checked) {
-          next = { ...next, checked: m.checked }
-          // A file-task's completion lives in its `status`, so keep that (and the
-          // Kanban-grouping field) in sync optimistically too.
-          if (next.kind === 'file') {
-            const status = m.checked ? 'done' : 'open'
-            next = { ...next, status, fields: { ...next.fields, status } }
-          }
+          next =
+            next.kind === 'file'
+              ? withFileTaskStatus(next, m.checked ? 'done' : 'open')
+              : withInlineTaskMarker(next, m.checked ? 'done' : 'open')
         }
         break
       case 'set-waiting':
-        if (next.waiting !== m.waiting) next = { ...next, waiting: m.waiting }
+        if (next.waiting !== m.waiting) {
+          next =
+            next.kind === 'file'
+              ? withFileTaskStatus(next, m.waiting ? 'waiting' : 'open')
+              : { ...next, waiting: m.waiting }
+        }
         break
       case 'set-priority': {
         const priority = m.priority ?? undefined
@@ -2345,6 +2469,7 @@ function collectPrefs(s: {
   livePreview: boolean
   renderTablesInLivePreview: TableRenderMode
   hideActiveLineMarkup: boolean
+  showHeadingLevelLabels: boolean
   completedTaskStyle: CompletedTaskStyle
   mathRenderer: MathRenderer
   typstTagPreambles: boolean
@@ -2352,6 +2477,8 @@ function collectPrefs(s: {
   keepViewModeAcrossNotes: boolean
   syncTitleHeadingOnRename: boolean
   markdownSnippets: boolean
+  textReplacementsEnabled: boolean
+  textReplacements: TextReplacements
   autoPairs: boolean
   autoPairQuotesInProse: boolean
   hideBuiltinTemplates: boolean
@@ -2362,6 +2489,7 @@ function collectPrefs(s: {
   themeMode: ThemeMode
   editorFontSize: number
   editorLineHeight: number
+  editorTabSize: number
   editorScrollOff: number
   timeFormat: TimeFormat
   previewMaxWidth: number
@@ -2416,9 +2544,11 @@ function collectPrefs(s: {
   calendarWeekStart: CalendarWeekStart
   calendarShowWeekNumbers: boolean
   tasksViewMode: TasksViewMode
+  showArchivedTasks: boolean
   kanbanGroupBy: KanbanGroupBy
   kanbanColumnTitles: Record<string, string>
   kanbanColumnOrder: Record<string, string[]>
+  kanbanCardOrder: Record<string, string[]>
   kanbanStatuses: string[]
   plannerUrl: string
   hasCompletedOnboarding: boolean
@@ -2446,6 +2576,7 @@ function collectPrefs(s: {
     imeSwitcherBinaryPath: s.imeSwitcherBinaryPath,
     imeEnglishLayoutId: s.imeEnglishLayoutId,
     livePreview: s.livePreview,
+    showHeadingLevelLabels: s.showHeadingLevelLabels,
     renderTablesInLivePreview: s.renderTablesInLivePreview,
     hideActiveLineMarkup: s.hideActiveLineMarkup,
     completedTaskStyle: s.completedTaskStyle,
@@ -2455,6 +2586,8 @@ function collectPrefs(s: {
     keepViewModeAcrossNotes: s.keepViewModeAcrossNotes,
     syncTitleHeadingOnRename: s.syncTitleHeadingOnRename,
     markdownSnippets: s.markdownSnippets,
+    textReplacementsEnabled: s.textReplacementsEnabled,
+    textReplacements: s.textReplacements,
     autoPairs: s.autoPairs,
     autoPairQuotesInProse: s.autoPairQuotesInProse,
     hideBuiltinTemplates: s.hideBuiltinTemplates,
@@ -2465,6 +2598,7 @@ function collectPrefs(s: {
     themeMode: s.themeMode,
     editorFontSize: s.editorFontSize,
     editorLineHeight: s.editorLineHeight,
+    editorTabSize: s.editorTabSize,
     editorScrollOff: s.editorScrollOff,
     timeFormat: s.timeFormat,
     previewMaxWidth: s.previewMaxWidth,
@@ -2518,9 +2652,11 @@ function collectPrefs(s: {
     calendarWeekStart: s.calendarWeekStart,
     calendarShowWeekNumbers: s.calendarShowWeekNumbers,
     tasksViewMode: s.tasksViewMode,
+    showArchivedTasks: s.showArchivedTasks,
     kanbanGroupBy: s.kanbanGroupBy,
     kanbanColumnTitles: s.kanbanColumnTitles,
     kanbanColumnOrder: s.kanbanColumnOrder,
+    kanbanCardOrder: s.kanbanCardOrder,
     kanbanStatuses: s.kanbanStatuses,
     plannerUrl: s.plannerUrl,
     hasCompletedOnboarding: s.hasCompletedOnboarding,
@@ -2942,6 +3078,7 @@ interface Store {
   renderTablesInLivePreview: TableRenderMode
   /** Hide Markdown markup on the caret's line in live preview. Persisted. */
   hideActiveLineMarkup: boolean
+  showHeadingLevelLabels: boolean
   completedTaskStyle: CompletedTaskStyle
   mathRenderer: MathRenderer
   typstTagPreambles: boolean
@@ -2951,6 +3088,8 @@ interface Store {
   syncTitleHeadingOnRename: boolean
   /** Auto-close markdown delimiters while typing. Persisted. */
   markdownSnippets: boolean
+  textReplacementsEnabled: boolean
+  textReplacements: TextReplacements
   /** Auto-insert matching `[]`, `()`, and `{}` delimiters while typing. Persisted. */
   autoPairs: boolean
   /** Also auto-insert matching quotes outside Markdown code spans and blocks. Persisted. */
@@ -2984,6 +3123,7 @@ interface Store {
   editorFontSize: number
   editorZoomDelta: number
   editorLineHeight: number
+  editorTabSize: number
   editorScrollOff: number
   timeFormat: TimeFormat
   previewMaxWidth: number
@@ -3123,12 +3263,18 @@ interface Store {
   taskCursorIndex: number
   /** Which sub-view is active inside the Tasks tab. */
   tasksViewMode: TasksViewMode
+  /** Keep tasks from archived notes on the Tasks surfaces (off by default). */
+  showArchivedTasks: boolean
   /** Column source for the Tasks Kanban view. */
   kanbanGroupBy: KanbanGroupBy
   /** Display-only column title overrides for the Tasks Kanban view. */
   kanbanColumnTitles: Record<string, string>
   /** Manual column arrangement per board (groupBy → ordered column ids). */
   kanbanColumnOrder: Record<string, string[]>
+  /** Manual card arrangement inside columns (`groupBy:columnId` → ordered
+   *  task identity keys). Persisted so a hand-prioritized column survives
+   *  leaving the Kanban view. */
+  kanbanCardOrder: Record<string, string[]>
   /** Ordered status ids for the custom-status Kanban board (config-driven). */
   kanbanStatuses: string[]
   /** URL of the locally served Planner app. */
@@ -3364,6 +3510,10 @@ interface Store {
   /** Toggle a task's cancelled state (`[-]` inline, `status: cancelled` for a
    *  file-task). Cancelled = intentionally abandoned, distinct from done. (#450) */
   cancelTaskFromList: (task: VaultTask) => Promise<void>
+  /** Toggle a task's in-progress state (`[/]` inline, `status: in-progress` for
+   *  a file-task). Still open work: it keeps its place in Today rather than
+   *  moving to a group of its own. (#512) */
+  startTaskFromList: (task: VaultTask) => Promise<void>
   /** Apply one or more structured mutations to the task line on disk
    *  and reflect them locally. Used by the Kanban DnD pipeline to
    *  flip checked / waiting / priority without forcing the user to
@@ -3386,6 +3536,13 @@ interface Store {
   forwardTask: (task: VaultTask, targetPath: string) => Promise<void>
   setTasksFilter: (q: string) => void
   setTasksViewMode: (mode: TasksViewMode) => void
+  /** Toggle whether archived notes' tasks stay on the Tasks surfaces (#540). */
+  setShowArchivedTasks: (show: boolean) => void
+  /** Confirm archiving `paths` when they still carry open tasks. Resolves true
+   *  when nothing is open or the user confirmed; every archive entry point
+   *  (single or bulk) calls this first so the warning cannot be bypassed by
+   *  surface, and a bulk archive asks once, not once per note. */
+  confirmArchiveNotes: (paths: string[]) => Promise<boolean>
   setKanbanGroupBy: (group: KanbanGroupBy) => void
   setKanbanColumnTitle: (
     group: KanbanGroupBy,
@@ -3395,6 +3552,11 @@ interface Store {
   /** Persist the manual column arrangement for a board. Pass the full ordered
    *  list of column ids; empties clear the override for that board. */
   setKanbanColumnOrder: (group: KanbanGroupBy, orderedIds: string[]) => void
+  /** Persist the manual card arrangement after a drop. `entries` maps
+   *  `${groupBy}:${columnId}` keys to the full ordered list of task identity
+   *  keys for that column; an empty list clears the column's entry, so writing
+   *  a whole board prunes columns that emptied out. */
+  setKanbanCardOrder: (entries: Record<string, string[]>) => void
   /** Replace the ordered custom-status list (from Settings). Normalized and
    *  written back to config.toml + the per-vault view override. (#354) */
   setKanbanStatuses: (statuses: string[]) => void
@@ -3418,6 +3580,7 @@ interface Store {
   refreshTypstPreambles: () => Promise<void>
   jumpToPreviousNote: () => Promise<void>
   jumpToNextNote: () => Promise<void>
+  toggleRecentNote: () => Promise<void>
   applyChange: (ev: VaultChangeEvent) => Promise<void>
   refreshNotes: () => Promise<void>
   refreshRootContentHidden: () => Promise<void>
@@ -3522,6 +3685,7 @@ interface Store {
   setLivePreview: (on: boolean) => void
   setRenderTablesInLivePreview: (mode: TableRenderMode) => void
   setHideActiveLineMarkup: (on: boolean) => void
+  setShowHeadingLevelLabels: (on: boolean) => void
   setCompletedTaskStyle: (style: CompletedTaskStyle) => void
   setMathRenderer: (renderer: MathRenderer) => void
   setTypstTagPreambles: (on: boolean) => void
@@ -3529,6 +3693,8 @@ interface Store {
   setKeepViewModeAcrossNotes: (on: boolean) => void
   setSyncTitleHeadingOnRename: (on: boolean) => void
   setMarkdownSnippets: (on: boolean) => void
+  setTextReplacementsEnabled: (on: boolean) => void
+  setTextReplacements: (replacements: TextReplacements) => void
   setAutoPairs: (on: boolean) => void
   setAutoPairQuotesInProse: (on: boolean) => void
   setHideBuiltinTemplates: (hidden: boolean) => void
@@ -3553,6 +3719,7 @@ interface Store {
   setEditorFontSize: (px: number) => void
   setEditorZoomDelta: (delta: number) => void
   setEditorLineHeight: (mult: number) => void
+  setEditorTabSize: (size: number) => void
   setEditorScrollOff: (lines: number) => void
   setTimeFormat: (format: TimeFormat) => void
   setPreviewMaxWidth: (px: number) => void
@@ -4841,6 +5008,7 @@ export const useStore = create<Store>((set, get) => {
   imeSwitcherBinaryPath: loadPrefs().imeSwitcherBinaryPath,
   imeEnglishLayoutId: loadPrefs().imeEnglishLayoutId,
   livePreview: loadPrefs().livePreview,
+  showHeadingLevelLabels: loadPrefs().showHeadingLevelLabels,
   renderTablesInLivePreview: loadPrefs().renderTablesInLivePreview,
   hideActiveLineMarkup: loadPrefs().hideActiveLineMarkup,
   completedTaskStyle: loadPrefs().completedTaskStyle,
@@ -4850,6 +5018,8 @@ export const useStore = create<Store>((set, get) => {
   keepViewModeAcrossNotes: loadPrefs().keepViewModeAcrossNotes,
   syncTitleHeadingOnRename: loadPrefs().syncTitleHeadingOnRename,
   markdownSnippets: loadPrefs().markdownSnippets,
+  textReplacementsEnabled: loadPrefs().textReplacementsEnabled,
+  textReplacements: loadPrefs().textReplacements,
   autoPairs: loadPrefs().autoPairs,
   autoPairQuotesInProse: loadPrefs().autoPairQuotesInProse,
   hideBuiltinTemplates: loadPrefs().hideBuiltinTemplates,
@@ -4865,6 +5035,7 @@ export const useStore = create<Store>((set, get) => {
   editorFontSize: loadPrefs().editorFontSize,
   editorZoomDelta: 0,
   editorLineHeight: loadPrefs().editorLineHeight,
+  editorTabSize: loadPrefs().editorTabSize,
   editorScrollOff: loadPrefs().editorScrollOff,
   timeFormat: loadPrefs().timeFormat,
   previewMaxWidth: loadPrefs().previewMaxWidth,
@@ -4920,9 +5091,11 @@ export const useStore = create<Store>((set, get) => {
   calendarWeekStart: loadPrefs().calendarWeekStart,
   calendarShowWeekNumbers: loadPrefs().calendarShowWeekNumbers,
   tasksViewMode: loadPrefs().tasksViewMode,
+  showArchivedTasks: loadPrefs().showArchivedTasks,
   kanbanGroupBy: loadPrefs().kanbanGroupBy,
   kanbanColumnTitles: loadPrefs().kanbanColumnTitles,
   kanbanColumnOrder: loadPrefs().kanbanColumnOrder,
+  kanbanCardOrder: loadPrefs().kanbanCardOrder,
   kanbanStatuses: loadPrefs().kanbanStatuses,
   plannerUrl: loadPrefs().plannerUrl,
   plannerTargetUrl: null,
@@ -5574,8 +5747,10 @@ export const useStore = create<Store>((set, get) => {
       offset += lines[i].length + 1
     }
     // Nudge cursor past indentation + list marker so it lands on the content.
+    // All five states, or opening a `[/]` task from the list would drop the
+    // cursor at column 0 instead of on the text. (#512)
     const lineText = lines[taskLineNumber] ?? ''
-    const taskBracketMatch = lineText.match(/^\s*(?:>\s*)*(?:[-+*]|\d+[.)])\s+\[[ xX]\]\s*/)
+    const taskBracketMatch = lineText.match(/^\s*(?:>\s*)*(?:[-+*]|\d+[.)])\s+\[[ xX>/-]\]\s*/)
     const insideOffset = taskBracketMatch ? taskBracketMatch[0].length : 0
     const anchor = offset + insideOffset
 
@@ -5672,8 +5847,8 @@ export const useStore = create<Store>((set, get) => {
       vaultTasks: s.vaultTasks.map((t) =>
         t.sourcePath === path && t.taskIndex === task.taskIndex
           ? task.kind === 'file'
-            ? { ...t, checked: nextChecked, status: nextStatus, fields: { ...t.fields, status: nextStatus } }
-            : { ...t, checked: nextChecked }
+            ? withFileTaskStatus(t, nextStatus)
+            : withInlineTaskMarker(t, nextChecked ? 'done' : 'open')
           : t
       )
     }))
@@ -5706,8 +5881,42 @@ export const useStore = create<Store>((set, get) => {
       vaultTasks: s.vaultTasks.map((t) =>
         t.sourcePath === path && t.taskIndex === task.taskIndex
           ? task.kind === 'file'
-            ? { ...t, cancelled: nextCancelled, status: nextStatus, fields: { ...t.fields, status: nextStatus } }
-            : { ...t, cancelled: nextCancelled }
+            ? withFileTaskStatus(t, nextStatus)
+            : withInlineTaskMarker(t, nextCancelled ? 'cancelled' : 'open')
+          : t
+      )
+    }))
+  },
+
+  startTaskFromList: async (task) => {
+    const path = task.sourcePath
+    const openBuffer = get().noteContents[path]
+    const body = openBuffer?.body ?? (await window.zen.readNote(path)).body
+    const nextInProgress = !task.inProgress
+    const nextBody =
+      task.kind === 'file'
+        ? setTaskFileInProgress(body, nextInProgress)
+        : setTaskInProgressAtIndex(body, task.taskIndex, nextInProgress)
+    if (nextBody === body) return
+
+    if (openBuffer) {
+      get().updateNoteBody(path, nextBody)
+    } else {
+      try {
+        await window.zen.writeNote(path, nextBody)
+      } catch (err) {
+        console.error('writeNote (start) failed', err)
+        return
+      }
+    }
+
+    const nextStatus = nextInProgress ? 'in-progress' : 'open'
+    set((s) => ({
+      vaultTasks: s.vaultTasks.map((t) =>
+        t.sourcePath === path && t.taskIndex === task.taskIndex
+          ? task.kind === 'file'
+            ? withFileTaskStatus(t, nextStatus)
+            : withInlineTaskMarker(t, nextInProgress ? 'in-progress' : 'open')
           : t
       )
     }))
@@ -6035,6 +6244,30 @@ export const useStore = create<Store>((set, get) => {
     savePrefs(collectPrefs(get()))
     persistVaultViewOverride({ tasksViewMode: mode })
   },
+  setShowArchivedTasks: (show) => {
+    set({ showArchivedTasks: show })
+    savePrefs(collectPrefs(get()))
+  },
+  confirmArchiveNotes: async (paths) => {
+    const state = get()
+    const targets = new Set(paths)
+    // Open = not done, not cancelled, not forwarded; waiting and in-progress
+    // still count as live work someone could lose sight of.
+    const open = state.vaultTasks.filter(
+      (t) => targets.has(t.sourcePath) && !t.checked && !t.cancelled && !t.forwarded
+    ).length
+    if (open === 0) return true
+    const subject =
+      paths.length === 1 ? 'This note still has' : `These ${paths.length} notes still have`
+    const hidden = !state.showArchivedTasks
+    return await confirmApp({
+      title: paths.length === 1 ? 'Archive note?' : 'Archive notes?',
+      description: `${subject} ${open} open task${open === 1 ? '' : 's'}.${
+        hidden ? ' Tasks from archived notes leave the Tasks views.' : ''
+      } Archive anyway?`,
+      confirmLabel: 'Archive'
+    })
+  },
   setKanbanGroupBy: (group) => {
     set({ kanbanGroupBy: group })
     savePrefs(collectPrefs(get()))
@@ -6065,6 +6298,19 @@ export const useStore = create<Store>((set, get) => {
     set({ kanbanColumnOrder: nextOrder })
     savePrefs(collectPrefs(get()))
     persistVaultViewOverride({ kanbanColumnOrder: nextOrder })
+  },
+  setKanbanCardOrder: (entries) => {
+    const merged = { ...get().kanbanCardOrder }
+    for (const [key, order] of Object.entries(entries)) {
+      if (order.length) merged[key] = order
+      else delete merged[key]
+    }
+    // Re-normalizing enforces the key grammar and the column/card caps on
+    // every write, so the map can't grow without bound.
+    const next = normalizeKanbanCardOrder(merged)
+    set({ kanbanCardOrder: next })
+    savePrefs(collectPrefs(get()))
+    persistVaultViewOverride({ kanbanCardOrder: next })
   },
   setKanbanStatuses: (statuses) => {
     const next = normalizeKanbanStatuses(statuses)
@@ -6211,6 +6457,19 @@ export const useStore = create<Store>((set, get) => {
 
   jumpToNextNote: async () => {
     await jumpThroughNoteHistory('forward')
+  },
+
+  toggleRecentNote: async () => {
+    const state = get()
+    const available = new Set(
+      state.notes.filter((note) => note.folder !== 'trash').map((note) => note.path)
+    )
+    const target = recentNoteToggleTarget(
+      state.selectedPath,
+      state.noteBackstack,
+      available
+    )
+    if (target) await get().selectNote(target)
   },
 
   refreshNotes: async () => {
@@ -7085,6 +7344,7 @@ export const useStore = create<Store>((set, get) => {
   archiveActive: async () => {
     const path = get().selectedPath
     if (!path) return
+    if (!(await get().confirmArchiveNotes([path]))) return
     await window.zen.archiveNote(path)
     set((s) => {
       const nextLayout = rewritePathsInTree(s.paneLayout, (p) => (p === path ? null : p))
@@ -7412,6 +7672,10 @@ export const useStore = create<Store>((set, get) => {
     set({ livePreview: on })
     savePrefs(collectPrefs(get()))
   },
+  setShowHeadingLevelLabels: (on) => {
+    set({ showHeadingLevelLabels: on })
+    savePrefs(collectPrefs(get()))
+  },
   setRenderTablesInLivePreview: (mode) => {
     set({ renderTablesInLivePreview: mode })
     savePrefs(collectPrefs(get()))
@@ -7448,6 +7712,14 @@ export const useStore = create<Store>((set, get) => {
   },
   setMarkdownSnippets: (on) => {
     set({ markdownSnippets: on })
+    savePrefs(collectPrefs(get()))
+  },
+  setTextReplacementsEnabled: (on) => {
+    set({ textReplacementsEnabled: on })
+    savePrefs(collectPrefs(get()))
+  },
+  setTextReplacements: (replacements) => {
+    set({ textReplacements: normalizeTextReplacements(replacements) })
     savePrefs(collectPrefs(get()))
   },
   setAutoPairs: (on) => {
@@ -7546,6 +7818,10 @@ export const useStore = create<Store>((set, get) => {
   },
   setEditorLineHeight: (mult) => {
     set({ editorLineHeight: mult })
+    savePrefs(collectPrefs(get()))
+  },
+  setEditorTabSize: (size) => {
+    set({ editorTabSize: normalizeEditorTabSize(size) })
     savePrefs(collectPrefs(get()))
   },
   setEditorScrollOff: (lines) => {
@@ -8069,7 +8345,7 @@ export const useStore = create<Store>((set, get) => {
         console.error('rollover readNote failed', note.path, err)
         continue
       }
-      const { moved, rest } = extractUncheckedTaskBlocks(body)
+      const { moved, rest } = extractOpenTaskBlocks(body)
       if (moved.length === 0) continue
       movedLines.push(...moved)
       if (buffer) {

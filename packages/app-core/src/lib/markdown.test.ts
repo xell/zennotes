@@ -180,7 +180,6 @@ describe('renderMarkdown', () => {
     expect(html).toContain('green')
   })
 })
-
 describe('table column widths (#294)', () => {
   it('renders a <colgroup> from a trailing zen:cols comment', () => {
     const html = renderMarkdown('| A | B |\n| --- | --- |\n| 1 | 2 |\n<!-- zen:cols=120,200 -->\n')
@@ -261,6 +260,27 @@ describe('currency vs inline math (reading view matches the editor)', () => {
 
   it('still renders block math', () => {
     expect(renderMarkdown('$$\n\\int_0^1 x\\,dx\n$$')).toContain('katex')
+  })
+
+  it('numbers equation environments in document order', () => {
+    const html = renderMarkdown(
+      [
+        '$$',
+        '\\begin{equation}a=b\\end{equation}',
+        '$$',
+        '',
+        '$$',
+        '\\begin{equation}c=d\\end{equation}',
+        '$$'
+      ].join('\n')
+    )
+    const host = document.createElement('div')
+    host.innerHTML = html
+    expect(
+      Array.from(host.querySelectorAll('.katex-html .tag')).map((node) =>
+        node.textContent?.replace(/[\s\u200b]/g, '')
+      )
+    ).toEqual(['(1)', '(2)'])
   })
 })
 
@@ -352,5 +372,46 @@ describe('Typst math renderer', () => {
     const html = renderMarkdown('I paid $5 and got $10 back.')
     expect(html).not.toContain('zen-typst-math')
     expect(html).toContain('$5 and got $10 back.')
+  })
+})
+
+describe('non-GFM task states in the reading view (#512)', () => {
+  it('renders [/], [-] and [>] as markers instead of literal text', () => {
+    const html = renderMarkdown(
+      '- [ ] open\n- [x] done\n- [/] started\n- [-] scrapped\n- [>] gone\n'
+    )
+    // The literal brackets are gone; each state gets a marker span and the
+    // `task-list-item` class that lines it up with the real checkboxes.
+    expect(html).not.toContain('[/]')
+    expect(html).not.toContain('[-]')
+    expect(html).not.toContain('[&#x3C;')
+    expect(html).toContain('zen-task-state-in-progress')
+    expect(html).toContain('zen-task-state-cancelled')
+    expect(html).toContain('zen-task-state-forwarded')
+    expect(html).toContain('zen-task-in-progress')
+    // The task text itself survives.
+    for (const text of ['open', 'done', 'started', 'scrapped', 'gone']) {
+      expect(html).toContain(text)
+    }
+  })
+
+  it('chips the metadata on an in-progress task, like a checked one', () => {
+    const html = renderMarkdown('- [/] Ship it due:2026-08-04 !high\n')
+    expect(html).toContain('zen-task-due')
+    expect(html).toContain('data-due="2026-08-04"')
+    expect(html).toContain('zen-task-prio-high')
+  })
+
+  it('leaves ordinary list items and mid-line brackets alone', () => {
+    const html = renderMarkdown('- plain item\n- see [-] in the middle\n- [-]nospace\n')
+    expect(html).not.toContain('zen-task-state')
+    expect(html).toContain('[-]nospace')
+  })
+
+  it('keeps a wikilink on a forwarded task', () => {
+    const html = renderMarkdown('- [>] gone [[Target]]\n')
+    expect(html).toContain('zen-task-state-forwarded')
+    expect(html).toContain('wikilink')
+    expect(html).toContain('Target')
   })
 })

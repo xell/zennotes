@@ -2,6 +2,7 @@ import { CodeMirror, Vim } from '@replit/codemirror-vim'
 import type { EditorView } from '@codemirror/view'
 import { mathBlockLineRanges } from './cm-math-render'
 import { embedBlockLineRanges } from './cm-embed-render'
+import { mermaidBlockLineRanges } from './cm-mermaid-render'
 
 // Minimal shape of the CodeMirror-Vim adapter + state the display-line motion
 // touches (the package's own types don't surface these helpers).
@@ -17,6 +18,37 @@ type VimMotionCm = {
   charCoords: (pos: { line: number; ch: number }, mode: string) => { left: number }
   /** The underlying CodeMirror 6 view (set by the codemirror-vim adapter). */
   cm6?: EditorView
+}
+
+type VimDisplayBoundaryCm = {
+  firstLine?: () => number
+  lastLine?: () => number
+  execCommand: (command: string) => void
+  getCursor: () => { line: number; ch: number; sticky?: string }
+  charCoords?: (
+    position: { line: number; ch: number },
+    mode: string
+  ) => { left: number; top: number; bottom: number }
+  coordsChar?: (
+    coords: { left: number; top: number },
+    mode: string
+  ) => { line: number; ch: number }
+}
+
+type VimViewportCm = {
+  firstLine: () => number
+  lastLine: () => number
+  getScrollInfo: () => { top: number; clientHeight: number }
+  coordsChar: (
+    coords: { left: number; top: number },
+    mode: string
+  ) => { line: number; ch: number }
+  getLine: (line: number) => string
+  findPosV: (
+    start: { line: number; ch: number },
+    amount: number,
+    unit: string
+  ) => { line: number; ch: number }
 }
 type VimMotionState = {
   visualLine?: boolean
@@ -79,7 +111,11 @@ export function zenMoveByDisplayLine(
   // logical line around them instead (cm-math-render reveals the block the
   // cursor steps into within the same transaction).
   const mathRanges = cm.cm6
-    ? [...mathBlockLineRanges(cm.cm6.state), ...embedBlockLineRanges(cm.cm6.state)]
+    ? [
+        ...mathBlockLineRanges(cm.cm6.state),
+        ...embedBlockLineRanges(cm.cm6.state),
+        ...mermaidBlockLineRanges(cm.cm6.state)
+      ]
     : []
   const logicalTarget = Math.max(
     cm.firstLine(),
@@ -129,6 +165,71 @@ export function zenMoveByDisplayLine(
   return res
 }
 
+/**
+ * Move to a wrapped display-row boundary. A counted `$` keeps Vim's logical
+ * line behavior, while a bare `$` and the insert actions built on this helper
+ * stay on the row the user can currently see (#536).
+ */
+export function zenMoveToDisplayLineBoundary(
+  cm: VimDisplayBoundaryCm,
+  head: { line: number; ch: number },
+  motionArgs: { forward?: boolean; repeat?: number }
+): { line: number; ch: number } {
+  const repeat = motionArgs.repeat || 1
+  if (motionArgs.forward && repeat > 1) {
+    const first = cm.firstLine?.() ?? 0
+    const last = cm.lastLine?.() ?? head.line + repeat - 1
+    const line = Math.max(first, Math.min(last, head.line + repeat - 1))
+    return new CodeMirror.Pos(line, Infinity)
+  }
+
+  if (!motionArgs.forward && cm.charCoords && cm.coordsChar) {
+    const row = cm.charCoords(head, 'div')
+    return cm.coordsChar({ left: 0, top: (row.top + row.bottom) / 2 }, 'div')
+  }
+
+  cm.execCommand(motionArgs.forward ? 'goLineRight' : 'goLineLeft')
+  const target = cm.getCursor()
+  const ch = motionArgs.forward && target.sticky === 'before' ? target.ch - 1 : target.ch
+  return new CodeMirror.Pos(target.line, Math.max(0, ch))
+}
+
+function firstNonWhitespace(text: string): number {
+  const index = text.search(/\S/)
+  return index < 0 ? text.length : index
+}
+
+/**
+ * Preserve Vim's first press of H/L, then let another press at the same edge
+ * step beyond the viewport. CodeMirror scrolls that returned position into
+ * view, so the key can keep moving through the note instead of becoming a
+ * no-op at the top or bottom visible line (#513).
+ */
+export function zenMoveToViewportEdge(
+  cm: VimViewportCm,
+  head: { line: number; ch: number },
+  motionArgs: { forward?: boolean; repeat?: number }
+): { line: number; ch: number } {
+  const forward = !!motionArgs.forward
+  const repeat = motionArgs.repeat || 1
+  const scroll = cm.getScrollInfo()
+  const visibleTop = cm.coordsChar({ left: 0, top: scroll.top + 6 }, 'local').line
+  const visibleBottom = cm.coordsChar(
+    { left: 0, top: scroll.top + Math.max(0, scroll.clientHeight - 10) },
+    'local'
+  ).line
+  const rawLine = forward ? visibleBottom - repeat + 1 : visibleTop + repeat - 1
+  const line = Math.max(cm.firstLine(), Math.min(cm.lastLine(), rawLine))
+  const edge = new CodeMirror.Pos(line, firstNonWhitespace(cm.getLine(line)))
+
+  if (head.line !== edge.line || head.ch !== edge.ch) return edge
+
+  const stepped = cm.findPosV(edge, forward ? 1 : -1, 'line')
+  if (stepped.line === edge.line && stepped.ch === edge.ch) return edge
+  if (stepped.line === edge.line) return new CodeMirror.Pos(stepped.line, stepped.ch)
+  return new CodeMirror.Pos(stepped.line, firstNonWhitespace(cm.getLine(stepped.line)))
+}
+
 let displayLineMotionRegistered = false
 
 /**
@@ -148,6 +249,49 @@ export function registerDisplayLineMotion(): void {
     'zenMoveByDisplayLine',
     zenMoveByDisplayLine as unknown as Parameters<typeof Vim.defineMotion>[1]
   )
+  Vim.defineMotion(
+    'zenMoveToDisplayLineBoundary',
+    zenMoveToDisplayLineBoundary as unknown as Parameters<typeof Vim.defineMotion>[1]
+  )
+  Vim.defineMotion(
+    'zenMoveToViewportEdge',
+    zenMoveToViewportEdge as unknown as Parameters<typeof Vim.defineMotion>[1]
+  )
+  type VimActionTable = {
+    enterInsertMode: (
+      cm: unknown,
+      args: {
+        head: { line: number; ch: number }
+        insertAt: 'inplace'
+        repeat?: number
+      },
+      vim: unknown
+    ) => void
+  }
+  Vim.defineAction(
+    'zenEnterInsertAtDisplayLineBoundary',
+    function (
+      this: VimActionTable,
+      cm: VimDisplayBoundaryCm,
+      actionArgs: { forward?: boolean; repeat?: number },
+      vim: unknown
+    ) {
+      let target: { line: number; ch: number }
+      if (actionArgs.forward) {
+        // Insert at the raw display boundary. The normal-mode `$` motion
+        // backs up to the last visible character, but `A` belongs after it.
+        cm.execCommand('goLineRight')
+        target = cm.getCursor()
+      } else {
+        target = zenMoveToDisplayLineBoundary(cm, cm.getCursor(), { forward: false })
+      }
+      this.enterInsertMode(
+        cm,
+        { head: target, insertAt: 'inplace', repeat: actionArgs.repeat },
+        vim
+      )
+    } as unknown as Parameters<typeof Vim.defineAction>[1]
+  )
   for (const context of ['normal', 'visual'] as const) {
     Vim.mapCommand(
       'j',
@@ -164,4 +308,48 @@ export function registerDisplayLineMotion(): void {
       { context }
     )
   }
+  for (const context of ['normal', 'visual', 'operatorPending'] as const) {
+    Vim.mapCommand(
+      '$',
+      'motion',
+      'zenMoveToDisplayLineBoundary',
+      { forward: true, inclusive: true },
+      { context }
+    )
+    Vim.mapCommand(
+      'H',
+      'motion',
+      'zenMoveToViewportEdge',
+      { forward: false, linewise: true, toJumplist: true },
+      { context }
+    )
+    Vim.mapCommand(
+      'L',
+      'motion',
+      'zenMoveToViewportEdge',
+      { forward: true, linewise: true, toJumplist: true },
+      { context }
+    )
+    Vim.mapCommand(
+      'g0',
+      'motion',
+      'zenMoveToDisplayLineBoundary',
+      { forward: false },
+      { context }
+    )
+  }
+  Vim.mapCommand(
+    'A',
+    'action',
+    'zenEnterInsertAtDisplayLineBoundary',
+    { forward: true },
+    { context: 'normal', isEdit: true }
+  )
+  Vim.mapCommand(
+    'I',
+    'action',
+    'zenEnterInsertAtDisplayLineBoundary',
+    { forward: false },
+    { context: 'normal', isEdit: true }
+  )
 }

@@ -28,7 +28,15 @@ export async function cmdTaskList(vault: VaultBackend, args: ParsedArgs): Promis
     return
   }
   for (const t of tasks) {
-    const box = t.checked ? '[x]' : t.cancelled ? '[-]' : t.waiting ? '[~]' : '[ ]'
+    const box = t.checked
+      ? '[x]'
+      : t.cancelled
+        ? '[-]'
+        : t.inProgress
+          ? '[/]'
+          : t.waiting
+            ? '[~]'
+            : '[ ]'
     const due = t.due ? `  due:${t.due}` : ''
     const pri = t.priority ? `  !${t.priority}` : ''
     emitLine(`${box}  ${pad(t.id, 40)}  ${truncate(t.content, 80)}${due}${pri}`)
@@ -48,6 +56,12 @@ export async function cmdTaskToggle(vault: VaultBackend, args: ParsedArgs): Prom
     emitJson(next)
     return
   }
-  const state = next.checked ? 'done' : next.waiting ? 'waiting' : 'open'
+  const state = next.checked
+    ? 'done'
+    : next.inProgress
+      ? 'in progress'
+      : next.waiting
+        ? 'waiting'
+        : 'open'
   emitOk(`Toggled ${id} → ${state}`)
 }

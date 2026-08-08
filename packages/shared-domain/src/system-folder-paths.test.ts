@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import {
-  normalizeSystemFolderPaths,
-  resolveFolderPath,
-  buildReverseFolderMap,
-  DEFAULT_FOLDER_PATHS
-} from './system-folder-paths'
+import { DEFAULT_FOLDER_PATHS, buildReverseFolderMap, describeSystemFolderPathIssue, normalizeSystemFolderPaths, resolveFolderPath } from './system-folder-paths'
 
 describe('normalizeSystemFolderPaths', () => {
   it('returns empty object for non-object input', () => {
@@ -189,6 +184,58 @@ describe('DEFAULT_FOLDER_PATHS', () => {
   it('maps each folder ID to itself', () => {
     for (const key of ['inbox', 'quick', 'archive', 'trash'] as const) {
       expect(DEFAULT_FOLDER_PATHS[key]).toBe(key)
+    }
+  })
+})
+
+describe('describeSystemFolderPathIssue — saying why, instead of dropping it (#533)', () => {
+  // The normalizer discards what it cannot use, which is right for reading a
+  // file someone edited by hand and silent for a person typing into a box.
+  // These two have to agree: anything the normalizer would drop must have a
+  // reason here, or the field goes quiet again.
+  it('accepts a plain top-level name, and an empty value meaning the default', () => {
+    expect(describeSystemFolderPathIssue('inbox', '01 - Entry')).toBeNull()
+    expect(describeSystemFolderPathIssue('inbox', '')).toBeNull()
+    expect(describeSystemFolderPathIssue('inbox', '   ')).toBeNull()
+  })
+
+  it('explains a nested path, which is the case that started this', () => {
+    const issue = describeSystemFolderPathIssue('quick', 'docs/zennotes/quick')
+    expect(issue).toContain('single folder name')
+    expect(describeSystemFolderPathIssue('quick', 'docs\\zennotes')).not.toBeNull()
+  })
+
+  it('explains a dot-leading name, invalid characters, and an over-long one', () => {
+    expect(describeSystemFolderPathIssue('inbox', '.hidden')).toContain('dot')
+    expect(describeSystemFolderPathIssue('inbox', 'bad:name')).toContain('characters')
+    expect(describeSystemFolderPathIssue('inbox', 'x'.repeat(129))).toContain('Too long')
+  })
+
+  it("explains claiming another folder's default name", () => {
+    const issue = describeSystemFolderPathIssue('inbox', 'archive')
+    expect(issue).toContain('archive')
+    // ...but its OWN default is fine: that is just "use the default".
+    expect(describeSystemFolderPathIssue('inbox', 'inbox')).toBeNull()
+  })
+
+  it('explains a reserved name and a collision with an already-moved folder', () => {
+    expect(describeSystemFolderPathIssue('inbox', 'assets')).toContain('reserved')
+    expect(
+      describeSystemFolderPathIssue('inbox', 'Notes', { quick: 'Notes' })
+    ).toContain('already used')
+  })
+
+  it('agrees with the normalizer: everything it accepts survives normalization', () => {
+    for (const value of ['01 - Entry', 'Journal', 'work_notes', 'a']) {
+      expect(describeSystemFolderPathIssue('inbox', value)).toBeNull()
+      expect(normalizeSystemFolderPaths({ inbox: value })).toEqual({ inbox: value })
+    }
+  })
+
+  it('agrees with the normalizer: everything it refuses is dropped by normalization', () => {
+    for (const value of ['docs/zennotes/quick', '.hidden', 'bad:name', 'assets', 'archive']) {
+      expect(describeSystemFolderPathIssue('inbox', value)).not.toBeNull()
+      expect(normalizeSystemFolderPaths({ inbox: value }).inbox).toBeUndefined()
     }
   })
 })

@@ -48,7 +48,9 @@ describe('task metadata chips in the editor (#454, #479)', () => {
       ['cm-task-meta', 'zen-task-meta'],
       ['cm-task-due', 'zen-task-due'],
       ['cm-task-due-overdue', 'zen-task-due-overdue'],
-      ['cm-task-field', 'zen-task-field']
+      ['cm-task-field', 'zen-task-field'],
+      ['cm-task-rollup', 'zen-task-rollup'],
+      ['cm-task-rollup-complete', 'zen-task-rollup-complete']
     ] as const) {
       const block = rule(editor)
       expect(block, `.${preview} must share .${editor}'s rule`).toContain(`.${preview}`)
@@ -59,5 +61,10 @@ describe('task metadata chips in the editor (#454, #479)', () => {
     expect(rule('cm-task-due')).toMatch(/background-color:\s*rgb\(var\(--z-blue\)\s*\//)
     expect(rule('cm-task-due-overdue')).toMatch(/background-color:\s*rgb\(var\(--z-red\)\s*\//)
     expect(rule('cm-task-field')).toMatch(/background-color:\s*rgb\(var\(--z-purple\)\s*\//)
+  })
+
+  it('keeps the subtask rollup neutral until complete, then green (#512)', () => {
+    expect(rule('cm-task-rollup')).toMatch(/color:\s*rgb\(var\(--z-fg-2\)\)/)
+    expect(rule('cm-task-rollup-complete')).toMatch(/color:\s*rgb\(var\(--z-green\)\)/)
   })
 })

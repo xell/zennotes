@@ -66,6 +66,7 @@ import { lookUpDefinitionInView } from '../lib/look-up-definition'
 import { moveCursorToLink } from '../lib/link-navigation'
 import { focusEditorNormalMode } from '../lib/editor-focus'
 import { toVimSequence } from '../lib/vim-key-sequence'
+import { registerNoteMoveExCommands } from '../lib/vim-ex-commands'
 
 let vimCommandsRegistered = false
 let syncedVimBindings: Partial<Record<KeymapId, string[]>> = {}
@@ -828,8 +829,7 @@ function registerVimNoteCommands(): void {
     void moveActiveNote(params?.argString ?? '')
   }
 
-  Vim.defineEx('move', 'move', runMoveEx)
-  Vim.defineEx('mv', 'mv', runMoveEx)
+  registerNoteMoveExCommands(runMoveEx as Parameters<typeof registerNoteMoveExCommands>[0])
 
   Vim.defineEx('bnext', 'bn', () => navigateActiveBuffer(useStore.getState(), 1))
   Vim.defineEx('bprev', 'bp', () => navigateActiveBuffer(useStore.getState(), -1))

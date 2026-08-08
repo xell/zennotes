@@ -43,6 +43,7 @@ import { wikilinkSource, wikilinkHeadingSource } from '../lib/cm-wikilinks'
 import { completionNavKeymap } from '../lib/cm-completion-nav'
 import type { ExternalFileContent } from '@shared/ipc'
 import { wysiwygExtensions } from '../lib/cm-wysiwyg-compose'
+import { documentDiagramTheme } from '../lib/use-diagram-theme-mode'
 import { useStore } from '../store'
 import { headingFolding } from '../lib/cm-heading-fold'
 import { frontmatterStyle } from '../lib/cm-frontmatter'
@@ -56,6 +57,7 @@ import {
   loadFloatingPrefs,
   paperHighlight
 } from './FloatingNoteApp'
+import { editorTabSize } from '../lib/editor-tab-size'
 
 const SAVE_DEBOUNCE_MS = 350
 const programmatic = Annotation.define<boolean>()
@@ -159,6 +161,7 @@ export function ExternalFileApp(): JSX.Element {
           new Compartment().of(prefs.vimMode ? vim() : []),
           history(),
           drawSelection(),
+          editorTabSize(prefs.editorTabSize),
           highlightActiveLine(),
           wordWrapCompartment.of(
             appliedPrefsRef.current.wordWrap ? EditorView.lineWrapping : []
@@ -168,7 +171,7 @@ export function ExternalFileApp(): JSX.Element {
           markdownListIndentPlugin,
           frontmatterStyle,
           orderedListRenumber,
-          headingFolding(),
+          headingFolding({ showLevelLabels: prefs.showHeadingLevelLabels }),
           codeBlockFontPlugin,
           syntaxHighlighting(paperHighlight),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
@@ -179,7 +182,8 @@ export function ExternalFileApp(): JSX.Element {
                   useStore.getState().mathRenderer,
                   // Tag-driven Typst preambles (#486) resolve against a vault
                   // note's tags; this window edits a file outside the vault.
-                  ''
+                  '',
+                  documentDiagramTheme()
                 )
               : []
           ),
@@ -258,7 +262,8 @@ export function ExternalFileApp(): JSX.Element {
             ? wysiwygExtensions(
                 useStore.getState().renderTablesInLivePreview,
                 useStore.getState().mathRenderer,
-                ''
+                '',
+                documentDiagramTheme()
               )
             : []
         )

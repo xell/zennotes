@@ -173,9 +173,26 @@ export function HintOverlay({
         return
       }
 
-      // Only accept lowercase letters
-      if (e.key.length === 1 && /^[a-z]$/.test(e.key)) {
-        setBuffer((b) => b + e.key)
+      // A bare modifier is not a choice. Tap-hold home-row mods (f/j as
+      // Shift, d/k as Control via Kanata and friends) emit the modifier when
+      // a label letter is held a beat too long; canceling on it made every
+      // label containing one of those letters a dead end (#526). Swallow the
+      // modifier and keep waiting for the letter.
+      if (
+        e.key === 'Shift' ||
+        e.key === 'Control' ||
+        e.key === 'Alt' ||
+        e.key === 'Meta' ||
+        e.key === 'CapsLock' ||
+        e.key === 'AltGraph'
+      ) {
+        return
+      }
+
+      // Letters match case-insensitively: a Shift that misfired (or Caps
+      // Lock left on) should still choose the label, not exit hint mode.
+      if (e.key.length === 1 && /^[a-zA-Z]$/.test(e.key)) {
+        setBuffer((b) => b + e.key.toLowerCase())
         return
       }
 

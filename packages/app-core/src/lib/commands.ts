@@ -18,6 +18,7 @@ import { requestPaneMode } from './pane-mode'
 import { resolveQuickNoteTitle } from './quick-note-title'
 import { selectedInboxFolderForIsolation, goUpIsolationWithConfirm } from './sidebar-isolation'
 import { forwardTaskWithPicker, taskAtEditorCursor } from './forward-task'
+import { toggleCheckbox } from './cm-toggle-checkbox'
 import { getKeymapDisplay, isMacPlatform, type KeymapId } from './keymaps'
 import { dispatchKeyboardContextMenu, findTabContextMenuTarget } from './keyboard-context-menu'
 import { resolveSystemFolderLabels } from './system-folder-labels'
@@ -1044,6 +1045,26 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       }
     },
     {
+      id: 'task.start',
+      title: 'Mark Task In Progress',
+      category: 'Editor',
+      keywords: 'start begin task in progress doing wip partial half started',
+      when: () => {
+        const view = getState().editorViewRef
+        return !!view && !!getState().activeNote && !!taskAtEditorCursor(view)
+      },
+      run: async () => {
+        const view = getState().editorViewRef
+        if (!view) return
+        const task = taskAtEditorCursor(view)
+        if (!task) {
+          window.alert('Put the cursor on a task line to mark it in progress.')
+          return
+        }
+        await getState().startTaskFromList(task)
+      }
+    },
+    {
       id: 'task.cancel',
       title: 'Cancel Task',
       category: 'Editor',
@@ -1064,6 +1085,18 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       }
     },
     {
+      id: 'task.toggle-checkbox',
+      title: 'Toggle Checkbox',
+      category: 'Editor',
+      shortcut: shortcut('editor.toggleCheckbox'),
+      keywords: 'toggle checkbox task check uncheck line todo checklist convert done',
+      when: () => !!getState().editorViewRef && !!getState().activeNote,
+      run: () => {
+        const view = getState().editorViewRef
+        if (view) toggleCheckbox(view)
+      }
+    },
+    {
       id: 'nav.back',
       title: 'Go Back',
       category: 'Tabs',
@@ -1078,6 +1111,14 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       shortcut: shortcut('vim.historyForward'),
       keywords: 'history next',
       run: () => getState().jumpToNextNote()
+    },
+    {
+      id: 'nav.toggle-recent',
+      title: 'Switch to Previous Note',
+      category: 'Tabs',
+      shortcut: shortcut('global.toggleRecentNote'),
+      keywords: 'recent last previous alternate toggle switch note',
+      run: () => getState().toggleRecentNote()
     }
   )
 

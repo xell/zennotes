@@ -9,11 +9,50 @@ const INTERNAL_WORKSPACE_PACKAGES = [
   '@zennotes/shared-ui'
 ]
 
-export const PACKAGED_CLI_RUNTIME_PACKAGES = ['@modelcontextprotocol/sdk']
+// Everything the `zen` CLI reaches at runtime, bundled rather than externalized.
+//
+// `cli.js` and its chunks are copied to `resources/` as extraResources, which
+// puts them OUTSIDE the asar and therefore outside any node_modules: resolution
+// walks up from `resources/chunks/` and finds nothing until the filesystem root.
+// So an external here is not a layout that might be wrong, it is a require that
+// cannot succeed. 2.20.2 shipped `smol-toml` as one and the CLI died on its
+// first line for every user on every platform (#524).
+//
+// Anything new that main and the CLI share has to be added here. The check that
+// this list is complete is `tooling/scripts/verify-packaged-cli.mjs`, which runs
+// the built CLI from a directory with no node_modules above it, because that is
+// the only place the failure is visible.
+export const PACKAGED_CLI_RUNTIME_PACKAGES = ['@modelcontextprotocol/sdk', 'smol-toml']
+
+// The markdown stack `note-docx.ts` parses with, bundled into main rather than
+// left for Node to resolve at runtime.
+//
+// 2.20.0 shipped these as externals and crashed on launch on every platform:
+// `micromark-util-sanitize-uri` sat at the top of the asar while the only copy
+// of its `micromark-util-encode` dependency was nested under `micromark/`,
+// where resolution walking up from the importer cannot see it. The repo's own
+// node_modules has that package hoisted to the top and works, so nothing in
+// development or in `electron out/main/index.js` can reproduce it: the broken
+// layout is one electron-builder writes while collecting the tree, and it is
+// only observable in a packaged build.
+//
+// Bundling is the fix rather than pinning the missing package as a direct
+// dependency, because that only refills the one hole this crash happened to
+// fall through. These are pure ESM libraries with no native pieces, so Rollup
+// inlines them and everything below them, and main stops having a node_modules
+// layout to be wrong about at all.
+const MAIN_BUNDLED_MARKDOWN_PACKAGES = [
+  'unified',
+  'remark-parse',
+  'remark-gfm',
+  'remark-frontmatter',
+  'remark-math'
+]
 
 const MAIN_EXTERNALIZE_EXCLUSIONS = [
   ...INTERNAL_WORKSPACE_PACKAGES,
-  ...PACKAGED_CLI_RUNTIME_PACKAGES
+  ...PACKAGED_CLI_RUNTIME_PACKAGES,
+  ...MAIN_BUNDLED_MARKDOWN_PACKAGES
 ]
 
 function rendererManualChunk(id: string): string | undefined {

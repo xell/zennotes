@@ -21,6 +21,7 @@ import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemir
 import katex from 'katex'
 import type { MathRenderer } from '@shared/app-config'
 import { peekTypstMathSvg, renderTypstMathToSvg } from './typst-math-render'
+import { numberLatexEquationEnvironments } from './latex-equation-numbering'
 
 /** Which typesetter the live-preview widgets use. Supplied by
  *  `mathRenderExtension(renderer)` and re-read whenever the editor reconfigures
@@ -194,6 +195,7 @@ function buildMathRender(state: EditorState): MathRenderValue {
   const text = doc.toString()
   const renderer = state.facet(mathRendererFacet)
   const preamble = renderer === 'typst' ? state.facet(typstPreambleFacet) : ''
+  let equationNumber = 0
 
   // --- Block math `$$…$$` ------------------------------------------------
   BLOCK_MATH_RE.lastIndex = 0
@@ -212,6 +214,11 @@ function buildMathRender(state: EditorState): MathRenderValue {
     const before = openLine.text.slice(0, rawFrom - openLine.from)
     const after = closeLine.text.slice(rawTo - closeLine.from)
     if (before.trim() !== '' || after.trim() !== '') continue
+    const numbered =
+      renderer === 'katex'
+        ? numberLatexEquationEnvironments(inner, equationNumber)
+        : { latex: inner, nextNumber: equationNumber }
+    equationNumber = numbered.nextNumber
     // Reserve the whole-line span so inline scanning skips inside it, whether the
     // block ends up rendered or revealed.
     consumed.push([openLine.from, closeLine.to])
@@ -220,7 +227,10 @@ function buildMathRender(state: EditorState): MathRenderValue {
     pending.push({
       from: openLine.from,
       to: closeLine.to,
-      deco: Decoration.replace({ block: true, widget: new BlockMathWidget(inner, renderer, preamble) })
+      deco: Decoration.replace({
+        block: true,
+        widget: new BlockMathWidget(numbered.latex, renderer, preamble)
+      })
     })
   }
 

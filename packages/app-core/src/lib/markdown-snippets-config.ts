@@ -2,6 +2,7 @@ import type { Extension } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { autoPairExtension, isInMarkdownCode } from './cm-auto-pairs'
 import { markdownSnippetExtension } from './cm-markdown-snippets'
+import { textReplacementExtension } from './cm-text-replacements'
 import { formatMarkerBackspaceTransaction } from './cm-format'
 import { isEditorInsertMode } from './vim-nav'
 import { useStore } from '../store'
@@ -20,6 +21,13 @@ export function appMarkdownSnippetExtension(): Extension {
   }
 
   return [
+    textReplacementExtension({
+      replacements: () => useStore.getState().textReplacements,
+      shouldHandle: (view) => {
+        const s = useStore.getState()
+        return s.textReplacementsEnabled && isTyping(view)
+      }
+    }),
     autoPairExtension({
       shouldHandle: (view) => useStore.getState().autoPairs && isTyping(view),
       shouldPairQuotes: (view, from) => {

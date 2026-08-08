@@ -175,6 +175,7 @@ export function NoteList(): JSX.Element {
       await navigator.clipboard.writeText(`[[${n.title}]]`)
     }
     const onArchive = async (): Promise<void> => {
+      if (!(await useStore.getState().confirmArchiveNotes([n.path]))) return
       await window.zen.archiveNote(n.path)
       await refreshNotes()
       if (selectedPath === n.path) await selectNote(null)

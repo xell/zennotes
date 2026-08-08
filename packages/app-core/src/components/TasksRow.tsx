@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { VaultTask } from '@shared/tasks'
 import { ArrowUpRightIcon } from './icons'
 import { InlineMarkdown } from '../lib/inline-markdown'
+import { TaskStateBox } from './TaskStateBox'
 import { getCurrentDragPayload, readDragPayload, setDragPayload } from '../lib/dnd'
 
 interface Props {
@@ -13,6 +14,12 @@ interface Props {
   onFocusRow: () => void
   /** Drag-to-reorder within the same group. Omit to disable dragging. */
   onReorder?: (draggedId: string, targetId: string, position: 'before' | 'after') => void
+  /** Right-click actions for this row. Omit to leave the browser menu alone. */
+  onContextMenu?: (e: React.MouseEvent, task: VaultTask) => void
+  /** Key that actually toggles the task in the cursor-row hint, or null to hide
+   *  the hint. The old hint hard-coded `Space`, which is a lie whenever Space is
+   *  the Vim leader (the default): the keypress opens leader hints instead. */
+  toggleKeyLabel?: string | null
 }
 
 function priorityLabel(p: VaultTask['priority']): string {
@@ -43,13 +50,25 @@ export function TasksRow({
   onToggle,
   onOpen,
   onFocusRow,
-  onReorder
+  onReorder,
+  onContextMenu,
+  toggleKeyLabel = 'x'
 }: Props): JSX.Element {
   const [dropPos, setDropPos] = useState<'before' | 'after' | null>(null)
   const draggable = !!onReorder
   return (
     <div
       data-task-row={task.id}
+      onContextMenu={
+        onContextMenu
+          ? (e) => {
+              // Right-clicking a row also moves the cursor to it, so the menu
+              // and the keyboard always act on the same task.
+              onFocusRow()
+              onContextMenu(e, task)
+            }
+          : undefined
+      }
       draggable={draggable}
       onDragStart={
         draggable
@@ -111,42 +130,16 @@ export function TasksRow({
       {dropPos === 'after' && (
         <span className="pointer-events-none absolute inset-x-1 -bottom-px h-0.5 rounded-full bg-accent" />
       )}
-      <button
-        type="button"
-        role="checkbox"
-        aria-checked={task.checked}
-        title="Toggle task (x)"
-        onClick={(e) => {
-          e.stopPropagation()
-          onToggle()
-        }}
-        className={[
-          'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded transition-colors',
-          task.checked
-            ? 'border border-accent bg-accent text-white'
-            : 'border border-current/40 hover:bg-current/10'
-        ].join(' ')}
-      >
-        {task.checked && (
-          <svg
-            viewBox="0 0 24 24"
-            width="11"
-            height="11"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="3.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="m5 12 5 5L20 7" />
-          </svg>
-        )}
-      </button>
+      <TaskStateBox task={task} onToggle={onToggle} />
       <div className="min-w-0 flex-1">
         <div
           className={[
             'truncate text-sm',
-            task.checked ? 'text-current/50 line-through' : 'text-current/90'
+            // Cancelled strikes like done: it is abandoned work, and the editor
+            // and reading view have always drawn it that way. (#512)
+            task.checked || task.cancelled
+              ? 'text-current/50 line-through'
+              : 'text-current/90'
           ].join(' ')}
         >
           {task.content ? <InlineMarkdown text={task.content} /> : '(empty task)'}
@@ -180,9 +173,13 @@ export function TasksRow({
         )}
         {isCursor && (
           // Inline key hints — only on the cursor row so the strip stays
-          // quiet and acts as an in-line cheat sheet for the user.
+          // quiet and acts as an in-line cheat sheet for the user. The toggle
+          // key is passed in rather than hard-coded: `Space` only reaches the
+          // list when it is NOT the Vim leader, and by default it is.
           <div className="flex items-center gap-1 text-2xs text-current/60">
-            <KeyHint keyLabel="Space" label={task.checked ? 'uncheck' : 'check'} />
+            {toggleKeyLabel && (
+              <KeyHint keyLabel={toggleKeyLabel} label={task.checked ? 'uncheck' : 'check'} />
+            )}
             <KeyHint keyLabel="⏎" label="open" />
           </div>
         )}

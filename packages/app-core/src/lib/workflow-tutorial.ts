@@ -17,9 +17,24 @@
 //      leaves two copies behind.
 import type { WorkflowFile } from '@bridge-contract/workflows'
 
-/** Subpath under `inbox/` that owns every practice note. */
+/** Subpath under the Inbox folder that owns every practice note. */
 export const TUTORIAL_FOLDER_SUBPATH = 'Workflow tutorial'
-export const TUTORIAL_FOLDER = `inbox/${TUTORIAL_FOLDER_SUBPATH}`
+
+/**
+ * Where the practice folder actually lives, vault-relative.
+ *
+ * NOT a constant, and never `inbox/${subpath}`. The folder API resolves 'inbox'
+ * through the vault's settings, so on a `primaryNotesLocation: 'root'` vault
+ * the practice folder is `Workflow tutorial` at the root, and on a vault whose
+ * Inbox is remapped it is `<mapped dir>/Workflow tutorial`. Seeding used a
+ * literal path while cleanup used the resolved one, which left the practice
+ * notes behind on every vault that is not laid out the default way (#525).
+ *
+ * Callers pass the result of `vaultRelativeFolderPath('inbox',
+ * TUTORIAL_FOLDER_SUBPATH, vaultSettings)`. This module stays store-free so it
+ * still tests under node.
+ */
+export type TutorialFolderPath = string
 
 /** Slug (and therefore workflow id) of the practice workflow. */
 export const TUTORIAL_WORKFLOW_SLUG = 'tutorial-reading-list'
@@ -27,27 +42,34 @@ export const TUTORIAL_WORKFLOW_SLUG = 'tutorial-reading-list'
 /** The practice notes: enough shape for the pipeline to have something to say.
  *  Ratings straddle the `>= 4` threshold so the "edit a step" chapter has a
  *  visible effect (lowering it to 3 pulls one more note onto the wire). */
-export const TUTORIAL_NOTES: ReadonlyArray<{ path: string; body: string }> = [
-  {
-    path: `${TUTORIAL_FOLDER}/Dune.md`,
-    body: '---\nrating: 5\n---\n# Dune\n\n#tutorial-book\n\nSlow start, then impossible to put down.\n'
-  },
-  {
-    path: `${TUTORIAL_FOLDER}/Snow Crash.md`,
-    body: '---\nrating: 4\n---\n# Snow Crash\n\n#tutorial-book\n\nThe first fifty pages alone earn the rating.\n'
-  },
-  {
-    path: `${TUTORIAL_FOLDER}/Sapiens.md`,
-    body: '---\nrating: 3\n---\n# Sapiens\n\n#tutorial-book\n\nGood chapters, uneven middle.\n'
-  },
-  {
-    path: `${TUTORIAL_FOLDER}/Reading list.md`,
-    body: '# Reading list\n\nThe tutorial workflow writes its Favorites section into this note.\n'
-  }
-]
+export function tutorialNotes(
+  folderPath: TutorialFolderPath
+): ReadonlyArray<{ path: string; body: string }> {
+  return [
+    {
+      path: `${folderPath}/Dune.md`,
+      body: '---\nrating: 5\n---\n# Dune\n\n#tutorial-book\n\nSlow start, then impossible to put down.\n'
+    },
+    {
+      path: `${folderPath}/Snow Crash.md`,
+      body: '---\nrating: 4\n---\n# Snow Crash\n\n#tutorial-book\n\nThe first fifty pages alone earn the rating.\n'
+    },
+    {
+      path: `${folderPath}/Sapiens.md`,
+      body: '---\nrating: 3\n---\n# Sapiens\n\n#tutorial-book\n\nGood chapters, uneven middle.\n'
+    },
+    {
+      path: `${folderPath}/Reading list.md`,
+      body: '# Reading list\n\nThe tutorial workflow writes its Favorites section into this note.\n'
+    }
+  ]
+}
 
-/** The practice workflow. A draft on purpose: activating it is a chapter. */
-export const TUTORIAL_WORKFLOW_RAW = `---
+/** The practice workflow. A draft on purpose: activating it is a chapter.
+ *  Its `folder` source has to name the same resolved path the notes were
+ *  written to, or the wire counts the user is told to expect come out zero. */
+export function tutorialWorkflowRaw(folderPath: TutorialFolderPath): string {
+  return `---
 name: Tutorial reading list
 description: The practice workflow the guided tutorial walks through
 status: draft
@@ -55,13 +77,14 @@ trigger: manual
 ---
 
 # The tutorial's practice workflow. It reads ONLY the notes inside
-# "${TUTORIAL_FOLDER}", so nothing else in your vault is ever touched.
-books = folder "${TUTORIAL_FOLDER}" | tagged #tutorial-book
+# "${folderPath}", so nothing else in your vault is ever touched.
+books = folder "${folderPath}" | tagged #tutorial-book
 good  = books | where rating >= 4
 
-good | render list | write-section "${TUTORIAL_FOLDER}/Reading list.md" "Favorites"
+good | render list | write-section "${folderPath}/Reading list.md" "Favorites"
 good | add-tag #favorite
 `
+}
 
 /* -------------------------------------------------------------------------- */
 /*  The chapters                                                              */
@@ -103,7 +126,7 @@ export const TUTORIAL_STEPS: readonly TutorialStep[] = [
   {
     title: 'Welcome',
     intro:
-      `A workflow is a small pipeline you write once and run over your notes: find some, keep the right ones, do something with them. The tutorial just seeded a practice folder, "${TUTORIAL_FOLDER}", with three rated book notes and a reading list; everything here stays inside it. The left pane lists this vault's workflows, each a plain .md file.`,
+      `A workflow is a small pipeline you write once and run over your notes: find some, keep the right ones, do something with them. The tutorial just seeded a practice folder, "${TUTORIAL_FOLDER_SUBPATH}", with three rated book notes and a reading list; everything here stays inside it. The left pane lists this vault's workflows, each a plain .md file.`,
     tasks: [
       {
         text: 'Select "Tutorial reading list" in the list (click it, or j / k and Enter with Vim on).',
@@ -177,7 +200,7 @@ export const TUTORIAL_STEPS: readonly TutorialStep[] = [
   {
     title: 'Run from anywhere',
     intro:
-      'Once a workflow is active the view is optional: "Run Workflow…" opens a browsable picker, Space a opens this view from anywhere with Vim on, and pressing x in the New-workflow gallery hides recipes you will never use.',
+      'Once a workflow is active the view is optional: "Run Workflow…" opens a browsable picker, Space a opens this view from anywhere with Vim on, and pressing x in the recipe gallery (the New workflow button) hides recipes you will never use.',
     tasks: [
       {
         text: 'Open the command palette and spot "Run: Tutorial reading list". (No need to run it.)',
@@ -226,12 +249,25 @@ export async function cleanupWorkflowTutorial(bridge: TutorialBridge): Promise<v
   await bridge.deleteFolder('inbox', TUTORIAL_FOLDER_SUBPATH).catch(() => {})
 }
 
-/** Seed the practice material, from a clean slate. */
-export async function seedWorkflowTutorial(bridge: TutorialBridge): Promise<void> {
+/**
+ * Seed the practice material, from a clean slate.
+ *
+ * `folderPath` must be where `createFolder('inbox', TUTORIAL_FOLDER_SUBPATH)`
+ * actually lands, since cleanup deletes through that same folder API. Passing a
+ * literal `inbox/...` on a root-mode or remapped vault writes the notes
+ * somewhere cleanup will never look (#525).
+ */
+export async function seedWorkflowTutorial(
+  bridge: TutorialBridge,
+  folderPath: TutorialFolderPath
+): Promise<void> {
   await cleanupWorkflowTutorial(bridge)
   await bridge.createFolder('inbox', TUTORIAL_FOLDER_SUBPATH)
-  for (const note of TUTORIAL_NOTES) {
+  for (const note of tutorialNotes(folderPath)) {
     await bridge.writeNote(note.path, note.body)
   }
-  await bridge.writeWorkflow({ slug: TUTORIAL_WORKFLOW_SLUG, raw: TUTORIAL_WORKFLOW_RAW })
+  await bridge.writeWorkflow({
+    slug: TUTORIAL_WORKFLOW_SLUG,
+    raw: tutorialWorkflowRaw(folderPath)
+  })
 }

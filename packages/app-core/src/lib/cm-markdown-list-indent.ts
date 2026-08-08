@@ -10,10 +10,12 @@ import {
 } from '@codemirror/view'
 import { MANAGED_STYLES_CHANGED_EVENT } from './custom-themes'
 
+// The checkbox part covers every task state (`[ ]`, `[x]`, `[>]`, `[-]`, `[/]`)
+// so Tab/Shift-Tab indents a started or cancelled task like any other. (#512)
 const LEADING_LIST_MARKER_RE =
-  /^[ \t]*(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)(?:\[[ xX]\](?:[ \t]+|$))?/
+  /^[ \t]*(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)(?:\[[ xX>/-]\](?:[ \t]+|$))?/
 const LIST_MARKER_FROM_OFFSET_RE =
-  /^(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)(?:\[[ xX]\](?:[ \t]+|$))?/
+  /^(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)(?:\[[ xX>/-]\](?:[ \t]+|$))?/
 
 function visualColumn(text: string): number {
   let col = 0

@@ -22,6 +22,7 @@ function makeTask(content: string, taskIndex = 0): VaultTask {
     checked: false,
     forwarded: false,
     cancelled: false,
+    inProgress: false,
     waiting: false,
     tags: []
   }
@@ -1030,6 +1031,108 @@ describe('cancelTaskFromList (#450)', () => {
   })
 })
 
+describe('optimistic task state transitions (#512)', () => {
+  it('starting a completed file task immediately clears every competing state', async () => {
+    installZen()
+    const { useStore } = await loadStore()
+    const body = '---\ntags: [task]\nstatus: done\ncompletedDate: 2026-08-01\n---\n'
+    const task: VaultTask = {
+      ...makeTask('Note', -1),
+      id: 'inbox/Note.md#file',
+      taskIndex: -1,
+      kind: 'file',
+      rawText: '',
+      checked: true,
+      cancelled: false,
+      inProgress: false,
+      waiting: true,
+      status: 'done',
+      fields: { status: 'done' }
+    }
+    useStore.setState({
+      noteContents: { 'inbox/Note.md': makeNote(body) },
+      vaultTasks: [task]
+    })
+
+    await useStore.getState().startTaskFromList(task)
+
+    expect(useStore.getState().vaultTasks[0]).toMatchObject({
+      checked: false,
+      forwarded: false,
+      cancelled: false,
+      inProgress: true,
+      waiting: false,
+      status: 'in-progress',
+      fields: { status: 'in-progress' }
+    })
+  })
+
+  it('starting a forwarded inline task immediately clears the old state marker', async () => {
+    installZen()
+    const { useStore } = await loadStore()
+    const task: VaultTask = {
+      ...makeTask('Send draft', 0),
+      rawText: '- [>] Send draft',
+      forwarded: true
+    }
+    useStore.setState({
+      noteContents: { 'inbox/Note.md': makeNote('- [>] Send draft') },
+      vaultTasks: [task]
+    })
+
+    await useStore.getState().startTaskFromList(task)
+
+    expect(useStore.getState().vaultTasks[0]).toMatchObject({
+      checked: false,
+      forwarded: false,
+      cancelled: false,
+      inProgress: true
+    })
+  })
+
+  it('completing or cancelling a file task immediately clears in-progress', async () => {
+    installZen()
+    const { useStore } = await loadStore()
+    const body = '---\ntags: [task]\nstatus: in-progress\n---\n'
+    const task: VaultTask = {
+      ...makeTask('Note', -1),
+      id: 'inbox/Note.md#file',
+      taskIndex: -1,
+      kind: 'file',
+      rawText: '',
+      inProgress: true,
+      status: 'in-progress',
+      fields: { status: 'in-progress' }
+    }
+    useStore.setState({
+      noteContents: { 'inbox/Note.md': makeNote(body) },
+      vaultTasks: [task]
+    })
+
+    await useStore.getState().toggleTaskFromList(task)
+    expect(useStore.getState().vaultTasks[0]).toMatchObject({
+      checked: true,
+      cancelled: false,
+      inProgress: false,
+      waiting: false,
+      status: 'done'
+    })
+
+    useStore.setState({
+      noteContents: { 'inbox/Note.md': makeNote(body) },
+      vaultTasks: [task]
+    })
+    await useStore.getState().cancelTaskFromList(task)
+    expect(useStore.getState().vaultTasks[0]).toMatchObject({
+      checked: false,
+      cancelled: true,
+      inProgress: false,
+      waiting: false,
+      status: 'cancelled'
+    })
+  })
+})
+
 describe('preview tabs (VS Code-style open flow)', () => {
   function activeLeaf(store: { paneLayout: PaneLayout; activePaneId: string }): PaneLeaf {
     const leaf = findLeaf(store.paneLayout, store.activePaneId)
@@ -1352,6 +1455,27 @@ describe('viewPrefsFromVault (#292 — per-vault view overlay)', () => {
     } as unknown as ViewArg)
     // Dedupes, drops non-strings, drops unknown group-bys, drops empty arrays.
     expect(patch.kanbanColumnOrder).toEqual({ 'field:status': ['review', 'backlog', 'done'] })
+  })
+
+  it('overlays and normalizes kanbanCardOrder (manual card arrangement)', async () => {
+    installZen()
+    const { viewPrefsFromVault } = await loadStore()
+    const key = (path: string, index: number): string => `${path}\0${index}`
+    const patch = viewPrefsFromVault({
+      view: {
+        kanbanCardOrder: {
+          'status:today': [key('inbox/a.md', 1), key('inbox/b.md', 0), key('inbox/a.md', 1), 42],
+          'field:status:review': [key('inbox/c.md', 3)],
+          'not-a-groupby:today': [key('inbox/d.md', 0)],
+          'status:done': []
+        }
+      }
+    } as unknown as ViewArg)
+    // Dedupes, drops non-strings, drops unknown board keys, drops empty lists.
+    expect(patch.kanbanCardOrder).toEqual({
+      'status:today': [key('inbox/a.md', 1), key('inbox/b.md', 0)],
+      'field:status:review': [key('inbox/c.md', 3)]
+    })
   })
 
   it('keeps a renamed No-value bucket title through normalization (#389)', async () => {

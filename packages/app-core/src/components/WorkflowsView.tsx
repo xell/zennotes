@@ -1201,7 +1201,32 @@ export function WorkflowsView(): JSX.Element {
 
   // Canvas editing state. All three are view state over the same draft text:
   // nothing here is a second representation of the workflow.
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  /**
+   * Selection, which is a LIST because a canvas can hold a group (#534).
+   *
+   * `selectedNodeId` below is the same state read as "the one node", and it is
+   * what almost everything here wants: the options panel edits one step, delete
+   * removes one step, the context menu acts on one node. Those all go on
+   * reading a single id, and a group simply reads as no single node, so nothing
+   * that edits one step can fire against five.
+   */
+  const [selectedNodeIds, setSelectedNodeIds] = useState<readonly string[]>([])
+  const selectedNodeId = selectedNodeIds.length === 1 ? selectedNodeIds[0] : null
+  /**
+   * Select exactly one node, or nothing. Accepts the updater form because the
+   * remap after a structural edit needs to see the current id.
+   */
+  const setSelectedNodeId = useCallback(
+    (next: string | null | ((current: string | null) => string | null)): void => {
+      setSelectedNodeIds((current) => {
+        const single = current.length === 1 ? current[0] : null
+        const value = typeof next === 'function' ? next(single) : next
+        return value === null ? [] : [value]
+      })
+    },
+    []
+  )
+  const selectedIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds])
   const [picker, setPicker] = useState<PickerRequest | null>(null)
   // Why a connection was refused, shown over the canvas that refused it.
   const [connectError, setConnectError] = useState<string | null>(null)
@@ -2101,6 +2126,10 @@ export function WorkflowsView(): JSX.Element {
       return {
         id: node.id,
         type: 'workflowStep',
+        // React Flow drags every SELECTED node together, so this is what makes
+        // a group move as one. It reads the flag off the node rather than from
+        // any state of its own.
+        selected: selectedIdSet.has(node.id),
         // Copied, never the map's own object: React Flow keeps what it is given
         // and the map is compared against fresh drags.
         position: placed
@@ -2116,7 +2145,7 @@ export function WorkflowsView(): JSX.Element {
           outCount: outSet ? outSet.length : null,
           // Only name the wire when the author did; `#12` is an internal key.
           outWire: wire === null ? null : statement.name,
-          isSelected: node.id === selectedNodeId,
+          isSelected: selectedIdSet.has(node.id),
           connectable: canEditGraph,
           // Absent rather than disabled where nothing may follow: a terminal
           // step ends the pipeline, and a `+` that explains itself only after
@@ -2159,7 +2188,7 @@ export function WorkflowsView(): JSX.Element {
     })
 
     return { nodes, edges }
-  }, [active, canEditGraph, overrides, plan, requestInsert, selectedNodeId, worstByLine])
+  }, [active, canEditGraph, overrides, plan, requestInsert, selectedIdSet, worstByLine])
 
   const summaries = useMemo(() => (plan ? summarizeOps(plan.ops) : []), [plan])
 
@@ -2356,13 +2385,34 @@ export function WorkflowsView(): JSX.Element {
    * React Flow renders from the `nodes` prop, so a drag is only visible if the
    * position changes it reports come back as new positions.
    *
-   * Position is all that is handled. Dimensions are measured into React Flow's
-   * own store and never needed the prop, and selection has never been reflected
-   * here, so forwarding either would change behaviour this feature has no
-   * business changing.
+   * Position and SELECTION are handled. Dimensions are measured into React
+   * Flow's own store and never needed the prop, so they stay unforwarded.
+   *
+   * Selection is forwarded because React Flow owns the gestures for it, and
+   * those gestures are the feature: shift or ctrl clicking a second node, and
+   * dragging a box across several. Consuming its select changes is what lets
+   * one list of ids stay the only answer to "what is selected", rather than
+   * this file guessing at modifier keys and disagreeing with the canvas. (#534)
    */
   const onNodesChange = useCallback(
     (changes: NodeChange<StepNode>[]): void => {
+      const selections = changes.filter(
+        (change): change is Extract<NodeChange<StepNode>, { type: 'select' }> =>
+          change.type === 'select'
+      )
+      if (selections.length > 0) {
+        setSelectedNodeIds((current) => {
+          const next = new Set(current)
+          for (const change of selections) {
+            if (change.selected) next.add(change.id)
+            else next.delete(change.id)
+          }
+          // Order follows the graph so the group reads top-to-bottom, and a
+          // reference that did not change stays the same object.
+          if (next.size === current.length && current.every((id) => next.has(id))) return current
+          return Array.from(next)
+        })
+      }
       if (activeId === null) return
       // From the ref when it already describes this workflow, so a burst of
       // pointer moves accumulates instead of each one starting from the render
@@ -4324,15 +4374,33 @@ export function WorkflowsView(): JSX.Element {
    * button uses or it would vanish from the canvas without touching the file.
    */
   const onCanvasKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (event.metaKey || event.ctrlKey || event.altKey) return
-    if (event.key === 'Escape') {
-      if (selectedNodeId === null) return
+    // Select every step (#534). Ahead of the modifier guard below because it is
+    // the one key here that WANTS a modifier, and behind the text-entry check
+    // because Cmd+A in the options panel still means "select this text".
+    if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === 'a') {
+      if (isTextEntryTarget(event.target)) return
+      if (graph.nodes.length === 0) return
       event.preventDefault()
       event.stopPropagation()
-      setSelectedNodeId(null)
+      setSelectedNodeIds(graph.nodes.map((node) => node.id))
+      return
+    }
+    if (event.metaKey || event.ctrlKey || event.altKey) return
+    if (event.key === 'Escape') {
+      // Escape clears the whole group, not just a single node, so one press
+      // always means "nothing is selected now".
+      if (selectedNodeIds.length === 0) return
+      event.preventDefault()
+      event.stopPropagation()
+      setSelectedNodeIds([])
       return
     }
     if (event.key === 'Backspace' || event.key === 'Delete') {
+      // `selectedNode` is null while a GROUP is selected, so this cannot fire
+      // against several steps. Deleting a group is deliberately not a thing
+      // yet: a deletion rewrites the file by statement and step index, so
+      // removing several at once has to renumber as it goes, and half of that
+      // going wrong leaves a workflow nobody asked for. (#534)
       if (selectedNode === null || !canEditGraph) return
       if (isTextEntryTarget(event.target)) return
       // The node menu is portalled, but a portal still bubbles up the REACT
@@ -4703,7 +4771,13 @@ export function WorkflowsView(): JSX.Element {
         // names the wire when it has to and writes the input on the other end.
         nodesConnectable={canEditGraph}
         onConnect={onConnect}
-        onNodeClick={(_event, node) => setSelectedNodeId(node.id)}
+        onNodeClick={(event, node) => {
+          // A modifier click is React Flow adding to or removing from the
+          // group, and it reports that through `onNodesChange`. Forcing a
+          // single selection here would undo it on the way past.
+          if (event.shiftKey || event.metaKey || event.ctrlKey) return
+          setSelectedNodeId(node.id)
+        }}
         onNodeContextMenu={onNodeContextMenu}
         onEdgeClick={onEdgeClick}
         onPaneClick={() => setSelectedNodeId(null)}
@@ -4714,6 +4788,11 @@ export function WorkflowsView(): JSX.Element {
         // place is the point: two handlers on one keypress is how a single
         // Backspace ends up deleting twice.
         deleteKeyCode={null}
+        // Shift, and the platform's own command key, add a node to the group
+        // instead of replacing it. Shift is in both lists on purpose: held on
+        // the pane it drags a selection box, held on a node it adds that node,
+        // which is the pair of gestures people arrive expecting. (#534)
+        multiSelectionKeyCode={['Meta', 'Control', 'Shift']}
         elementsSelectable
         fitView
         fitViewOptions={FIT_VIEW_OPTIONS}
@@ -5908,8 +5987,8 @@ function WorkflowGallery({
           New workflow
         </div>
         <p className="mt-1 text-xs text-ink-500">
-          Every one of these is a working workflow you can read and change. It arrives as a draft,
-          so it cannot run until you activate it.
+          The recipe gallery: every one of these is a working workflow you can read and change. It
+          arrives as a draft, so it cannot run until you activate it.
         </p>
       </div>
       {/* The keyboard lives on a read-only text field, not on the list.

@@ -972,6 +972,24 @@ class CancelledMarkerWidget extends WidgetType {
   }
 }
 
+/** Renders a `- [/]` in-progress marker as a half-filled box (#512). Like the
+ *  `[>]`/`[-]` markers this replaces a broken-link node, not a TaskMarker, so
+ *  it draws its own glyph rather than reusing the checkbox input. The text is
+ *  left alone: in-progress work still reads as live, not struck out. */
+class InProgressMarkerWidget extends WidgetType {
+  eq(): boolean {
+    return true
+  }
+
+  toDOM(): HTMLElement {
+    const span = document.createElement('span')
+    span.className = 'cm-task-in-progress-marker'
+    span.title = 'In progress'
+    span.setAttribute('contenteditable', 'false')
+    return span
+  }
+}
+
 function computeDecorations(view: EditorView): DecorationSet {
   const { state } = view
 
@@ -1201,6 +1219,25 @@ function computeDecorations(view: EditorView): DecorationSet {
                 from: node.from,
                 to: node.to,
                 deco: Decoration.replace({ widget: new CancelledMarkerWidget() })
+              })
+            }
+            return false
+          }
+        }
+
+        // #512: `[/]` at the start of a list item is an in-progress marker.
+        // Parsed as a broken link like `[>]`/`[-]`. Draw a half-filled box off
+        // the active line; the task text keeps its normal styling, since the
+        // work is still live.
+        if (name === 'Link' && state.doc.sliceString(node.from, node.to) === '[/]') {
+          const markerLine = state.doc.lineAt(node.from)
+          const before = state.doc.sliceString(markerLine.from, node.from)
+          if (/^\s*(?:[-+*]|\d+[.)])[ \t]+$/.test(before)) {
+            if (!activeLines.has(markerLine.number) && !replacedLines.has(markerLine.number)) {
+              pending.push({
+                from: node.from,
+                to: node.to,
+                deco: Decoration.replace({ widget: new InProgressMarkerWidget() })
               })
             }
             return false

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  extractUncheckedTaskBlocks,
+  extractOpenTaskBlocks,
   moveTaskLine,
   removeTaskAtIndex,
   takeTaskLineAtIndex,
@@ -127,37 +127,37 @@ describe('setTaskDueAtIndex', () => {
   })
 })
 
-describe('extractUncheckedTaskBlocks', () => {
+describe('extractOpenTaskBlocks', () => {
   it('pulls out only unchecked tasks, leaving checked + prose behind', () => {
     const md = ['# 2026-06-16', '', '- [x] shipped', '- [ ] follow up', 'a note line'].join('\n')
-    const { moved, rest } = extractUncheckedTaskBlocks(md)
+    const { moved, rest } = extractOpenTaskBlocks(md)
     expect(moved).toEqual(['- [ ] follow up'])
     expect(rest).toBe(['# 2026-06-16', '', '- [x] shipped', 'a note line'].join('\n'))
   })
 
   it('moves tokens verbatim (future due dates are preserved)', () => {
     const md = ['- [ ] plan Q3 due:2026-09-01 !high', '- [x] done'].join('\n')
-    const { moved } = extractUncheckedTaskBlocks(md)
+    const { moved } = extractOpenTaskBlocks(md)
     expect(moved).toEqual(['- [ ] plan Q3 due:2026-09-01 !high'])
   })
 
   it('carries indented child lines along with their task', () => {
     const md = ['- [ ] parent', '  - [ ] child', '  notes', '- [ ] sibling'].join('\n')
-    const { moved, rest } = extractUncheckedTaskBlocks(md)
+    const { moved, rest } = extractOpenTaskBlocks(md)
     expect(moved).toEqual(['- [ ] parent', '  - [ ] child', '  notes', '- [ ] sibling'])
     expect(rest).toBe('')
   })
 
   it('ignores checkboxes inside fenced code blocks', () => {
     const md = ['- [ ] real', '```', '- [ ] fenced', '```'].join('\n')
-    const { moved, rest } = extractUncheckedTaskBlocks(md)
+    const { moved, rest } = extractOpenTaskBlocks(md)
     expect(moved).toEqual(['- [ ] real'])
     expect(rest).toBe(['```', '- [ ] fenced', '```'].join('\n'))
   })
 
   it('returns nothing to move when all tasks are checked', () => {
     const md = ['- [x] a', '- [x] b'].join('\n')
-    const { moved, rest } = extractUncheckedTaskBlocks(md)
+    const { moved, rest } = extractOpenTaskBlocks(md)
     expect(moved).toEqual([])
     expect(rest).toBe(md)
   })

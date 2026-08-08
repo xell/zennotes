@@ -171,8 +171,8 @@ export type BlockType =
   | 'code'
 
 // Leading block marker (indent captured separately): heading, quote, list
-// bullet (optionally a task checkbox), or an ordered-list number.
-const LINE_MARKER_RE = /^(\s*)(?:#{1,6}\s+|>\s+|[-*+]\s+\[[ xX]\]\s+|[-*+]\s+|\d+[.)]\s+)?/
+// bullet (optionally a task checkbox in any state), or an ordered-list number.
+const LINE_MARKER_RE = /^(\s*)(?:#{1,6}\s+|>\s+|[-*+]\s+\[[ xX>/-]\]\s+|[-*+]\s+|\d+[.)]\s+)?/
 
 function blockPrefix(type: BlockType, index: number): string {
   switch (type) {

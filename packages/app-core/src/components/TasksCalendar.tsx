@@ -25,6 +25,7 @@ import { ChevronLeftIcon, ChevronRightIcon } from './icons'
 import { InlineMarkdown } from '../lib/inline-markdown'
 import { resolveWeekStartDay } from '../lib/week-start'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
+import { buildTaskMenuItems } from '../lib/task-context-menu'
 
 interface Props {
   tasks: VaultTask[]
@@ -66,7 +67,11 @@ function parseIsoLocal(iso: string): Date {
   return new Date(y, m - 1, dd)
 }
 
-const TASK_PREFIX_RE = /^\s*(?:>\s*)*(?:[-+*]|\d+[.)])\s+\[[ xX]\]\s?/
+// Every task state, not just `[ ]`/`[x]`: a prefix that fails to match falls
+// back to `task.content`, which has the metadata tokens stripped, so editing a
+// `[>]` or `[/]` task here used to save the line back WITHOUT its `due:`,
+// `!priority`, `#tags` or `[[wikilink]]`. (#512)
+const TASK_PREFIX_RE = /^\s*(?:>\s*)*(?:[-+*]|\d+[.)])\s+\[[ xX>/-]\]\s?/
 
 /** Text after the checkbox (content + any tokens) — prefill for inline edit. */
 function taskTail(task: VaultTask): string {
@@ -103,6 +108,9 @@ export function TasksCalendar({
   const weekStart = useStore((s) => s.calendarWeekStart)
   const applyTaskMutation = useStore((s) => s.applyTaskMutation)
   const deleteTaskFromList = useStore((s) => s.deleteTaskFromList)
+  const startTaskFromList = useStore((s) => s.startTaskFromList)
+  const cancelTaskFromList = useStore((s) => s.cancelTaskFromList)
+  const vimMode = useStore((s) => s.vimMode)
   const rootRef = useRef<HTMLDivElement>(null)
   // Pointer-based drag-to-reschedule. Native HTML5 DnD is flaky for these rows
   // inside the pane, so (like the Kanban) we grab on pointerdown, float a ghost
@@ -228,41 +236,26 @@ export function TasksCalendar({
     }
   }, [])
 
-  // Right-click a task: reschedule presets, move into a day's note, inline edit,
-  // delete. (Drag still offers the move/set-due choice.)
+  // Right-click a task: the shared task menu (open, state, due, priority,
+  // delete) plus the two gestures that only make sense on a calendar, inline
+  // edit and moving the task into its day's note. Drag still offers the
+  // move/set-due choice.
   const openTaskMenu = (e: React.MouseEvent, task: VaultTask): void => {
     e.preventDefault()
     e.stopPropagation()
-    const reschedule = (iso: string | null): void =>
-      void applyTaskMutation(task, { kind: 'set-due', due: iso })
-    const items: ContextMenuItem[] = [
-      { label: 'Due today', hint: addDaysIso(0), onSelect: () => reschedule(addDaysIso(0)) },
-      { label: 'Due tomorrow', hint: addDaysIso(1), onSelect: () => reschedule(addDaysIso(1)) },
-      { label: 'Due next week', hint: addDaysIso(7), onSelect: () => reschedule(addDaysIso(7)) }
-    ]
-    if (task.due && !task.dueInferred) {
-      items.push({ label: 'Clear due date', onSelect: () => reschedule(null) })
-    }
-    items.push(
-      { kind: 'separator' },
-      {
-        label: 'Move to its day’s note',
-        disabled: !task.due,
-        onSelect: () => {
-          if (task.due) onMoveTask(task, task.due)
-        }
-      },
-      {
-        label: 'Edit',
-        onSelect: () => {
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: buildTaskMenuItems(task, {
+        today,
+        showKeyHints: vimMode,
+        onEdit: () => {
           setEditingTaskId(task.id)
           setEditValue(taskTail(task))
-        }
-      },
-      { kind: 'separator' },
-      { label: 'Delete', danger: true, onSelect: () => void deleteTaskFromList(task) }
-    )
-    setMenu({ x: e.clientX, y: e.clientY, items })
+        },
+        onMoveToDayNote: (t, iso) => onMoveTask(t, iso)
+      })
+    })
   }
 
   const renderTask = (
@@ -498,6 +491,19 @@ export function TasksCalendar({
           if (e.key === 'x' || e.key === ' ') {
             consume()
             onToggleTask(active)
+            return
+          }
+          // The same state keys the list and the right-click menu offer, so a
+          // task is not less editable because you are looking at a calendar.
+          // Vim-gated, and the menu hides its key hints in step.
+          if (vimMode && e.key === 'i') {
+            consume()
+            void startTaskFromList(active)
+            return
+          }
+          if (vimMode && e.key === 'c') {
+            consume()
+            void cancelTaskFromList(active)
             return
           }
           if (e.key === 'e') {

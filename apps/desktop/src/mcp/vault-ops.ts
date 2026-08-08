@@ -245,9 +245,10 @@ async function folderRoot(root: string, folder: NoteFolder): Promise<string> {
 }
 
 const FENCE_LINE_RE = /^(\s{0,3})(`{3,}|~{3,})/
-// `>` = forwarded (#316), `-` = cancelled (#450) — both recognized so those
-// tasks aren't invisible to the MCP scanner. Kept in sync with @shared/tasklists.
-const TASK_LINE_RE = /^\s*[-*+]\s+\[([ xX>-])\](.*)$/
+// `>` = forwarded (#316), `-` = cancelled (#450), `/` = in progress (#512) —
+// all recognized so those tasks aren't invisible to the MCP scanner. Kept in
+// sync with @shared/tasklists.
+const TASK_LINE_RE = /^\s*[-*+]\s+\[([ xX>/-])\](.*)$/
 
 export interface NoteMeta {
   path: string
@@ -283,6 +284,9 @@ export interface VaultTask {
   checked: boolean
   /** True for a `[-]` cancelled task — intentionally abandoned (#450). */
   cancelled?: boolean
+  /** True for a `[/]` task in progress: started, not finished (#512). Still
+   *  open work, unlike checked/cancelled. */
+  inProgress?: boolean
   due?: string
   priority?: 'high' | 'med' | 'low'
   waiting: boolean
@@ -1228,6 +1232,7 @@ function parseTasksFromBody(
     const tail = m[2]
     const checked = checkedChar === 'x' || checkedChar === 'X'
     const cancelled = checkedChar === '-'
+    const inProgress = checkedChar === '/'
 
     let due: string | undefined
     let priority: 'high' | 'med' | 'low' | undefined
@@ -1269,6 +1274,7 @@ function parseTasksFromBody(
       content,
       checked,
       cancelled,
+      inProgress,
       due: due ?? defaults.due,
       priority: priority ?? defaults.priority,
       waiting,
@@ -1290,6 +1296,16 @@ const DONE_STATUSES = new Set(['done', 'complete', 'completed', 'x'])
 
 /** Frontmatter `status:` values treated as cancelled — abandoned (#450). */
 const CANCELLED_STATUSES = new Set(['cancelled', 'canceled'])
+
+/** Frontmatter `status:` values treated as in progress (#512). Still open work. */
+const IN_PROGRESS_STATUSES = new Set([
+  'in-progress',
+  'in progress',
+  'inprogress',
+  'doing',
+  'started',
+  'wip'
+])
 
 /** Parse a leading frontmatter block into flat fields, handling scalars, inline
  *  arrays (`tags: [a, b]`) and block lists (`tags:` then `  - a`). Keys are
@@ -1377,6 +1393,7 @@ function parseTaskFile(
     content: title,
     checked: DONE_STATUSES.has(status),
     cancelled: CANCELLED_STATUSES.has(status),
+    inProgress: IN_PROGRESS_STATUSES.has(status),
     due: normalizeDueDate(firstScalar(fm.due)),
     priority: normalizePriority(firstScalar(fm.priority)),
     waiting: status === 'waiting',

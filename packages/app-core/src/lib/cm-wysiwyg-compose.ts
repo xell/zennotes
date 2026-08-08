@@ -9,6 +9,9 @@ import { taskMetadataExtension } from './cm-task-metadata'
 import { highlightExtension } from './cm-highlight'
 import { wikilinkRenderExtension } from './cm-wikilink-render'
 import { mathRenderExtension } from './cm-math-render'
+import { mermaidRenderExtension } from './cm-mermaid-render'
+import { taskRollupExtension } from './cm-task-rollup'
+import type { DiagramTheme } from './use-diagram-theme-mode'
 import { embedRenderExtension } from './cm-embed-render'
 import { urlPasteMenuExtension } from './cm-url-paste-menu'
 import type { TableRenderMode } from './table-render-mode'
@@ -35,7 +38,8 @@ import type { MathRenderer } from '@shared/app-config'
 export function wysiwygExtensions(
   tableMode: TableRenderMode,
   mathRenderer: MathRenderer,
-  typstPreamble: string
+  typstPreamble: string,
+  diagramTheme: DiagramTheme
 ): Extension[] {
   return [
     livePreviewPlugin,
@@ -52,12 +56,16 @@ export function wysiwygExtensions(
     wysiwygBlocksPlugin,
     ...hashtagExtension,
     ...taskMetadataExtension,
+    ...taskRollupExtension,
     ...highlightExtension,
     ...wikilinkRenderExtension,
     // Upstream renders math, URL embeds, and the paste menu in live preview too.
     // They live here rather than in EditorPane so every surface that composes
     // this bundle gets them at once, which is the whole point of this module.
     mathRenderExtension(mathRenderer, typstPreamble),
+    // Diagrams bake their colours in, so the palette rides along and a theme
+    // switch redraws them (#530).
+    mermaidRenderExtension(diagramTheme.mode, diagramTheme.key),
     embedRenderExtension,
     urlPasteMenuExtension
   ]

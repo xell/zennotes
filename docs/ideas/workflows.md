@@ -2,6 +2,22 @@
 
 A visual, keyboard-drivable pipeline editor for the vault.
 
+> **Status (updated for v2.20, July 2026).** This is the design document the
+> feature was built from, kept as rationale, not as a manual. If you are here to
+> learn how workflows work, the real docs are the in-app Help (`:help`, section
+> "Workflows") and https://zennotes.org/docs. What this doc calls "the gallery"
+> ships as the **New workflow** button inside the Workflows view: a picker of
+> eight built-in recipes, each an ordinary `.md` file that copies into your
+> vault.
+>
+> Shipped in 2.20: manual runs (from the view and the command palette), the
+> canvas/text lossless pair, the dry-run confirmation, byte-for-byte Undo with
+> crash recovery, presets, import-as-review, and the guided tutorial. Desktop
+> only. Not shipped yet, and described below as design: event and schedule
+> triggers (they parse but do not fire), server-side execution in Go, workflow
+> MCP tools, and anything labeled community. The web client shows workflows
+> read-only.
+
 ## Problem Statement
 
 **How might we** let someone compose ZenNotes' existing actions into a repeatable,

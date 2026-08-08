@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { VaultTask } from '@shared/tasks'
 import {
+  applyColumnOrder,
   arrangeColumns,
   cursorAfterCardMove,
   NO_VALUE_COLUMN_ID,
@@ -56,8 +57,8 @@ describe('arrangeColumns', () => {
   })
 })
 
-function task(sourcePath: string, taskIndex: number, text = 'task'): VaultTask {
-  return { text, checked: false, sourcePath, taskIndex } as unknown as VaultTask
+function task(sourcePath: string, taskIndex: number, content = 'task'): VaultTask {
+  return { content, checked: false, sourcePath, taskIndex } as unknown as VaultTask
 }
 
 function colWith(id: string, tasks: VaultTask[]): Column {
@@ -108,5 +109,57 @@ describe('cursorAfterCardMove (#492)', () => {
     const columns = [colWith('doing', [anchor, mover])]
     expect(cursorAfterCardMove(columns, 'doing', taskIdentityKey(anchor)).cardIdx).toBe(0)
     expect(cursorAfterCardMove(columns, 'doing', taskIdentityKey(mover)).cardIdx).toBe(1)
+  })
+})
+
+describe('applyColumnOrder (persisted card arrangement replay)', () => {
+  const a = task('inbox/a.md', 0, 'A')
+  const b = task('inbox/b.md', 0, 'B')
+  const c = task('inbox/c.md', 0, 'C')
+
+  const saved = (key: string, keys: string[]): Map<string, string[]> => new Map([[key, keys]])
+  const texts = (columns: Column[], i: number): string[] =>
+    columns[i].tasks.map((t) => t.content)
+
+  it('replays a saved arrangement over the built sort', () => {
+    const columns = [colWith('today', [a, b, c])]
+    const order = saved('status:today', [
+      taskIdentityKey(c),
+      taskIdentityKey(a),
+      taskIdentityKey(b)
+    ])
+    expect(texts(applyColumnOrder('status', columns, order), 0)).toEqual(['C', 'A', 'B'])
+  })
+
+  it('keeps unlisted (new) cards after the arranged ones, in built order', () => {
+    const columns = [colWith('today', [a, b, c])]
+    const order = saved('status:today', [taskIdentityKey(c)])
+    expect(texts(applyColumnOrder('status', columns, order), 0)).toEqual(['C', 'A', 'B'])
+  })
+
+  it('ignores saved keys whose task is no longer in the column', () => {
+    // C was completed or rescheduled since the arrangement was saved.
+    const columns = [colWith('today', [a, b])]
+    const order = saved('status:today', [
+      taskIdentityKey(c),
+      taskIdentityKey(b),
+      taskIdentityKey(a)
+    ])
+    expect(texts(applyColumnOrder('status', columns, order), 0)).toEqual(['B', 'A'])
+  })
+
+  it('leaves columns without a saved arrangement untouched', () => {
+    const columns = [colWith('today', [a, b]), colWith('upcoming', [c])]
+    const order = saved('status:today', [taskIdentityKey(b), taskIdentityKey(a)])
+    const out = applyColumnOrder('status', columns, order)
+    expect(texts(out, 0)).toEqual(['B', 'A'])
+    expect(out[1]).toBe(columns[1])
+  })
+
+  it('scopes the arrangement to its board, so group-bys do not bleed', () => {
+    // A same-named column on a different board must not pick up this order.
+    const columns = [colWith('today', [a, b])]
+    const order = saved('status:today', [taskIdentityKey(b), taskIdentityKey(a)])
+    expect(texts(applyColumnOrder('priority', columns, order), 0)).toEqual(['A', 'B'])
   })
 })

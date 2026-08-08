@@ -67,13 +67,30 @@ const CHANNELS = {
     return { found: m?.[1] ?? null }
   },
 
-  async 'AUR (zennotes-bin)'() {
+  // Two sources, deliberately, because they disagree for a while after a push.
+  // The RPC is a cached view and served the previous release for ~20 minutes
+  // after 2.20.0 went out, while the package itself was already live: that is a
+  // red check on every release day, at the one place where "it goes green on
+  // its own later" is the most expensive habit to teach. So a disagreeing RPC
+  // is not the answer, it is the question, and the tiebreaker is the .SRCINFO
+  // in the package's own git repo, which is what `makepkg` actually builds.
+  async 'AUR (zennotes-bin)'(target) {
     const j = await getJson(
       'https://aur.archlinux.org/rpc/v5/info?arg%5B%5D=zennotes-bin',
     )
     // AUR Version is "<pkgver>-<pkgrel>"; compare the pkgver part.
-    const v = j.results?.[0]?.Version
-    return { found: v ? v.split('-')[0] : null }
+    const rpcVersion = j.results?.[0]?.Version?.split('-')[0] ?? null
+    if (rpcVersion === target) return { found: rpcVersion }
+
+    const srcinfo = await getText(
+      'https://aur.archlinux.org/cgit/aur.git/plain/.SRCINFO?h=zennotes-bin',
+    )
+    const published = srcinfo.match(/^\s*pkgver\s*=\s*(\S+)/m)?.[1] ?? null
+    if (published === target) {
+      return { found: published, note: `RPC cache still says ${rpcVersion ?? 'nothing'}` }
+    }
+    // Both agree it is behind, so it is genuinely unpublished rather than cached.
+    return { found: published ?? rpcVersion }
   },
 
   async Nix() {
@@ -112,9 +129,12 @@ console.log(`\nVerifying all public channels serve ZenNotes v${target}\n`)
 const rows = []
 for (const [name, probe] of Object.entries(CHANNELS)) {
   try {
-    const { found } = await probe()
+    const { found, note } = await probe(target)
     if (found === null) rows.push({ name, found: '(not published yet)', status: 'NA' })
-    else rows.push({ name, found, status: found === target ? 'OK' : 'STALE' })
+    else {
+      const shown = note ? `${found}  (${note})` : found
+      rows.push({ name, found: shown, status: found === target ? 'OK' : 'STALE' })
+    }
   } catch (err) {
     rows.push({ name, found: `error: ${err.message}`, status: 'ERROR' })
   }

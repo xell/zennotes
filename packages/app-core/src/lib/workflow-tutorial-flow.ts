@@ -6,7 +6,9 @@
 // view), so none of the tutorial's text ever rides the boot path.
 import { useStore } from '../store'
 import { useToastStore } from './toast'
+import { vaultRelativeFolderPath } from './vault-layout'
 import {
+  TUTORIAL_FOLDER_SUBPATH,
   TUTORIAL_WORKFLOW_SLUG,
   cleanupWorkflowTutorial,
   seedWorkflowTutorial
@@ -24,7 +26,13 @@ export async function startWorkflowTutorial(): Promise<void> {
   const state = useStore.getState()
   try {
     if (!state.workflowsEnabled) state.setWorkflowsEnabled(true)
-    await seedWorkflowTutorial(window.zen)
+    // Resolved, not `inbox/...`: this vault may keep its notes at the root or
+    // have its Inbox remapped, and cleanup deletes through the folder API,
+    // which honors both. See vaultRelativeFolderPath.
+    await seedWorkflowTutorial(
+      window.zen,
+      vaultRelativeFolderPath('inbox', TUTORIAL_FOLDER_SUBPATH, state.vaultSettings)
+    )
     // Feedback first: card up, settings away, view open. The index refreshes
     // trail as best-effort because nothing the card needs depends on them
     // (the view loads its own list on mount), and a hiccup in either must not

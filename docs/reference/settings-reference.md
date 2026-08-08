@@ -33,7 +33,42 @@ Current options include:
 
 - editor behavior
 - search backend preference
+- heading level labels and heading folding shortcuts
+- configurable tab size
+- text replacements
 - Quick Note naming behavior
+
+### Heading level labels and folding
+
+`Heading level labels` shows H1 through H6 before Markdown headings. Heading
+fold arrows are always available. Click an arrow, press `Ctrl+Alt+F` or
+`Ctrl+Alt+U` (`Cmd+Option+F` or `Cmd+Option+U` on macOS), or use `zc` and `zo`
+in Vim mode to collapse or expand the section at the cursor.
+
+### Tab size
+
+Tab size accepts values from 1 through 8. It controls both the rendered tab
+width and the indentation unit in the Markdown editors.
+
+### Text replacements
+
+The dedicated `Settings → Editor → Text replacements` tab manages snippets that
+expand while typing. ZenNotes starts with `->` to `→`. Rules can insert symbols,
+words, or longer phrases, and the longest matching trigger wins.
+
+Text replacements and the other editor preferences are portable through
+`config.toml`. The rules live in the `[text_replacements]` table.
+
+### Editor and Preview cursor position
+
+Switching between Edit, Split, and Preview preserves the editor selection, so
+returning to Edit restores the same cursor position.
+
+### Equation numbering
+
+With the KaTeX renderer, unstarred `\\begin{equation}…\\end{equation}`
+environments inside display math blocks are numbered in document order. The
+same numbering appears in live editing and Preview.
 
 ### Vault text search backend
 
@@ -87,6 +122,8 @@ ZenNotes also exposes Vim-oriented flows in the shared UI.
 Important current examples:
 
 - `Export note as PDF` defaults to `Shift+Mod+E`
+- `Switch to previous note` defaults to `Ctrl+Tab`
+- `Fold heading` defaults to `Ctrl+Alt+F` and `Unfold heading` to `Ctrl+Alt+U`; macOS uses `Cmd+Option+F` and `Cmd+Option+U`
 - `Zoom in` defaults to `Mod+=`
 - `Zoom out` defaults to `Mod+-`
 - `Reset zoom` defaults to `Mod+0`

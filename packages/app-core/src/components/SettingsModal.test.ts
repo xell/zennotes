@@ -31,6 +31,9 @@ const mocks = vi.hoisted(() => {
       setVaultSettings: vi.fn(),
       showSidebarChevrons: true,
       systemFolderLabels: {},
+      textReplacements: { '->': '→' },
+      textReplacementsEnabled: true,
+      setTextReplacements: vi.fn(),
       textFont: null,
       themeFamily: 'apple',
       themeId: 'apple-light',
@@ -203,5 +206,31 @@ describe('SettingsModal date note directories', () => {
       monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
       folderIcons: {}
     })
+  })
+
+  it('opens the text replacements tab and saves edited rules', async () => {
+    await act(async () => {
+      root.render(createElement(SettingsModal))
+    })
+
+    const editorButton = [...host.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Editor'
+    )
+    expect(editorButton).toBeTruthy()
+    await act(async () => editorButton!.click())
+
+    const replacementsTab = [...host.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Text replacements'
+    )
+    expect(replacementsTab).toBeTruthy()
+    await act(async () => replacementsTab!.click())
+
+    const trigger = host.querySelector<HTMLInputElement>('input[aria-label="Text to replace"]')
+    const replacement = host.querySelector<HTMLInputElement>('input[aria-label="Replacement text"]')
+    expect(trigger?.value).toBe('->')
+    expect(replacement?.value).toBe('→')
+
+    await act(async () => changeInput(trigger!, '(c)'))
+    expect(mocks.state.setTextReplacements).toHaveBeenCalledWith({ '(c)': '→' })
   })
 })

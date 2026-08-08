@@ -47,6 +47,11 @@ export interface VaultTask {
    *  exclusive with `checked`/`forwarded`; kept out of the active buckets and
    *  collected under its own group. */
   cancelled: boolean
+  /** True for a `[/]` task in progress: started, not finished (#512). Unlike
+   *  the other non-empty state chars this one is still OPEN work, so it stays
+   *  in Today/Upcoming, on the calendar, and on the board. It marks *how* an
+   *  open task is going, not that it left the active set. */
+  inProgress: boolean
   /** ISO YYYY-MM-DD, validated via Date round-trip. */
   due?: string
   /** True when `due` was *derived* from the containing daily note's date
@@ -281,6 +286,7 @@ export function parseTasksFromBody(body: string, ctx: ParseTasksContext): VaultT
     const checked = checkedChar === 'x' || checkedChar === 'X'
     const forwarded = checkedChar === '>'
     const cancelled = checkedChar === '-'
+    const inProgress = checkedChar === '/'
 
     const tokens = extractTokens(tail)
 
@@ -296,6 +302,7 @@ export function parseTasksFromBody(body: string, ctx: ParseTasksContext): VaultT
       checked,
       forwarded,
       cancelled,
+      inProgress,
       due: tokens.due ?? defaults.due,
       priority: tokens.priority ?? defaults.priority,
       waiting: tokens.waiting,
@@ -329,6 +336,19 @@ const DONE_STATUSES = new Set(['done', 'complete', 'completed', 'x'])
 /** Frontmatter `status:` values treated as cancelled — intentionally abandoned
  *  (#450). Kept out of the active/done buckets, collected under Cancelled. */
 export const CANCELLED_STATUSES = new Set(['cancelled', 'canceled'])
+
+/** Frontmatter `status:` values treated as in progress (#512), the file-task
+ *  equivalent of a `- [/]` checkbox. `in-progress` is what TaskNotes writes;
+ *  the rest are what people type by hand. These stay OPEN, so a file task
+ *  someone started still shows up in Today. */
+export const IN_PROGRESS_STATUSES = new Set([
+  'in-progress',
+  'in progress',
+  'inprogress',
+  'doing',
+  'started',
+  'wip'
+])
 
 function asArray(v: string | string[] | undefined): string[] {
   if (v == null) return []
@@ -371,6 +391,7 @@ export function parseTaskFile(body: string, ctx: ParseTasksContext): VaultTask |
     checked: DONE_STATUSES.has(status),
     forwarded: false,
     cancelled: CANCELLED_STATUSES.has(status),
+    inProgress: IN_PROGRESS_STATUSES.has(status),
     due: normalizeDueDate(firstScalar(fm.due)),
     priority: normalizePriority(firstScalar(fm.priority)),
     waiting: status === 'waiting',
@@ -392,6 +413,18 @@ function toIsoDate(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
+}
+
+/**
+ * Tasks the live Tasks surfaces show. Archived notes keep their tasks in the
+ * markdown, but by default those tasks retire from the list, boards, and
+ * calendars together with the note; `showArchived` (Settings, mirrored by the
+ * `show_archived_tasks` config key) brings them back. Trash never appears,
+ * which the scanners on every surface already guarantee. (#540)
+ */
+export function filterTasksForDisplay(tasks: VaultTask[], showArchived: boolean): VaultTask[] {
+  if (showArchived) return tasks
+  return tasks.filter((task) => task.noteFolder !== 'archive')
 }
 
 /** Group using a "today" anchor — caller supplies it so tests are stable and

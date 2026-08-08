@@ -309,4 +309,31 @@ describe('livePreviewPlugin', () => {
 
     view.destroy()
   })
+
+  it('renders a `- [/]` in-progress marker without striking the text (#512)', () => {
+    // `[/]` parses as a broken link, not a TaskMarker, so the plugin replaces
+    // the node itself. Cursor on the intro line keeps the task line inactive.
+    const doc = ['intro', '- [/] started item', '- [ ] pending item'].join('\n')
+    const view = mountEditor(doc, 0)
+
+    expect(view.dom.querySelectorAll('.cm-task-in-progress-marker')).toHaveLength(1)
+    // The raw `[/]` is replaced, and the text after it is untouched: no strike
+    // mark (that belongs to done/cancelled), and the content still reads.
+    expect(view.dom.textContent).toContain('started item')
+    expect(view.dom.textContent).not.toContain('[/]')
+    expect(view.dom.querySelectorAll('.cm-task-done')).toHaveLength(0)
+    expect(view.dom.querySelectorAll('.cm-task-cancelled')).toHaveLength(0)
+
+    view.destroy()
+  })
+
+  it('reveals the raw `[/]` while the cursor is on the line', () => {
+    const doc = ['intro', '- [/] started item'].join('\n')
+    const view = mountEditor(doc, doc.indexOf('started'))
+
+    expect(view.dom.textContent).toContain('[/]')
+    expect(view.dom.querySelectorAll('.cm-task-in-progress-marker')).toHaveLength(0)
+
+    view.destroy()
+  })
 })

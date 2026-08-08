@@ -73,6 +73,7 @@ import type {
 import type { VaultTask } from '@shared/tasks'
 import { createDatabaseOps, type DatabaseVaultLayout } from '@shared/database-ops'
 import { isUnknownRouteResponse, parseServerErrorBody } from '@shared/server-error-shape'
+import { createAbsenceAwareReader } from '@shared/remote-absence'
 import type {
   McpClientId,
   McpClientStatus,
@@ -245,11 +246,20 @@ async function getCurrentVault(): Promise<VaultInfo | null> {
   }
 }
 
+/** Last capabilities this page saw, so the absence reader can consult them
+ *  without a request of its own. Null until the first successful fetch. */
+let lastServerCapabilities: ServerCapabilities | null = null
+
 function getServerCapabilities(): Promise<ServerCapabilities | null> {
-  return jsonRequest<ServerCapabilities>('/capabilities').catch((err) => {
-    if (err instanceof HttpRequestError && err.status === 404) return null
-    throw err
-  })
+  return jsonRequest<ServerCapabilities>('/capabilities')
+    .then((caps) => {
+      lastServerCapabilities = caps
+      return caps
+    })
+    .catch((err) => {
+      if (err instanceof HttpRequestError && err.status === 404) return null
+      throw err
+    })
 }
 
 function getServerSession(): Promise<ServerSessionStatus> {
@@ -688,21 +698,18 @@ function scanTasksForPath(relPath: string): Promise<VaultTask[]> {
 
 /** Read a vault file's text, or null when the server says it is ABSENT.
  *
- *  404 and nothing else. `openDatabase` reads "absent sidecar" as "this is a
- *  bare CSV, adopt it" and then writes an inferred schema.json over whatever
- *  was there, so every error this swallows is a schema the user loses: a 500,
- *  a dropped connection, an auth rejection all mean the file may exist
- *  perfectly well. Older servers answered 500 for a missing file and are
- *  deliberately no longer humored: an unopenable database is recoverable,
- *  an overwritten one is not. */
-async function readFileTextOrNull(relPath: string): Promise<string | null> {
-  try {
-    return (await readNote(relPath)).body
-  } catch (err) {
-    if (err instanceof HttpRequestError && err.status === 404) return null
-    throw err
-  }
-}
+ *  404 always means absent. Any other status means absent only if this
+ *  server cannot answer 404 for a missing file, which the reader settles by
+ *  asking it once (see remote-absence.ts). That keeps a 2.20+ server's 500
+ *  surfacing as an error, because `openDatabase` reads an absent sidecar as
+ *  "bare CSV, adopt it" and would write an inferred schema over whatever was
+ *  there, while leaving a pre-2.20 server (500 for both) usable at all. */
+const readFileTextOrNull = createAbsenceAwareReader({
+  read: async (relPath) => (await readNote(relPath)).body,
+  statusOf: (err) => (err instanceof HttpRequestError ? err.status : null),
+  serverReportsMissingAsNotFound: () =>
+    lastServerCapabilities?.reportsMissingAsNotFound === true
+})
 
 /** Errors propagate: answering "defaults" for an unreachable server sends
  *  every database path composition to a literal `inbox/`, writing sidecars

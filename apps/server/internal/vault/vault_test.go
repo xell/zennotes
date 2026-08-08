@@ -217,6 +217,39 @@ func TestReadNoteRefusesSymlinkOutsideVault(t *testing.T) {
 	}
 }
 
+// A `.base` database is a directory, and a client that treats one as a note
+// asks to read it as a file. The answer has to be the same everywhere: the
+// errno differs by platform (EISDIR on Unix, ERROR_INVALID_FUNCTION on
+// Windows), which is why the HTTP layer once said 400 on macOS and Linux and
+// 500 on Windows for the identical request. ReadNote classifies it from its
+// own stat, so this test means the same thing on every runner.
+func TestReadNoteRejectsADirectoryOnEveryPlatform(t *testing.T) {
+	root := t.TempDir()
+	v, err := New(root, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(v.Root(), "inbox", "Db.base"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(v.Root(), "inbox", "Real.md"), []byte("# Real\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := v.ReadNote("inbox/Db.base"); !errors.Is(err, ErrIsDirectory) {
+		t.Fatalf("reading a directory: got %v, want ErrIsDirectory", err)
+	}
+	// The classification must not swallow the two answers around it: a real
+	// note still reads, and a missing file inside that directory is still
+	// absent rather than "is a directory".
+	if _, err := v.ReadNote("inbox/Real.md"); err != nil {
+		t.Fatalf("reading a note: %v", err)
+	}
+	if _, err := v.ReadNote("inbox/Db.base/data.csv"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing file: got %v, want os.ErrNotExist", err)
+	}
+}
+
 func TestWriteNoteRefusesSymlinkOutsideVault(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink semantics differ on windows")
@@ -861,9 +894,17 @@ func TestDatabaseBaseFolderListedButInternalsHidden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// #527: a database's record pages ARE notes. The desktop lists them, so a
+	// remote vault must too, or every wikilink into a database resolves to
+	// nothing on the server while working locally.
+	if !hasNotePath(notes, "inbox/Books.base/Dune.md") {
+		t.Error("ListNotes dropped a database record page, so wikilinks into the database cannot resolve")
+	}
+	// The database's own machinery is not a note, and never was: only `.md`
+	// files are collected, so data.csv and schema.json cannot surface here.
 	for _, n := range notes {
-		if strings.Contains(n.Path, ".base") {
-			t.Errorf("ListNotes leaked a database-internal note: %s", n.Path)
+		if strings.HasSuffix(n.Path, "data.csv") || strings.HasSuffix(n.Path, "schema.json") {
+			t.Errorf("ListNotes leaked database internals as a note: %s", n.Path)
 		}
 	}
 	if !hasNotePath(notes, "inbox/Regular.md") {
@@ -1076,5 +1117,47 @@ func TestRenameAndMovePreserveExcalidrawExt(t *testing.T) {
 	}
 	if !strings.HasSuffix(moved.Path, ".excalidraw") {
 		t.Errorf("move dropped the extension: %q", moved.Path)
+	}
+}
+
+// CreateNote seeds the same `# Title` body the desktop app writes (main
+// vault.ts and the MCP vault-ops both do). A remote vault otherwise creates
+// blank notes where a local one has its title, which is most visible on daily
+// notes, whose date heading is the whole point.
+func TestCreateNoteSeedsTheTitleHeadingLikeTheDesktopApp(t *testing.T) {
+	v, err := New(t.TempDir(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	meta, err := v.CreateNote(FolderInbox, "2026-08-04", "Daily Notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(v.Root(), filepath.FromSlash(meta.Path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "# 2026-08-04\n\n" {
+		t.Fatalf("seeded body = %q, want %q", string(body), "# 2026-08-04\n\n")
+	}
+
+	// A deduped file heads itself by its final on-disk stem, like the desktop.
+	if _, err := v.CreateNote(FolderInbox, "Note", ""); err != nil {
+		t.Fatal(err)
+	}
+	second, err := v.CreateNote(FolderInbox, "Note", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Path != "inbox/Note 2.md" {
+		t.Fatalf("deduped path = %q, want inbox/Note 2.md", second.Path)
+	}
+	body, err = os.ReadFile(filepath.Join(v.Root(), filepath.FromSlash(second.Path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "# Note 2\n\n" {
+		t.Fatalf("deduped body = %q, want %q", string(body), "# Note 2\n\n")
 	}
 }

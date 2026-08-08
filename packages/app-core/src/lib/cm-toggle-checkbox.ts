@@ -1,0 +1,73 @@
+/**
+ * Obsidian-style checkbox toggle for the note editor (Mod+L).
+ *
+ * One command, applied to every line the selection touches:
+ *   - a line with no checkbox becomes one, keeping any indentation,
+ *     blockquote prefix, and existing list marker (`* note` -> `* [ ] note`,
+ *     plain text -> `- [ ] text`),
+ *   - `[ ]` and `[/]` (in progress) check off to `[x]`,
+ *   - `[x]` / `[X]` uncheck back to `[ ]`.
+ *
+ * Forwarded `[>]` and cancelled `[-]` lines are left alone: both are
+ * deliberate states with their own commands, and the live-preview checkbox
+ * widget refuses to toggle a forwarded marker for the same reason.
+ *
+ * Each line contributes one minimal change (a single state character, or one
+ * marker insertion), so cursors and selections map through naturally and the
+ * whole toggle is a single undo step.
+ */
+import type { ChangeSpec } from '@codemirror/state'
+import type { EditorView } from '@codemirror/view'
+
+// Leading whitespace plus any run of blockquote markers (`> `, nestable).
+const LINE_PREFIX_RE = /^([ \t]*(?:>[ \t]?)*)/
+// A list marker after the prefix: bullet or ordered, with its trailing gap.
+const LIST_MARKER_RE = /^([-*+]|\d{1,9}[.)])([ \t]+)/
+// A task marker after the list marker: `[c]` followed by whitespace or EOL.
+const TASK_STATE_RE = /^\[(.)\](?:[ \t]|$)/
+
+/** The minimal change that toggles `line` (text at absolute offset `from`),
+ *  or null when the line is intentionally left alone. */
+export function checkboxToggleChange(line: string, from: number): ChangeSpec | null {
+  const prefix = LINE_PREFIX_RE.exec(line)![1]
+  const afterPrefix = line.slice(prefix.length)
+
+  const marker = LIST_MARKER_RE.exec(afterPrefix)
+  if (marker) {
+    const markerEnd = prefix.length + marker[0].length
+    const state = TASK_STATE_RE.exec(line.slice(markerEnd))
+    if (state) {
+      const stateChar = state[1]
+      // Forwarded and cancelled stay untouched; everything else flips
+      // between checked and unchecked, matching the checkbox widget.
+      if (stateChar === '>' || stateChar === '-') return null
+      const at = from + markerEnd + 1
+      return { from: at, to: at + 1, insert: /[xX]/.test(stateChar) ? ' ' : 'x' }
+    }
+    return { from: from + markerEnd, insert: '[ ] ' }
+  }
+
+  return { from: from + prefix.length, insert: '- [ ] ' }
+}
+
+/** Toggle the checkbox on every line any selection range touches. */
+export function toggleCheckbox(view: EditorView): boolean {
+  const { state } = view
+  const changes: ChangeSpec[] = []
+  const seen = new Set<number>()
+  for (const range of state.selection.ranges) {
+    const firstLine = state.doc.lineAt(range.from).number
+    const lastLine = state.doc.lineAt(range.to).number
+    for (let n = firstLine; n <= lastLine; n += 1) {
+      if (seen.has(n)) continue
+      seen.add(n)
+      const line = state.doc.line(n)
+      const change = checkboxToggleChange(line.text, line.from)
+      if (change) changes.push(change)
+    }
+  }
+  if (changes.length > 0) {
+    view.dispatch({ changes, userEvent: 'input' })
+  }
+  return true
+}

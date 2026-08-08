@@ -3,7 +3,9 @@ import {
   findKeymapConflict,
   getDefaultKeymapBinding,
   getKeymapDefinition,
+  getKeymapDefinitions,
   normalizeKeymapOverrides,
+  normalizeShortcutBinding,
   shortcutBindingFromEvent,
   sequenceTokenFromEvent
 } from './keymaps'
@@ -157,6 +159,58 @@ describe('sequenceTokenFromEvent', () => {
 })
 
 describe('leader keymap definitions', () => {
+  it('keeps the recent-note toggle portable with a literal Ctrl+Tab Mac default', () => {
+    withPlatform('darwin', () => {
+      expect(getDefaultKeymapBinding('global.toggleRecentNote')).toBe('Ctrl+Tab')
+    })
+    withPlatform('linux', () => {
+      expect(getDefaultKeymapBinding('global.toggleRecentNote')).toBe('Mod+Tab')
+    })
+    withPlatform('win32', () => {
+      expect(getDefaultKeymapBinding('global.toggleRecentNote')).toBe('Mod+Tab')
+    })
+  })
+
+  it('keeps every shortcut default in the portable Mod spelling', () => {
+    // The shortcut normalizer canonicalizes the platform-primary modifier to
+    // Mod (Ctrl on Windows/Linux, Meta on the Mac), so a default written as
+    // "Ctrl+..." reads back differently on Linux CI than on the Mac this
+    // suite usually runs on, and the shared-domain catalog can only mirror
+    // one of the two spellings. Every shortcut default must round-trip
+    // unchanged on every platform.
+    for (const def of getKeymapDefinitions()) {
+      if (def.kind !== 'shortcut') continue
+      // An empty default means "ships unbound" (this fork does that for
+      // `global.focusSidebar`, `global.togglePaneMaximize` and
+      // `global.gitStatus`, which are bindable but have no out-of-the-box key).
+      // There is no spelling to normalize, and the normalizer returns null for
+      // it, so portability is vacuous here.
+      if (!def.defaultBinding) continue
+      // A default written with a literal `Ctrl+` means Ctrl on every platform,
+      // not "the primary modifier" — the Vim-style bindings this fork ships
+      // (Ctrl+W pane prefix, Ctrl+O/I history, Ctrl+D/U half-page, Ctrl+J/K
+      // page scroll, Ctrl+N/P filter) must stay Ctrl on the Mac, where Mod+N
+      // would collide with New Note. On Linux and Windows Ctrl IS the primary
+      // modifier, so the normalizer folds that spelling into Mod and the
+      // round-trip can never hold; the two spellings name the same physical
+      // key there, so the difference is cosmetic. Assert those on darwin only,
+      // where Ctrl and Mod are genuinely distinct. The shared-domain catalog
+      // spells them identically, and catalog drift has its own test.
+      const literalCtrl = /(^|\+)Ctrl\+/i.test(def.defaultBinding)
+      const platforms = literalCtrl
+        ? (['darwin'] as const)
+        : (['darwin', 'linux', 'win32'] as const)
+      for (const platform of platforms) {
+        const roundTripped = withPlatform(platform, () =>
+          normalizeShortcutBinding(def.defaultBinding)
+        )
+        expect(roundTripped, `${def.id} default is not portable on ${platform}`).toBe(
+          def.defaultBinding
+        )
+      }
+    }
+  })
+
   it('includes switch vault in leader bindings', () => {
     expect(getKeymapDefinition('vim.leaderSwitchVault')).toMatchObject({
       title: 'Leader: switch vault',

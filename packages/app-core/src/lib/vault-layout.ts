@@ -915,18 +915,26 @@ export function isPrimaryNotesAtRoot(
 }
 
 /**
- * Vault-relative path of a folder identified by its section + subpath, mirroring
- * how notes are addressed so folder and note paths share one key space (used by
- * manual drag-to-reorder). For inbox-at-root the subpath is already
- * vault-relative; otherwise it carries the section name as a prefix.
+ * Vault-relative directory for a (folder, subpath) pair: the inverse of
+ * `notePathWithinFolder`, and the only correct way to turn one into a path you
+ * can hand to `writeNote`.
+ *
+ * Joining a literal folder name instead is wrong in two ways at once. A vault
+ * with `primaryNotesLocation: 'root'` keeps its inbox notes AT the root, and
+ * any system folder can be remapped to an arbitrary directory, so `inbox/x`
+ * points at a directory the app never lists in either case. That is not
+ * theoretical: it is how the Workflows tutorial seeded practice notes somewhere
+ * its own cleanup could not reach (#525).
  */
 export function vaultRelativeFolderPath(
   folder: NoteFolder,
   subpath: string,
   settings: VaultSettings | null | undefined
 ): string {
-  if (folder === 'inbox' && isPrimaryNotesAtRoot(settings)) return subpath
-  return subpath ? `${folder}/${subpath}` : folder
+  const sub = (subpath ?? '').replace(/^\/+|\/+$/g, '')
+  if (folder === 'inbox' && isPrimaryNotesAtRoot(settings)) return sub
+  const base = resolveFolderPath(folder, settings?.systemFolderPaths)
+  return sub ? `${base}/${sub}` : base
 }
 
 export function notePathWithinFolder(

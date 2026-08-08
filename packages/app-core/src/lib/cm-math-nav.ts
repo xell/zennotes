@@ -13,6 +13,7 @@ import { completionStatus } from '@codemirror/autocomplete'
 import type { EditorView, KeyBinding } from '@codemirror/view'
 import { mathBlockLineRanges } from './cm-math-render'
 import { embedBlockLineRanges } from './cm-embed-render'
+import { mermaidBlockLineRanges } from './cm-mermaid-render'
 
 function moveIntoRenderedMathBlock(view: EditorView, dir: 1 | -1): boolean {
   const state = view.state
@@ -25,7 +26,8 @@ function moveIntoRenderedMathBlock(view: EditorView, dir: 1 | -1): boolean {
   if (targetNumber < 1 || targetNumber > state.doc.lines) return false
   const block = [
     ...mathBlockLineRanges(state),
-    ...embedBlockLineRanges(state)
+    ...embedBlockLineRanges(state),
+    ...mermaidBlockLineRanges(state)
   ].find((r) => targetNumber >= r.fromLine && targetNumber <= r.toLine)
   if (!block) return false
   // Inside the same (already revealed) block the default motion works; only

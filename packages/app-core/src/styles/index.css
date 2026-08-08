@@ -1820,15 +1820,17 @@ textarea,
   margin-right: 0.15em;
 }
 
-/* Forwarded (`- [>]`, #316) and cancelled (`- [-]`, #450) task markers: an
-   inline-flex box sized and centred exactly like `.cm-task-checkbox` (the list
-   bullet is hidden for these lines). The glyph is a mask-clipped solid box —
-   NOT a font character — because the `→`/`✕` glyphs in many monospace fonts
-   carry heavy side-bearings that paint the character well left of its advance
-   box (~15px off from the checkbox column). An SVG mask is geometric, so it
-   centres perfectly in the column no matter which editor font the user picks. */
+/* Forwarded (`- [>]`, #316), cancelled (`- [-]`, #450) and in-progress
+   (`- [/]`, #512) task markers: an inline-flex box sized and centred exactly
+   like `.cm-task-checkbox` (the list bullet is hidden for these lines). The
+   glyph is a mask-clipped solid box — NOT a font character — because the
+   `→`/`✕` glyphs in many monospace fonts carry heavy side-bearings that paint
+   the character well left of its advance box (~15px off from the checkbox
+   column). An SVG mask is geometric, so it centres perfectly in the column no
+   matter which editor font the user picks. */
 .cm-editor .cm-task-forwarded,
-.cm-editor .cm-task-cancelled-marker {
+.cm-editor .cm-task-cancelled-marker,
+.cm-editor .cm-task-in-progress-marker {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1838,7 +1840,8 @@ textarea,
   margin-right: 0.15em;
 }
 .cm-editor .cm-task-forwarded::before,
-.cm-editor .cm-task-cancelled-marker::before {
+.cm-editor .cm-task-cancelled-marker::before,
+.cm-editor .cm-task-in-progress-marker::before {
   content: "";
   width: 0.9em;
   height: 0.9em;
@@ -1873,6 +1876,18 @@ textarea,
 /* Gray the token spans CodeMirror nests inside the cancelled text too. */
 .cm-editor .cm-task-cancelled * {
   color: rgb(var(--z-grey-0, 128 128 128)) !important;
+}
+
+/* In progress: the checkbox square with its left half filled in, in the accent
+   so started work reads as live at a glance. Deliberately the same silhouette
+   as `.cm-task-checkbox` (a rounded square, not a new symbol) — it is the same
+   box part-way to done, and the text is NOT struck, unlike cancelled. */
+.cm-editor .cm-task-in-progress-marker {
+  color: rgb(var(--z-accent));
+}
+.cm-editor .cm-task-in-progress-marker::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5'%3E%3Crect x='3.5' y='3.5' width='17' height='17' rx='3.5'/%3E%3Cpath d='M12 5.5H7.5A2 2 0 0 0 5.5 7.5v9a2 2 0 0 0 2 2H12z' fill='black' stroke='none'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5'%3E%3Crect x='3.5' y='3.5' width='17' height='17' rx='3.5'/%3E%3Cpath d='M12 5.5H7.5A2 2 0 0 0 5.5 7.5v9a2 2 0 0 0 2 2H12z' fill='black' stroke='none'/%3E%3C/svg%3E");
 }
 
 .cm-editor .cm-task-checkbox-input {
@@ -2790,6 +2805,55 @@ html[data-completed-task-style="gray-strikethrough"] .cm-editor .cm-task-done * 
 }
 .prose-zen li.task-list-item > p:not(:first-child) {
   margin: var(--z-prose-block-gap) 0 0;
+}
+
+/* Reading-view markers for the three states GFM has no checkbox for: in
+   progress (`[/]`), cancelled (`[-]`) and forwarded (`[>]`). Same geometry as
+   the checkbox above (absolutely placed in the gutter the item's padding
+   reserves) and the same mask-clipped glyphs the editor draws, so a task looks
+   the same whichever view it is read in. (#512) */
+.prose-zen .zen-task-state {
+  position: absolute;
+  left: 0;
+  top: 0.3em;
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  background-color: currentColor;
+  /* Longhands, NOT the `mask` shorthand: the shorthand resets mask-image, and
+     this rule would then wipe out the per-state glyph below, leaving a solid
+     filled square in the gutter. */
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+.prose-zen .zen-task-state-in-progress {
+  color: rgb(var(--z-accent));
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5'%3E%3Crect x='3.5' y='3.5' width='17' height='17' rx='3.5'/%3E%3Cpath d='M12 5.5H7.5A2 2 0 0 0 5.5 7.5v9a2 2 0 0 0 2 2H12z' fill='black' stroke='none'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5'%3E%3Crect x='3.5' y='3.5' width='17' height='17' rx='3.5'/%3E%3Cpath d='M12 5.5H7.5A2 2 0 0 0 5.5 7.5v9a2 2 0 0 0 2 2H12z' fill='black' stroke='none'/%3E%3C/svg%3E");
+}
+.prose-zen .zen-task-state-cancelled {
+  color: rgb(var(--z-grey-0, 128 128 128));
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E");
+}
+.prose-zen .zen-task-state-forwarded {
+  color: rgb(var(--z-accent));
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 12h15M13 6l7 6-7 6'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 12h15M13 6l7 6-7 6'/%3E%3C/svg%3E");
+}
+/* Cancelled reads as struck through in the reading view too, always: it is the
+   state's meaning, not the completed-task preference. Scoped to the item's own
+   body (the wrapper Preview.tsx adds) so a cancelled parent never strikes a
+   live sub-task, the same rule `task-self-done` follows. */
+.prose-zen li.task-list-item.zen-task-cancelled > .task-item-body,
+.prose-zen li.task-list-item.zen-task-cancelled > p {
+  text-decoration: line-through;
+  text-decoration-color: rgb(var(--z-grey-0));
+  color: rgb(var(--z-grey-0));
 }
 .prose-zen li.task-list-item > ul,
 .prose-zen li.task-list-item > ol {
@@ -4556,6 +4620,40 @@ html[data-completed-task-style="gray-strikethrough"] .prose-zen li.task-list-ite
   color: rgb(var(--z-accent));
 }
 
+/* The chip gutter must fit inside .cm-content's own box. The fold arrow
+ * (≤28px + ≤10px gap) was sized to live inside the default 32px padding;
+ * the chip needs another 30px beyond it, which only exists as centered-
+ * column margin on panes wider than the column cap — on anything narrower
+ * the chip renders under the sidebar. When level labels are enabled the
+ * editor carries this class (see headingFolding) and the content box
+ * reserves the full gutter instead of borrowing margin that may be 0. */
+.cm-editor.zen-heading-level-labels .cm-content {
+  padding-left: 76px;
+}
+.cm-heading-level-label {
+  position: absolute;
+  left: calc(
+    -1 * (
+      var(--z-heading-fold-arrow-size) + var(--z-heading-fold-arrow-gap) + 30px
+    )
+  );
+  top: calc((var(--z-heading-fold-first-line) - 18px) / 2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 18px;
+  border-radius: 4px;
+  color: theme("colors.ink.400");
+  background: rgb(var(--z-bg-2) / 0.72);
+  font-family: var(--z-font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
 /* --- Preview heading fold arrow ------------------------------------ */
 /* Counterpart to the CM live-preview fold arrow: sits in the left
  * margin of every rendered h1–h6 in the preview/prose surface and
@@ -5264,6 +5362,38 @@ html[data-completed-task-style="gray-strikethrough"] .prose-zen li.task-list-ite
 .cm-wysiwyg .cm-editor .cm-math-block .katex-display {
   margin: 0;
 }
+/* Mermaid live-preview widget (#530). Same rules as the math block for the same
+   reason: padding rather than margin, because CodeMirror measures block widgets
+   with getBoundingClientRect and a margin here makes the height map drift, so
+   clicks land further off the deeper you scroll. */
+.cm-wysiwyg .cm-editor .cm-mermaid-block {
+  display: block;
+  text-align: center;
+  margin: 0;
+  padding: 0.5em 0;
+  cursor: text;
+}
+.cm-wysiwyg .cm-editor .cm-mermaid-block svg {
+  max-width: 100%;
+  height: auto;
+  /* Let the click through to CodeMirror so it can place the cursor in the block
+     and reveal the source, rather than the SVG swallowing it. */
+  pointer-events: none;
+}
+/* Nothing drawn yet. Holds a line of height so a note does not jump as diagrams
+   arrive one after another. */
+.cm-wysiwyg .cm-editor .cm-mermaid-pending {
+  min-height: 1.5em;
+}
+.cm-wysiwyg .cm-editor .cm-mermaid-error {
+  font-family: var(--z-font-mono, ui-monospace, monospace);
+  font-size: 0.85em;
+  text-align: left;
+  color: rgb(var(--z-red));
+  opacity: 0.85;
+  white-space: pre-wrap;
+}
+
 .cm-wysiwyg .cm-editor .cm-math-error {
   font-family: var(--z-font-mono, ui-monospace, monospace);
   opacity: 0.75;
@@ -5692,4 +5822,18 @@ html[data-completed-task-style="gray-strikethrough"] .prose-zen li.task-list-ite
 .prose-zen .zen-task-field {
   color: rgb(var(--z-purple));
   background-color: rgb(var(--z-purple) / 0.12);
+}
+/* #512: derived subtask progress on a parent task line. Neutral until every
+   child is done, then it borrows the green the done state already owns. */
+.cm-wysiwyg .cm-editor .cm-task-rollup,
+.prose-zen .zen-task-rollup {
+  margin-left: 0.45em;
+  color: rgb(var(--z-fg-2));
+  background-color: rgb(var(--z-fg-2) / 0.1);
+  font-variant-numeric: tabular-nums;
+}
+.cm-wysiwyg .cm-editor .cm-task-rollup-complete,
+.prose-zen .zen-task-rollup-complete {
+  color: rgb(var(--z-green));
+  background-color: rgb(var(--z-green) / 0.12);
 }
