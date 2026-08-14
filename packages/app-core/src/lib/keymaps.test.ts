@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  eventMatchesUserOverride,
   findKeymapConflict,
   getDefaultKeymapBinding,
   getKeymapDefinition,
@@ -162,29 +161,6 @@ describe('matchesShortcutBinding (digit-row layouts, #497)', () => {
     const event = fakeEvent({ key: '2', code: 'Numpad2', altKey: true })
     withPlatform('win32', () => {
       expect(matchesShortcutBinding(event, 'Alt+2')).toBe(false)
-    })
-  })
-})
-
-describe('eventMatchesUserOverride (#497, rebinds outrank new defaults)', () => {
-  it('flags an event landing on a combination the user rebound elsewhere', () => {
-    const event = fakeEvent({ key: '3', code: 'Digit3', altKey: true })
-    withPlatform('win32', () => {
-      expect(
-        eventMatchesUserOverride(event, { 'global.zoomIn': 'Alt+3' }, 'tabs.select3')
-      ).toBe(true)
-    })
-  })
-
-  it('ignores the excluded id and unrelated overrides', () => {
-    const event = fakeEvent({ key: '3', code: 'Digit3', altKey: true })
-    withPlatform('win32', () => {
-      expect(
-        eventMatchesUserOverride(event, { 'tabs.select3': 'Alt+3' }, 'tabs.select3')
-      ).toBe(false)
-      expect(
-        eventMatchesUserOverride(event, { 'global.zoomIn': 'Alt+4' }, 'tabs.select3')
-      ).toBe(false)
     })
   })
 })

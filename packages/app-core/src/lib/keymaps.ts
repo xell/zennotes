@@ -52,15 +52,6 @@ export type KeymapId =
   | "global.historyBack"
   | "global.historyForward"
   | "global.toggleRecentNote"
-  | "tabs.select1"
-  | "tabs.select2"
-  | "tabs.select3"
-  | "tabs.select4"
-  | "tabs.select5"
-  | "tabs.select6"
-  | "tabs.select7"
-  | "tabs.select8"
-  | "tabs.select9"
   | "vim.leaderPrefix"
   | "vim.leaderOpenBuffers"
   | "vim.leaderWorkflows"
@@ -597,25 +588,6 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     defaultBinding: "Mod+Tab",
     defaultBindingMac: "Ctrl+Tab",
   },
-  // Direct tab selection (#497), browser-style. Alt+digit cross-platform; on
-  // macOS Option+digit types characters on many layouts (the #514 trap) and
-  // Cmd+1/2/4/5/6 already mean sidebar, connections, and the pane modes, so
-  // the Mac default is Ctrl+digit (same escape toggleRecentNote uses for
-  // Ctrl+Tab). Known limit: with multiple Spaces, macOS auto-enables Mission
-  // Control's Ctrl+digit "Switch to Desktop" shortcuts and consumes the key
-  // before the app sees it; the description tells those users to rebind.
-  ...([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map(
-    (n): KeymapDefinition => ({
-      id: `tabs.select${n}` as KeymapId,
-      kind: "shortcut",
-      scope: "app",
-      group: "global",
-      title: `Go to tab ${n}`,
-      description: `Jump straight to tab ${n}, counted across panes in the same order gt cycles. On macOS with multiple Spaces, Mission Control claims Ctrl+${n} for Switch to Desktop; rebind here (or free the key in System Settings) if nothing happens.`,
-      defaultBinding: `Alt+${n}`,
-      defaultBindingMac: `Ctrl+${n}`,
-    }),
-  ),
   {
     id: "vim.leaderPrefix",
     kind: "sequence",
@@ -1518,21 +1490,6 @@ const KEYMAP_INDEX = new Map<KeymapId, KeymapDefinition>(
   KEYMAP_DEFINITIONS.map((definition) => [definition.id, definition] as const),
 );
 
-/** The nine direct tab-selection shortcuts (#497), index = position in the
- *  array + 1. Kept as a list so dispatchers can loop instead of hand-writing
- *  nine matches. */
-export const TAB_SELECT_KEYMAP_IDS: readonly KeymapId[] = [
-  "tabs.select1",
-  "tabs.select2",
-  "tabs.select3",
-  "tabs.select4",
-  "tabs.select5",
-  "tabs.select6",
-  "tabs.select7",
-  "tabs.select8",
-  "tabs.select9",
-];
-
 const KEYMAP_GROUP_LABELS: Record<KeymapGroup, string> = {
   global: "Global shortcuts",
   vim: "Vim-specific shortcuts",
@@ -1969,30 +1926,6 @@ export function matchesShortcut(
   id: KeymapId,
 ): boolean {
   return matchesShortcutBinding(event, getKeymapBinding(overrides, id));
-}
-
-/**
- * True when the event lands on a combination the user has explicitly rebound
- * to some other action. The #497 tab shortcuts shipped nine new defaults into
- * the middle of an ordered dispatch chain, so without this check a
- * pre-existing override on e.g. Alt+3 (checked later in the chain) would
- * silently lose to the new default. An explicit rebind outranks a shipped
- * default; callers skip their default binding when this returns true.
- */
-export function eventMatchesUserOverride(
-  event: KeyboardEvent,
-  overrides: KeymapOverrides | null | undefined,
-  excludeId: KeymapId,
-): boolean {
-  if (!overrides) return false;
-  for (const [id, binding] of Object.entries(overrides)) {
-    if (id === excludeId || typeof binding !== "string") continue;
-    const definition = KEYMAP_INDEX.get(id as KeymapId);
-    if (!definition || definition.kind !== "shortcut") continue;
-    if (definition.scope !== "app") continue;
-    if (matchesShortcutBinding(event, binding)) return true;
-  }
-  return false;
 }
 
 export function matchesSequenceToken(

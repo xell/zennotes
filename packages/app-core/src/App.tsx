@@ -25,13 +25,7 @@ import { ServerDirectoryPickerHost } from './components/ServerDirectoryPickerHos
 import { ToastHost } from './components/ui'
 import { ExcalidrawEmbedMenuHost } from './components/ExcalidrawEmbedMenuHost'
 import { resolveQuickNoteTitle } from './lib/quick-note-title'
-import {
-  eventMatchesUserOverride,
-  isMacPlatform,
-  matchesShortcut,
-  matchesSequenceToken,
-  TAB_SELECT_KEYMAP_IDS
-} from './lib/keymaps'
+import { isMacPlatform, matchesShortcut, matchesSequenceToken } from './lib/keymaps'
 import { confirmApp, confirmAppChoice } from './lib/confirm-requests'
 import {
   anyPdfBufferDirty,
@@ -39,7 +33,6 @@ import {
   saveAllDirtyPdfBuffers
 } from './lib/pdf-buffers'
 import { selectedInboxFolderForIsolation, goUpIsolationWithConfirm } from './lib/sidebar-isolation'
-import { selectActiveBuffer } from './lib/buffer-navigation'
 import { focusPaneOrEdgePanel, focusLastActivePane } from './lib/pane-nav'
 import {
   activatePanelRow,
@@ -771,36 +764,6 @@ function App(): JSX.Element {
         e.preventDefault()
         state.setWordWrap(!state.wordWrap)
         return
-      }
-      // Alt+1..9 (⌃1..9 on macOS): jump straight to tab N (#497). Position
-      // counts across panes in the same order gt cycles through. Bails while
-      // a modal, palette, menu, or Settings (with its keymap recorder) is
-      // open, per the house rule for global key handlers: switching the tab
-      // under an overlay strands the user on a different note than they left.
-      const tabSelectBlocked =
-        state.settingsOpen ||
-        state.searchOpen ||
-        state.vaultTextSearchOpen ||
-        state.commandPaletteOpen ||
-        state.bufferPaletteOpen ||
-        state.templatePaletteOpen ||
-        state.embedDrawingPaletteOpen ||
-        state.outlinePaletteOpen ||
-        document.querySelector('[data-ctx-menu]') ||
-        document.querySelector('[data-prompt-modal]') ||
-        document.querySelector('[data-confirm-modal]')
-      if (!tabSelectBlocked) {
-        for (let i = 0; i < TAB_SELECT_KEYMAP_IDS.length; i += 1) {
-          const id = TAB_SELECT_KEYMAP_IDS[i]
-          if (!matchesShortcut(e, overrides, id)) continue
-          // These defaults were inserted mid-handler: when the combination is
-          // one the user explicitly rebound to another action (checked later
-          // in this chain), the rebind wins over the shipped default.
-          if (!overrides[id] && eventMatchesUserOverride(e, overrides, id)) continue
-          e.preventDefault()
-          selectActiveBuffer(state, i + 1)
-          return
-        }
       }
       if (matchesShortcut(e, overrides, 'global.exportNotePdf')) {
         e.preventDefault()
