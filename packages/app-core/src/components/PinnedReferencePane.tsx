@@ -25,9 +25,9 @@ import {
   lineNumbers,
   tooltips
 } from '@codemirror/view'
-import { vim } from '@replit/codemirror-vim'
 import { unifiedMergeView } from '@codemirror/merge'
 import { history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { vimWithBlockSelection } from '../lib/cm-vim-block-selection'
 import { vimAwareDefaultKeymap, vimAwareMarkdownKeymap } from '../lib/cm-vim-default-keymap'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
@@ -277,7 +277,7 @@ export function PinnedReferencePane(): JSX.Element | null {
           EditorView.contentAttributes.of({
             'aria-label': 'Pinned reference editor'
           }),
-          vimCompartment.of(s0.vimMode ? vim() : []),
+          vimCompartment.of(s0.vimMode ? vimWithBlockSelection() : []),
           history(),
           drawSelection(),
           tabSizeCompartment.of([
@@ -390,7 +390,7 @@ export function PinnedReferencePane(): JSX.Element | null {
     const view = viewRef.current
     const comp = vimCompartmentRef.current
     if (!view || !comp) return
-    view.dispatch({ effects: comp.reconfigure(vimMode ? vim() : []) })
+    view.dispatch({ effects: comp.reconfigure(vimMode ? vimWithBlockSelection() : []) })
   }, [vimMode])
   useEffect(() => {
     const view = viewRef.current

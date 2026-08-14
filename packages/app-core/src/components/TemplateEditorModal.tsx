@@ -8,8 +8,8 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { Compartment, EditorState, type Transaction } from '@codemirror/state'
 import { EditorView, drawSelection, highlightActiveLine, keymap, tooltips } from '@codemirror/view'
-import { vim } from '@replit/codemirror-vim'
 import { history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { vimWithBlockSelection } from '../lib/cm-vim-block-selection'
 import { vimAwareDefaultKeymap, vimAwareMarkdownKeymap } from '../lib/cm-vim-default-keymap'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { yamlFrontmatter } from '@codemirror/lang-yaml'
@@ -117,7 +117,7 @@ export function TemplateEditorModal({
       extensions: [
         appMarkdownSnippetExtension(),
         vimImeControl(),
-        new Compartment().of(vimModeRef.current ? vim() : []),
+        new Compartment().of(vimModeRef.current ? vimWithBlockSelection() : []),
         history(),
         drawSelection(),
         editorTabSize(useStore.getState().editorTabSize),

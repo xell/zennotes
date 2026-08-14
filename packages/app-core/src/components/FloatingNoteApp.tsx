@@ -26,9 +26,10 @@ import {
   lineNumbers,
   tooltips
 } from '@codemirror/view'
-import { Vim, vim } from '@replit/codemirror-vim'
+import { Vim } from '@replit/codemirror-vim'
 import { unifiedMergeView } from '@codemirror/merge'
 import { history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { vimWithBlockSelection } from '../lib/cm-vim-block-selection'
 import { vimAwareDefaultKeymap, vimAwareMarkdownKeymap } from '../lib/cm-vim-default-keymap'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
@@ -402,7 +403,7 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
           EditorView.contentAttributes.of({
             'aria-label': 'Floating note editor'
           }),
-          new Compartment().of(prefs.vimMode ? vim() : []),
+          new Compartment().of(prefs.vimMode ? vimWithBlockSelection() : []),
           history(),
           drawSelection(),
           editorTabSize(prefs.editorTabSize),

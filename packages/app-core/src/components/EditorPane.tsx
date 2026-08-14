@@ -37,7 +37,7 @@ import {
   tooltips
 } from '@codemirror/view'
 import { unifiedMergeView } from '@codemirror/merge'
-import { Vim, getCM, vim } from '@replit/codemirror-vim'
+import { Vim, getCM } from '@replit/codemirror-vim'
 import type { AssetMeta, ImportedAsset, NoteComment, NoteFolder } from '@shared/ipc'
 import {
   history,
@@ -62,6 +62,7 @@ import { forwardOnCheckboxArrow } from '../lib/cm-forward-task'
 import { hopMarkerBackward, hopMarkerForward } from '../lib/cm-marker-hop'
 import { toggleCheckbox } from '../lib/cm-toggle-checkbox'
 import { completionKeymapForEditor, completionNavKeymap } from '../lib/cm-completion-nav'
+import { vimWithBlockSelection } from '../lib/cm-vim-block-selection'
 import { vimAwareDefaultKeymap, vimAwareMarkdownKeymap } from '../lib/cm-vim-default-keymap'
 import { toCodeMirrorKey, vimHalfPageKeymap } from '../lib/vim-half-page-keymap'
 import { scrollOff } from '../lib/cm-scrolloff'
@@ -1811,7 +1812,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
           EditorView.contentAttributes.of({
             'aria-label': 'Note editor'
           }),
-          vimCompartment.of(s0.vimMode ? vim() : []),
+          vimCompartment.of(s0.vimMode ? vimWithBlockSelection() : []),
           historyCompartment.of(history()),
           diffCompartment.of([]),
           drawSelectionCompartment.of(
@@ -2254,7 +2255,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     const view = viewRef.current
     const comp = vimCompartmentRef.current
     if (!view || !comp) return
-    const effects = [comp.reconfigure(vimMode ? vim() : [])]
+    const effects = [comp.reconfigure(vimMode ? vimWithBlockSelection() : [])]
     const keymapComp = editorKeymapCompartmentRef.current
     if (keymapComp) effects.push(keymapComp.reconfigure(buildEditorKeymap(vimMode, tabNavOverrides)))
     view.dispatch({ effects })

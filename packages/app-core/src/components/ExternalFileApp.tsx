@@ -19,8 +19,9 @@ import {
   keymap,
   tooltips
 } from '@codemirror/view'
-import { Vim, vim } from '@replit/codemirror-vim'
+import { Vim } from '@replit/codemirror-vim'
 import { history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { vimWithBlockSelection } from '../lib/cm-vim-block-selection'
 import { vimAwareDefaultKeymap, vimAwareMarkdownKeymap } from '../lib/cm-vim-default-keymap'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
@@ -158,7 +159,7 @@ export function ExternalFileApp(): JSX.Element {
           EditorView.contentAttributes.of({
             'aria-label': 'External file editor'
           }),
-          new Compartment().of(prefs.vimMode ? vim() : []),
+          new Compartment().of(prefs.vimMode ? vimWithBlockSelection() : []),
           history(),
           drawSelection(),
           editorTabSize(prefs.editorTabSize),
