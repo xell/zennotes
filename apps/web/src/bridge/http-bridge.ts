@@ -88,6 +88,7 @@ const WEB_CAPABILITIES: ZenCapabilities = {
   supportsFloatingWindows: false,
   supportsLocalFilesystemPickers: false,
   supportsRemoteWorkspace: false,
+  supportsCloudSync: false,
   supportsCliInstall: false,
   supportsCustomTemplates: false
 }
@@ -994,6 +995,19 @@ function resolveVaultAssetUrl(_vaultRoot: string, assetPath: string): string | n
   return `${API_BASE}/assets/raw?path=${encodeURIComponent(normalized)}`
 }
 
+async function readVaultAssetBase64(assetPath: string): Promise<string> {
+  const url = resolveVaultAssetUrl('', assetPath)
+  if (!url) throw new Error('Asset path is invalid.')
+  const response = await fetch(url)
+  if (!response.ok) throw new Error('Asset could not be read.')
+  const bytes = new Uint8Array(await response.arrayBuffer())
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
+  }
+  return btoa(binary)
+}
+
 function posixJoin(a: string, b: string): string {
   if (!a) return b
   if (!b) return a
@@ -1390,6 +1404,32 @@ export const httpBridge: ZenBridge = {
   checkForAppUpdatesWithUi,
   downloadAppUpdate,
   installAppUpdate,
+  getCloudAccountStatus: async () => ({ state: 'disconnected', account: null }),
+  connectCloudAccount: async () => notImplemented('connectCloudAccount'),
+  logoutCloudAccount: async () => ({ state: 'disconnected', account: null }),
+  onCloudAccountChange: () => () => {},
+  getCloudServiceAccount: async () => notImplemented('getCloudServiceAccount'),
+  listCloudPublishedNotes: async () => notImplemented('listCloudPublishedNotes'),
+  publishCloudNote: async () => notImplemented('publishCloudNote'),
+  updateCloudPublishedNote: async () => notImplemented('updateCloudPublishedNote'),
+  unpublishCloudNote: async () => notImplemented('unpublishCloudNote'),
+  listCloudVaults: async () => notImplemented('listCloudVaults'),
+  getCloudVaultLink: async () => null,
+  linkCloudVault: async () => notImplemented('linkCloudVault'),
+  createAndLinkCloudVault: async () => notImplemented('createAndLinkCloudVault'),
+  unlinkCloudVault: async () => notImplemented('unlinkCloudVault'),
+  syncCloudVault: async () => notImplemented('syncCloudVault'),
+  getCloudSettingsConflict: async () => null,
+  resolveCloudSettingsConflict: async () => notImplemented('resolveCloudSettingsConflict'),
+  listCloudBackups: async () => notImplemented('listCloudBackups'),
+  getCloudBackupSchedule: async () => notImplemented('getCloudBackupSchedule'),
+  updateCloudBackupSchedule: async () => notImplemented('updateCloudBackupSchedule'),
+  listCloudBackupItems: async () => notImplemented('listCloudBackupItems'),
+  createCloudBackup: async () => notImplemented('createCloudBackup'),
+  downloadCloudBackup: async () => notImplemented('downloadCloudBackup'),
+  deleteCloudBackup: async () => notImplemented('deleteCloudBackup'),
+  restoreCloudBackup: async () => notImplemented('restoreCloudBackup'),
+  restoreCloudBackupNote: async () => notImplemented('restoreCloudBackupNote'),
   getServerCapabilities,
   getServerSession,
   loginServerSession,
@@ -1479,6 +1519,7 @@ export const httpBridge: ZenBridge = {
   moveNote,
   importFilesToNote,
   importPastedImage,
+  readVaultAssetBase64,
   renameAsset,
   moveAsset,
   duplicateAsset,

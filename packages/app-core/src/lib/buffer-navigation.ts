@@ -22,11 +22,52 @@ export interface BufferNavigationRuntime {
   ) => Promise<unknown>
 }
 
+// gt/gT and Ctrl+1..9 stay scoped to the active pane's own tabs (see below);
+// {count}gt and Alt+digits (#497) are pane-tree-wide by design, so cycling and
+// direct-jump intentionally disagree about which tab is "number 3" across a
+// split — direct-jump is meant to reach any open tab, cycling never "jumps"
+// into a neighboring pane. `openTabOrder`/`targetFor` back only the
+// pane-tree-wide functions further down; `getBufferNavigationTarget` builds
+// its own pane-scoped order and does not use them.
+function openTabOrder(paneLayout: PaneLayout): string[] {
+  const seen = new Set<string>()
+  const order: string[] = []
+  for (const leaf of allLeaves(paneLayout)) {
+    for (const path of leaf.tabs) {
+      if (seen.has(path)) continue
+      seen.add(path)
+      order.push(path)
+    }
+  }
+  return order
+}
+
+function targetFor(
+  paneLayout: PaneLayout,
+  leafId: string,
+  leafTabs: string[],
+  path: string
+): BufferNavigationTarget {
+  const owningLeaf = allLeaves(paneLayout).find((candidate) =>
+    candidate.tabs.includes(path)
+  )
+  if (owningLeaf && owningLeaf.id !== leafId) {
+    return { kind: 'focus', paneId: owningLeaf.id, path }
+  }
+  if (leafTabs.includes(path)) {
+    return { kind: 'focus', paneId: leafId, path }
+  }
+  return { kind: 'open', paneId: leafId, path }
+}
+
 export function getBufferNavigationTarget(
   paneLayout: PaneLayout,
   activePaneId: string,
   notes: BufferNote[],
-  delta: 1 | -1
+  // number, not 1 | -1: real vim's {count}gT walks back `count` tabs (#497),
+  // relative like a repeated gT rather than an absolute jump like {count}gt
+  // (that's getBufferSelectTarget below). Editor.tsx passes -repeat here.
+  delta: number
 ): BufferNavigationTarget {
   const leaf = findLeaf(paneLayout, activePaneId)
   if (!leaf) return { kind: 'none' }
@@ -65,7 +106,9 @@ export function getBufferNavigationTarget(
 
   const baseIndex = leaf.activeTab ? order.indexOf(leaf.activeTab) : -1
   const startIndex = baseIndex >= 0 ? baseIndex : 0
-  const nextIndex = (startIndex + delta + order.length) % order.length
+  // Double modulo: a {count}gT can pass -order.length, which a single
+  // "+ order.length" isn't enough to bring back non-negative.
+  const nextIndex = (((startIndex + delta) % order.length) + order.length) % order.length
   const nextPath = order[nextIndex]
 
   if (leaf.tabs.includes(nextPath)) {
@@ -74,17 +117,26 @@ export function getBufferNavigationTarget(
   return { kind: 'open', paneId: leaf.id, path: nextPath }
 }
 
-export function navigateActiveBuffer(
-  runtime: BufferNavigationRuntime,
-  delta: 1 | -1
-): void {
-  const target = getBufferNavigationTarget(
-    runtime.paneLayout,
-    runtime.activePaneId,
-    runtime.notes,
-    delta
-  )
+/** Direct selection for {count}gt and the Alt+digit shortcuts: 1-based index
+ *  into the open-tab order. An index past the end lands on the last tab, the
+ *  same forgiving read vim gives a too-large {count}gt. Never falls back to
+ *  recent notes: "tab 3" means an open tab or nothing. */
+export function getBufferSelectTarget(
+  paneLayout: PaneLayout,
+  activePaneId: string,
+  index: number
+): BufferNavigationTarget {
+  const leaf = findLeaf(paneLayout, activePaneId)
+  if (!leaf) return { kind: 'none' }
 
+  const order = openTabOrder(paneLayout)
+  if (order.length === 0) return { kind: 'none' }
+
+  const clamped = Math.min(Math.max(Math.trunc(index), 1), order.length)
+  return targetFor(paneLayout, leaf.id, leaf.tabs, order[clamped - 1])
+}
+
+function applyTarget(runtime: BufferNavigationRuntime, target: BufferNavigationTarget): void {
   if (target.kind === 'focus') {
     void runtime.focusTabInPane(target.paneId, target.path)
     return
@@ -102,7 +154,11 @@ export function navigateActiveBuffer(
  * Resolve the Nth tab (0-indexed, left to right) in the active pane — the
  * Ctrl+1..9 direct-jump shortcuts. Unlike `getBufferNavigationTarget`, this
  * never falls back to a recent note or a new quick note: with no tab at that
- * position, there's simply nothing to jump to.
+ * position, there's simply nothing to jump to. Deliberately pane-scoped, like
+ * `getBufferNavigationTarget` above — see that function's comment. Kept
+ * alongside `getBufferSelectTarget`/`selectActiveBuffer` below (#497's
+ * pane-tree-wide {count}gt-absolute and Alt+digit shortcuts) rather than
+ * merged into it: same "jump to tab N" shape, different scope, both bound.
  */
 export function getPaneTabAtIndex(
   paneLayout: PaneLayout,
@@ -124,4 +180,15 @@ export function focusPaneTabByIndex(
   if (target.kind === 'focus') {
     void runtime.focusTabInPane(target.paneId, target.path)
   }
+}
+
+export function navigateActiveBuffer(runtime: BufferNavigationRuntime, delta: number): void {
+  applyTarget(
+    runtime,
+    getBufferNavigationTarget(runtime.paneLayout, runtime.activePaneId, runtime.notes, delta)
+  )
+}
+
+export function selectActiveBuffer(runtime: BufferNavigationRuntime, index: number): void {
+  applyTarget(runtime, getBufferSelectTarget(runtime.paneLayout, runtime.activePaneId, index))
 }

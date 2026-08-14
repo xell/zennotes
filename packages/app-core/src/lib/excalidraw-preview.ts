@@ -9,6 +9,9 @@ import {
 // Re-exported from the leaf `embed-size` module, which owns the parsing. It
 // must not live here: this file dynamic-imports @excalidraw/excalidraw, and
 // anything importing the parser from here inherits that whole graph.
+// embed-size.ts also has parseImageEmbedLabel, this fork's equivalent of
+// upstream's splitEmbedLabel (#570) — same job, different module for the
+// reason above.
 export { parseEmbedSizeHint, type EmbedSize } from './embed-size'
 
 interface CacheEntry {

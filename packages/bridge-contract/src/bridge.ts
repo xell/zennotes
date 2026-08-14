@@ -40,6 +40,24 @@ import type {
 } from './ipc'
 import type { CustomTemplateFile, WriteTemplateInput } from './templates'
 import type {
+  CloudAccountConnectResult,
+  CloudAccountStatus,
+  CloudBackupNoteRestoreResult,
+  CloudBackupRestoreResult,
+  CloudBackupSchedule,
+  CloudBackupSnapshot,
+  CloudBackupSnapshotItem,
+  CloudPublishedNote,
+  CloudPublishedNoteResult,
+  CloudPublishNoteInput,
+  CloudServiceAccount,
+  CloudSyncRunSummary,
+  CloudSyncSettingsChoice,
+  CloudSyncSettingsConflict,
+  CloudSyncVault,
+  CloudVaultLink
+} from './cloud-sync'
+import type {
   ApplyWorkflowInput,
   ExportWorkflowInput,
   ImportedWorkflowFile,
@@ -72,6 +90,7 @@ export interface ZenCapabilities {
   supportsFloatingWindows: boolean
   supportsLocalFilesystemPickers: boolean
   supportsRemoteWorkspace: boolean
+  supportsCloudSync?: boolean
   supportsCliInstall: boolean
   /** Custom templates require local-filesystem CRUD; false on web/remote. */
   supportsCustomTemplates: boolean
@@ -105,6 +124,38 @@ export interface ZenBridge {
   checkForAppUpdatesWithUi(): Promise<void>
   downloadAppUpdate(): Promise<AppUpdateState>
   installAppUpdate(): Promise<void>
+  getCloudAccountStatus(): Promise<CloudAccountStatus>
+  connectCloudAccount(baseUrl?: string): Promise<CloudAccountConnectResult>
+  logoutCloudAccount(): Promise<CloudAccountStatus>
+  onCloudAccountChange(cb: (status: CloudAccountStatus) => void): () => void
+  getCloudServiceAccount(): Promise<CloudServiceAccount>
+  listCloudPublishedNotes(): Promise<CloudPublishedNote[]>
+  publishCloudNote(input: CloudPublishNoteInput): Promise<CloudPublishedNoteResult>
+  updateCloudPublishedNote(
+    shareId: number,
+    input: CloudPublishNoteInput
+  ): Promise<CloudPublishedNoteResult>
+  unpublishCloudNote(shareId: number): Promise<void>
+  listCloudVaults(): Promise<CloudSyncVault[]>
+  getCloudVaultLink(): Promise<CloudVaultLink | null>
+  linkCloudVault(vaultId: string): Promise<CloudVaultLink>
+  createAndLinkCloudVault(name: string): Promise<CloudVaultLink>
+  unlinkCloudVault(): Promise<void>
+  syncCloudVault(): Promise<CloudSyncRunSummary>
+  getCloudSettingsConflict(): Promise<CloudSyncSettingsConflict | null>
+  resolveCloudSettingsConflict(choice: CloudSyncSettingsChoice): Promise<void>
+  listCloudBackups(): Promise<CloudBackupSnapshot[]>
+  getCloudBackupSchedule(): Promise<CloudBackupSchedule>
+  updateCloudBackupSchedule(enabled: boolean): Promise<CloudBackupSchedule>
+  listCloudBackupItems(backupId: string): Promise<CloudBackupSnapshotItem[]>
+  createCloudBackup(label?: string): Promise<CloudBackupSnapshot>
+  downloadCloudBackup(backupId: string): Promise<void>
+  deleteCloudBackup(backupId: string): Promise<void>
+  restoreCloudBackup(backupId: string): Promise<CloudBackupRestoreResult>
+  restoreCloudBackupNote(
+    backupId: string,
+    snapshotItemId: number
+  ): Promise<CloudBackupNoteRestoreResult>
   getServerCapabilities(): Promise<ServerCapabilities | null>
   getServerSession(): Promise<ServerSessionStatus>
   loginServerSession(token: string): Promise<ServerSessionStatus>
@@ -284,6 +335,8 @@ export interface ZenBridge {
   moveNote(relPath: string, targetFolder: NoteFolder, targetSubpath: string): Promise<NoteMeta>
   importFilesToNote(notePath: string, sourcePaths: string[]): Promise<ImportedAsset[]>
   importPastedImage(input: PastedImageInput): Promise<ImportedAsset>
+  /** Read an asset from the active vault without exposing a host filesystem path. */
+  readVaultAssetBase64(assetPath: string): Promise<string>
   renameAsset(relPath: string, nextName: string): Promise<AssetMeta>
   moveAsset(relPath: string, targetDir: string): Promise<AssetMeta>
   duplicateAsset(relPath: string): Promise<AssetMeta>

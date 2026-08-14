@@ -31,12 +31,14 @@ import { unifiedMergeView } from '@codemirror/merge'
 import { history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { vimWithBlockSelection } from '../lib/cm-vim-block-selection'
 import { vimAwareDefaultKeymap, vimAwareMarkdownKeymap } from '../lib/cm-vim-default-keymap'
+import { vimVisualHighlightExtension } from '../lib/cm-vim-visual-highlight'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
 import { applyVimInsertEscape } from '../lib/vim-insert-escape'
 import { applyVimKeymap } from '../lib/vim-keymap'
 import { DEFAULT_VIM_KEYMAP } from '../lib/vim-keymap-defaults'
 import { registerDisplayLineMotion } from '../lib/cm-vim-display-line'
+import { registerHeadingMotion } from '../lib/cm-vim-heading-motion'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
 import {
   orderedListRenumber,
@@ -404,6 +406,7 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
             'aria-label': 'Floating note editor'
           }),
           new Compartment().of(prefs.vimMode ? vimWithBlockSelection() : []),
+          vimVisualHighlightExtension,
           history(),
           drawSelection(),
           editorTabSize(prefs.editorTabSize),
@@ -782,6 +785,7 @@ function registerFloatingVimCommands(): void {
   floatingVimRegistered = true
 
   registerDisplayLineMotion()
+  registerHeadingMotion()
 
   Vim.defineEx('write', 'w', () => {
     void floatingHandlers.persist?.()

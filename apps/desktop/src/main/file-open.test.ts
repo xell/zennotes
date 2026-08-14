@@ -112,6 +112,15 @@ describe('markdownPathsFromArgv', () => {
 })
 
 describe('candidatePathsFromArgv file:// decoding', () => {
+  it('skips the application entry when Electron runs an unpackaged app', () => {
+    expect(
+      candidatePathsFromArgv(
+        ['/path/to/Electron', '/repo/apps/desktop', '/vault/to/open'],
+        true
+      )
+    ).toEqual(['/vault/to/open'])
+  })
+
   it.skipIf(process.platform === 'win32')(
     'decodes folder and file URLs, skips other schemes and malformed URLs',
     () => {
@@ -137,6 +146,45 @@ describe('candidatePathsFromArgv file:// decoding', () => {
         'C:\\plain\\dir'
       ]
       expect(candidatePathsFromArgv(argv)).toEqual(['C:\\home\\user\\notes', 'C:\\plain\\dir'])
+    }
+  )
+})
+
+describe('candidatePathsFromArgv own-app-path filter (#579)', () => {
+  // nixpkgs wraps Electron so a Chromium switch lands BEFORE the positional
+  // app directory; the index-based skip then eats the flag slot and the app's
+  // own `…/apps/desktop` came through as a directory to open.
+  it.skipIf(process.platform === 'win32')(
+    'drops the app dir even when a switch precedes it and the index skip misses',
+    () => {
+      const argv = [
+        '/nix/store/electron/bin/electron',
+        '--ozone-platform-hint=auto',
+        '/nix/store/zennotes/apps/desktop'
+      ]
+      expect(candidatePathsFromArgv(argv, true, '/nix/store/zennotes/apps/desktop')).toEqual([])
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')('keeps real path arguments alongside the filter', () => {
+    const argv = [
+      '/nix/store/electron/bin/electron',
+      '--ozone-platform-hint=auto',
+      '/nix/store/zennotes/apps/desktop',
+      '/home/user/vault',
+      'file:///home/user/notes/todo.md'
+    ]
+    expect(candidatePathsFromArgv(argv, true, '/nix/store/zennotes/apps/desktop')).toEqual([
+      '/home/user/vault',
+      '/home/user/notes/todo.md'
+    ])
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'compares resolved paths, so a trailing slash or dot segment still matches',
+    () => {
+      const argv = ['/bin/electron', '/repo/apps/desktop/', '/repo/apps/../apps/desktop']
+      expect(candidatePathsFromArgv(argv, false, '/repo/apps/desktop')).toEqual([])
     }
   )
 })

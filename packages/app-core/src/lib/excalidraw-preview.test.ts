@@ -24,7 +24,19 @@ describe('parseEmbedSizeHint', () => {
   it('trims whitespace before matching', () => {
     expect(parseEmbedSizeHint('  800  ')).toEqual({ width: 800, height: undefined })
   })
+
+  it('rejects zero dimensions instead of half-applying them', () => {
+    // `|0x300` used to eat the caption, skip the falsy width downstream, and
+    // set only the height, distorting the image.
+    expect(parseEmbedSizeHint('0')).toBeNull()
+    expect(parseEmbedSizeHint('0x300')).toBeNull()
+    expect(parseEmbedSizeHint('300x0')).toBeNull()
+  })
 })
+
+// splitEmbedLabel (#570) is not carried here — parseImageEmbedLabel in
+// embed-size.ts is this fork's equivalent (see excalidraw-preview.ts), with
+// its own coverage in embed-size.test.ts.
 
 describe('resolveExcalidrawEmbedPath', () => {
   const notes = [

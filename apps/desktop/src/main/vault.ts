@@ -80,6 +80,11 @@ import {
   type SystemFolderPaths
 } from '@shared/system-folder-paths'
 import { normalizeTasksExcludedFolders } from '@shared/tasks-excluded-folders'
+import {
+  isTypstPreamblePath,
+  normalizeTypstPreambleSettings,
+  resolveTypstPreambleFolder
+} from '@shared/typst-preamble-folder'
 
 const CONFIG_FILE = 'zennotes.config.json'
 const FOLDERS: NoteFolder[] = ['inbox', 'quick', 'archive', 'trash']
@@ -707,16 +712,98 @@ export async function saveConfig(cfg: PersistedConfig): Promise<void> {
   }
 }
 
+/** The scratch file `writeFileAtomic` renames from: `<name>.<pid>.<stamp>.tmp`.
+ *  The Go server writes the same shape and both watchers filter on it, so the
+ *  two must stay recognizable to each other. Requiring an epoch-length stamp is
+ *  what keeps a file the user named `notes.2024.01.tmp` out of the filter:
+ *  events dropped here are events no window ever hears about. */
+const ATOMIC_WRITE_TEMP_PATTERN = /\.\d+\.\d{13,}\.tmp$/
+
+export function isAtomicWriteTempPath(p: string): boolean {
+  return ATOMIC_WRITE_TEMP_PATTERN.test(path.basename(p))
+}
+
+const ATOMIC_RENAME_ATTEMPTS = 20
+
+function transientRenameError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  return code === 'EACCES' || code === 'EPERM' || code === 'EBUSY'
+}
+
+/** Wait out a reader that temporarily denies replacing the destination. */
+export async function renameWithRetry(
+  from: string,
+  to: string,
+  rename: (from: string, to: string) => Promise<void> = fs.rename,
+  pause: (delayMs: number) => Promise<void> = (delayMs) =>
+    new Promise<void>((resolve) => setTimeout(resolve, delayMs))
+): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await rename(from, to)
+      return
+    } catch (error) {
+      if (attempt >= ATOMIC_RENAME_ATTEMPTS || !transientRenameError(error)) throw error
+      await pause(Math.min(2 ** (attempt - 1), 25))
+    }
+  }
+}
+
+/** Same millisecond, same path, two writers: the stamp alone would name one
+ *  temp file for both and let them interleave into it. */
+let atomicWriteSequence = 0
+
+/** Follow a symlink to the file it points at, so an atomic write lands on the
+ *  target instead of replacing the link. A dangling link resolves to the path
+ *  it names, which is where a plain write would have created the file. */
+async function atomicWriteTarget(absPath: string): Promise<string> {
+  let stats
+  try {
+    stats = await fs.lstat(absPath)
+  } catch {
+    return absPath
+  }
+  if (!stats.isSymbolicLink()) return absPath
+  try {
+    return await fs.realpath(absPath)
+  } catch {
+    return path.resolve(path.dirname(absPath), await fs.readlink(absPath))
+  }
+}
+
 /**
  * Atomically write a file: temp file + fsync + rename. The rename is atomic, so
- * readers never see a half-written file. Exposed for the databases feature
- * (CSV + sidecar). No `.bak` is left behind — those files live next to the
- * user's data and are just clutter.
+ * readers never see a half-written file, which is what stops a note save from
+ * being read back as an empty note by the watcher echo (#585). Exposed for the
+ * databases feature (CSV + sidecar). No `.bak` is left behind — those files live
+ * next to the user's data and are just clutter.
+ *
+ * A rename replaces the DIRECTORY ENTRY, so two things a plain `fs.writeFile`
+ * gave for free have to be put back deliberately:
+ *
+ * - A symlink is written THROUGH, not over. Pointed straight at one, the rename
+ *   would leave a regular file where the link was and detach it from its target
+ *   for good: a note the user sees in two places becomes two files, and a
+ *   `config.toml` managed by stow or chezmoi quietly stops being managed.
+ * - An existing file keeps its own permissions. `fs.writeFile` only applies a
+ *   mode when it creates the file, so a note someone chmod'ed to 0600 must not
+ *   come back 0644 after an edit. Files this call creates are left to the
+ *   default, exactly as before.
  */
 export async function writeFileAtomic(absPath: string, data: string): Promise<void> {
-  const tmp = `${absPath}.${process.pid}.${Date.now()}.tmp`
-  await fs.mkdir(path.dirname(absPath), { recursive: true })
-  const handle = await fs.open(tmp, 'w')
+  const target = await atomicWriteTarget(absPath)
+  atomicWriteSequence = (atomicWriteSequence + 1) % 1000
+  const stamp = `${Date.now()}${String(atomicWriteSequence).padStart(3, '0')}`
+  const tmp = `${target}.${process.pid}.${stamp}.tmp`
+  await fs.mkdir(path.dirname(target), { recursive: true })
+  const existingMode = await fs
+    .stat(target)
+    .then((s) => s.mode & 0o777)
+    .catch(() => null)
+  // 'wx' rather than 'w': a temp file that somehow already exists means another
+  // writer is mid-flight, and failing the save (the note stays dirty and the
+  // next save retries) beats two writers sharing one temp file.
+  const handle = await fs.open(tmp, 'wx')
   try {
     await handle.writeFile(data, 'utf8')
     try {
@@ -728,7 +815,8 @@ export async function writeFileAtomic(absPath: string, data: string): Promise<vo
     await handle.close()
   }
   try {
-    await fs.rename(tmp, absPath)
+    if (existingMode !== null) await fs.chmod(tmp, existingMode)
+    await renameWithRetry(tmp, target)
   } catch (err) {
     try {
       await fs.unlink(tmp)
@@ -1115,6 +1203,7 @@ function normalizeVaultSettings(
     view?: unknown
     systemFolderPaths?: unknown
     tasks?: unknown
+    typstPreambles?: unknown
   }
   const folderIcons: Record<string, FolderIconId> = {}
   if (candidate.folderIcons && typeof candidate.folderIcons === 'object') {
@@ -1170,7 +1259,8 @@ function normalizeVaultSettings(
     favorites: normalizeFavorites(candidate.favorites),
     view: normalizeVaultViewSettings(candidate.view),
     systemFolderPaths: normalizeSystemFolderPaths(candidate.systemFolderPaths),
-    tasks: normalizeTasksSettings(candidate.tasks)
+    tasks: normalizeTasksSettings(candidate.tasks),
+    typstPreambles: normalizeTypstPreambleSettings(candidate.typstPreambles)
   }
 }
 
@@ -1509,6 +1599,12 @@ export async function setVaultSettings(
     ? DEFAULT_VAULT_SETTINGS.primaryNotesLocation
     : await inferredPrimaryNotesLocation(root, statedSystemFolderPaths(next))
   const normalized = normalizeVaultSettings(next, fallbackPrimary)
+  // A note's tags now depend on the preamble folder (#562), so cached metas
+  // describe the OLD setting the moment it moves: renaming the folder has to
+  // drop them or the vault keeps serving tags it no longer believes in, and
+  // pointing the setting away from `typst` would never give those notes their
+  // tags back. Read before the write, while the cache still holds the old value.
+  const previousPreambleFolder = await typstPreambleFolderFor(root)
   // Temporary folder session (#): never write .zennotes/vault.json into a
   // folder the user only dropped in to read. Keep the change in memory.
   if (isEphemeralRoot(root)) return cloneVaultSettings(normalized)
@@ -1516,6 +1612,9 @@ export async function setVaultSettings(
   await fs.writeFile(vaultSettingsPath(root), JSON.stringify(normalized, null, 2), 'utf8')
   const writeStat = await fs.stat(vaultSettingsPath(root))
   vaultSettingsCache.set(root, { settings: normalized, mtimeMs: writeStat.mtimeMs })
+  if (resolveTypstPreambleFolder(normalized.typstPreambles?.folder) !== previousPreambleFolder) {
+    invalidateNoteMetaCache(root)
+  }
   if (normalized.primaryNotesLocation === 'inbox') {
     // The RESOLVED inbox, not the literal one: creating `<root>/inbox` while
     // the settings point the inbox at `01 - Entry/` left a stray directory
@@ -1565,6 +1664,17 @@ export async function setManualOrder(root: string, map: ManualOrderMap): Promise
 export function invalidateVaultSettingsCache(root: string): void {
   vaultSettingsCache.delete(root)
   inferredPrimaryCache.delete(root)
+}
+
+/** The vault's Typst preamble folder (#562), resolved without touching disk
+ *  while the settings cache is warm. `readMeta` runs once per note, so reading
+ *  vault.json there would add an open()+stat() per file to every scan; the
+ *  cache is invalidated on write and by the watcher, so the fast path can only
+ *  serve a value someone has already validated. */
+async function typstPreambleFolderFor(root: string): Promise<string> {
+  const cached = vaultSettingsCache.get(root)
+  const settings = cached ? cached.settings : await getVaultSettings(root)
+  return resolveTypstPreambleFolder(settings.typstPreambles?.folder)
 }
 
 /**
@@ -2221,9 +2331,11 @@ async function hydratePersistedNoteMetaCache(root: string): Promise<void> {
     const raw = await fs.readFile(noteMetaCachePath(root), 'utf8')
     const parsed = JSON.parse(raw) as {
       version?: unknown
+      preambleFolder?: unknown
       entries?: unknown
     }
     if (parsed.version !== NOTE_META_CACHE_VERSION || !Array.isArray(parsed.entries)) return
+    if (parsed.preambleFolder !== (await typstPreambleFolderFor(root))) return
 
     for (const entry of parsed.entries) {
       if (!entry || typeof entry !== 'object') continue
@@ -2293,7 +2405,16 @@ async function persistNoteMetaCacheSnapshot(
     await fs.mkdir(path.dirname(target), { recursive: true })
     await fs.writeFile(
       temp,
-      `${JSON.stringify({ version: NOTE_META_CACHE_VERSION, entries })}\n`,
+      `${JSON.stringify({
+        version: NOTE_META_CACHE_VERSION,
+        // A note's tags depend on which folder holds Typst preambles (#562),
+        // so the file records the folder it was built under. Clearing the
+        // in-memory cache is not enough on its own: whole-root invalidation
+        // re-arms hydration, and without this stamp the next scan would load
+        // these very tags straight back off disk.
+        preambleFolder: await typstPreambleFolderFor(root),
+        entries
+      })}\n`,
       'utf8'
     )
     await fs.rename(temp, target)
@@ -2893,6 +3014,13 @@ async function readMeta(
   } catch {
     /* ignore — treat as empty */
   }
+  // A Typst preamble is Typst source, not prose: `#let vec(x) = bold(x)` and
+  // the `#var` references in its formulas are variables, and indexing them
+  // filled the vault's tag list with `let` and every variable name (#562).
+  // Same reasoning as the Excalidraw skip above, but tags ONLY: a preamble
+  // keeps its excerpt, wikilinks and searchability, which is the whole reason
+  // #486 made preambles ordinary notes rather than hidden files.
+  const isPreamble = isTypstPreamblePath(relPath, await typstPreambleFolderFor(root))
   const meta: NoteMeta = {
     path: relPath,
     title: path.basename(abs, path.extname(abs)),
@@ -2901,7 +3029,7 @@ async function readMeta(
     createdAt: stat.birthtimeMs || stat.ctimeMs,
     updatedAt: stat.mtimeMs,
     size: stat.size,
-    tags: extractTags(body),
+    tags: isPreamble ? [] : extractTags(body),
     wikilinks: extractWikilinks(body),
     assetEmbeds: extractAssetEmbeds(body),
     hasAttachments: bodyHasLocalAsset(body),
@@ -3129,7 +3257,12 @@ export async function readNote(root: string, rel: string): Promise<NoteContent> 
 export async function writeNote(root: string, rel: string, body: string): Promise<NoteMeta> {
   const abs = resolveSafe(root, rel)
   await fs.mkdir(path.dirname(abs), { recursive: true })
-  await fs.writeFile(abs, body, 'utf8')
+  // Atomic on purpose (#585): a plain writeFile truncates first, and the
+  // watcher echo of the PREVIOUS save can read the file inside that window.
+  // The renderer then sees an empty "external change" and replaces the open
+  // buffer with it, wiping the note. With temp-file + rename, no reader can
+  // ever observe a half-written note.
+  await writeFileAtomic(abs, body)
   invalidateNoteMetaCache(root, rel)
   invalidateVaultTextSearchCache(root)
   const folder = await folderOf(root, abs)

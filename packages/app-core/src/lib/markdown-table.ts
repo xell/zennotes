@@ -113,7 +113,10 @@ function unescapeCell(text: string): string {
   return text.replace(/\\\|/g, '|')
 }
 
-function escapeCell(text: string): string {
+/** Escape a cell's text for the source row. Exported so the live-preview widget
+ *  can render a cell through the real GFM parser using the same escaping the
+ *  serializer will write to disk. */
+export function escapeCell(text: string): string {
   return text.replace(/\|/g, '\\|')
 }
 

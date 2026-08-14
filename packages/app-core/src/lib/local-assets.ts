@@ -368,6 +368,13 @@ function buildImageEmbed(
 
   img.classList.add('local-image-embed-image')
   img.dataset.localAssetUrl = resolvedUrl
+  // A |WxH size hint arrives as width/height attributes (#570). The embed
+  // class stretches images to the pane width, and presentational attributes
+  // lose to any CSS rule, so a hinted size must win through inline style.
+  const hintWidth = Number(img.getAttribute('width')) || 0
+  const hintHeight = Number(img.getAttribute('height')) || 0
+  if (hintWidth > 0) img.style.width = `${hintWidth}px`
+  if (hintHeight > 0) img.style.height = `${hintHeight}px`
   frame.append(img, controlsTop, controlsBottom)
 
   const caption = document.createElement('figcaption')

@@ -24,6 +24,7 @@ import {
   systemFolderForDirName
 } from '@shared/system-folder-paths'
 import { normalizeTasksExcludedFolders } from '@shared/tasks-excluded-folders'
+import { normalizeTypstPreambleSettings } from '@shared/typst-preamble-folder'
 import { getISOWeek, getISOWeekYear, mondayOfISOWeek } from './template-render'
 
 // Reserved however the system folders are remapped:
@@ -597,6 +598,7 @@ export function normalizeVaultSettings(
   const normalizedTasksExcluded = normalizeTasksExcludedFolders(
     settings?.tasks?.excludedFolders
   )
+  const normalizedTypstPreambles = normalizeTypstPreambleSettings(settings?.typstPreambles)
   const primaryNotesLocation =
     settings?.primaryNotesLocation === 'root'
       ? 'root'
@@ -665,7 +667,8 @@ export function normalizeVaultSettings(
     ...(settings?.view ? { view: settings.view } : {}),
     ...(normalizedTasksExcluded.length > 0
       ? { tasks: { excludedFolders: normalizedTasksExcluded } }
-      : {})
+      : {}),
+    ...(normalizedTypstPreambles ? { typstPreambles: normalizedTypstPreambles } : {})
   }
 }
 

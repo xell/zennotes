@@ -28,6 +28,7 @@ import {
   WidgetType
 } from '@codemirror/view'
 import {
+  escapeCell,
   insertColumn,
   insertRow,
   moveColumn,
@@ -69,15 +70,37 @@ function vimEnabled(): boolean {
  *  Vim's default `timeoutlen`. (#341) */
 const INSERT_ESCAPE_TIMEOUT_MS = 1000
 
-/** Render a cell's markdown source to inline HTML (sanitized by the markdown
- *  pipeline). Strips the wrapping `<p>` so the content sits inline in the cell.
- *  Empty cells render nothing. */
-function renderInlineCell(text: string): string {
+/**
+ * Render a cell's markdown source to inline HTML (sanitized by the markdown
+ * pipeline). Empty cells render nothing.
+ *
+ * The text goes through the parser AS A TABLE CELL, because that is the only
+ * thing it is: GFM gives cells inline content, never blocks. Handing the bare
+ * text to the block pipeline meant a cell holding just `-` or `+` parsed as a
+ * bullet-list marker and rendered an empty `<li>`, so the character vanished
+ * from the widget while Preview, which parses the real table, showed it fine.
+ * `#`, `1.`, `---` and `> q` were lost or mangled the same way. (#559)
+ *
+ * Round-tripping through a one-cell table keeps the widget on the exact same
+ * parser as the reading view rather than adding an inline-only copy to keep in
+ * sync, and `escapeCell` is the serializer's own escaping, so what the cell
+ * shows is what its row will contain on disk.
+ */
+export function renderInlineCell(text: string): string {
   const trimmed = text.trim()
   if (!trimmed) return ''
-  const html = renderMarkdown(trimmed).trim()
-  const match = html.match(/^<p[^>]*>([\s\S]*?)<\/p>\s*$/)
-  return match ? match[1] : html
+  // A newline would close the synthetic row; cells are single-line by
+  // construction, but contenteditable can hand one back after a paste.
+  const source = escapeCell(trimmed.replace(/\s*\n\s*/g, ' '))
+  const parsed = document.createElement('template')
+  parsed.innerHTML = renderMarkdown(`| ${source} |\n| --- |`)
+  const cell = parsed.content.querySelector('th, td')
+  // Never swallow the text: if the pipeline returns something unexpected (its
+  // error fallback, say), show the source rather than an empty cell.
+  if (cell) return cell.innerHTML
+  const plain = document.createElement('span')
+  plain.textContent = trimmed
+  return plain.innerHTML
 }
 
 /** If a `<!-- zen:cols=… -->` width marker sits on the line right after the

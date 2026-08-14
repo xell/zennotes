@@ -33,20 +33,13 @@ describe('initialWorkspaceRestoreContentPaths', () => {
       ]
     }
 
-    expect(
-      initialWorkspaceRestoreContentPaths(
-        layout,
-        new Set([
-          'inbox/inactive.md',
-          'inbox/active-left.md',
-          'inbox/active-right.md',
-          'archive/inactive.md'
-        ])
-      )
-    ).toEqual(['inbox/active-left.md', 'inbox/active-right.md'])
+    expect(initialWorkspaceRestoreContentPaths(layout)).toEqual([
+      'inbox/active-left.md',
+      'inbox/active-right.md'
+    ])
   })
 
-  it('skips virtual, asset, diagram, missing, and duplicate active tabs', () => {
+  it('skips virtual, asset, diagram, and duplicate active tabs but keeps unverified paths', () => {
     const duplicate = 'inbox/shared.md'
     const diagramPath = diagramTabPath('mermaid', 'flowchart LR\nA --> B')
     const layout: PaneLayout = {
@@ -77,11 +70,14 @@ describe('initialWorkspaceRestoreContentPaths', () => {
           activeTab: diagramPath
         },
         {
+          // Restore runs before the notes index exists, so a path that may
+          // not be on disk anymore is still loaded eagerly: the failed read
+          // is what prunes its tab (#564).
           kind: 'leaf',
-          id: 'missing',
-          tabs: ['inbox/missing.md'],
+          id: 'unverified',
+          tabs: ['inbox/maybe-deleted.md'],
           pinnedTabs: [],
-          activeTab: 'inbox/missing.md'
+          activeTab: 'inbox/maybe-deleted.md'
         },
         {
           kind: 'split',
@@ -108,7 +104,8 @@ describe('initialWorkspaceRestoreContentPaths', () => {
       ]
     }
 
-    expect(initialWorkspaceRestoreContentPaths(layout, new Set([duplicate]))).toEqual([
+    expect(initialWorkspaceRestoreContentPaths(layout)).toEqual([
+      'inbox/maybe-deleted.md',
       duplicate
     ])
   })

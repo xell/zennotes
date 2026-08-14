@@ -41,11 +41,14 @@ import {
 } from '@shared/excalidraw'
 import { TASKS_TAB_PATH, isTasksTabPath, parseTasksFromBody, toIsoDateLocal } from '@shared/tasks'
 import {
+  TYPST_PREAMBLE_FOLDER,
   isTypstPreamblePath,
   preambleKeyFromTitle,
   resolveTypstPreamble,
+  resolveTypstPreambleFolder,
   type TypstPreambleNote
 } from './lib/typst-preamble'
+import { normalizeTypstPreambleFolder } from '@shared/typst-preamble-folder'
 import {
   composeTaskFile,
   setTaskFileStatus,
@@ -299,6 +302,7 @@ const VALID_FAMILIES: ThemeFamily[] = [
   'tokyo-night',
   'kanagawa',
   'black-metal',
+  'rose-pine',
   'custom'
 ]
 const VALID_MODES: ThemeMode[] = ['light', 'dark', 'auto']
@@ -2857,7 +2861,11 @@ function normalizeWorkspaceSizes(raw: unknown, length: number): number[] {
   return sizes.map((value) => value / total)
 }
 
-function sanitizeWorkspaceLayout(raw: unknown, existingPaths: Set<string>): PaneLayout {
+/** Shape-checks a saved pane layout without consulting the notes index: the
+ *  snapshot is restored before the vault listing exists (#564). Tabs whose
+ *  notes are gone survive this pass and are pruned later, by the eager
+ *  restore read for active tabs and by `refreshNotes` once the index lands. */
+function sanitizeWorkspaceLayout(raw: unknown): PaneLayout {
   const usedIds = new Set<string>()
 
   const nextId = (rawId: unknown): string => {
@@ -2872,8 +2880,8 @@ function sanitizeWorkspaceLayout(raw: unknown, existingPaths: Set<string>): Pane
   }
 
   const sanitizePath = (value: unknown): string | null => {
-    if (typeof value !== 'string') return null
-    return existingPaths.has(value) || isWorkspaceVirtualTabPath(value) ? value : null
+    if (typeof value !== 'string' || !value) return null
+    return value
   }
 
   const visit = (value: unknown): PaneLayout | null => {
@@ -3487,6 +3495,13 @@ interface Store {
    * (`vaultRelativeFolderPath` output, e.g. `inbox/Books`).
    */
   toggleTasksExcludedFolder: (relDir: string) => Promise<void>
+  /**
+   * Point the vault at a different Typst preamble folder (#562). Empty or
+   * invalid input restores the default (`typst`). Notes in the folder are
+   * preambles AND are left out of the tag index, so this moves both at once;
+   * the note list is refreshed because every note's tags may have changed.
+   */
+  setTypstPreambleFolder: (folder: string) => Promise<void>
   setNotes: (notes: NoteMeta[]) => void
   setView: (view: View) => void
   /** Open the Tasks panel as a tab in the active pane. If the tab is
@@ -4094,6 +4109,10 @@ interface Store {
 
 /** Debounced per-path save timers. Module-scoped so they survive re-renders. */
 const pathSaveTimers = new Map<string, ReturnType<typeof setTimeout>>()
+/** Per-path write tails. Filesystems and remote workspaces do not promise that
+ *  two concurrent writes finish in call order, so a newer body must not race an
+ *  older one to the final rename. */
+const pathSaveQueues = new Map<string, Promise<void>>()
 const PATH_SAVE_DEBOUNCE_MS = 350
 
 /**
@@ -4922,8 +4941,7 @@ export const useStore = create<Store>((set, get) => {
     }
 
     const snapshot = rawSnapshot as Partial<WorkspaceSnapshot>
-    const existingPaths = new Set(get().notes.map((note) => note.path))
-    let layout = sanitizeWorkspaceLayout(snapshot.paneLayout, existingPaths)
+    let layout = sanitizeWorkspaceLayout(snapshot.paneLayout)
     // A workspace saved while Workflows was on (or synced from a machine where
     // it still is) must not resurrect the canvas for someone who turned the
     // feature off.
@@ -4933,8 +4951,7 @@ export const useStore = create<Store>((set, get) => {
     const unreadable = new Set<string>()
     const contents: Record<string, NoteContent> = {}
     const dirty: Record<string, boolean> = {}
-    const pathsToLoad = initialWorkspaceRestoreContentPaths(layout, existingPaths)
-    const initiallyLoadedPaths = new Set(pathsToLoad)
+    const pathsToLoad = initialWorkspaceRestoreContentPaths(layout)
 
     await Promise.all(
       pathsToLoad.map(async (path) => {
@@ -4951,11 +4968,6 @@ export const useStore = create<Store>((set, get) => {
     if (unreadable.size > 0) {
       layout = rewritePathsInTree(layout, (path) => (unreadable.has(path) ? null : path))
     }
-    const restorePrefetchPaths = workspaceRestorePrefetchContentPaths(
-      layout,
-      existingPaths,
-      initiallyLoadedPaths
-    )
 
     const ensured = ensureActivePane(
       layout,
@@ -4995,12 +5007,70 @@ export const useStore = create<Store>((set, get) => {
     scheduleAssetsRefreshForVault(vault)
     recordRendererPerf('workspace.restore', performance.now() - startedAt, {
       panes: allLeaves(ensured.layout).length,
-      eagerNotes: pathsToLoad.length,
-      deferredNotes: restorePrefetchPaths.length
+      eagerNotes: pathsToLoad.length
     })
+  }
 
-    if (restorePrefetchPaths.length > 0) {
-      window.setTimeout(() => get().prefetchNotes(restorePrefetchPaths), 120)
+  /** #564: the saved workspace snapshot is tiny next to the note index, so the
+   *  tabs paint first and the vault scan lands afterwards. The snapshot is
+   *  trusted up front; once the listing arrives, `refreshNotes` prunes tabs
+   *  whose notes are gone (with the #384 guard against transient wipes), the
+   *  freshly discovered folders join the startup-collapsed set, and background
+   *  tabs get the deferred content warm-up the restore itself skipped. */
+  const openVaultWorkspace = async (vault: VaultInfo): Promise<void> => {
+    await restoreWorkspaceForVault(vault)
+    await refreshVaultIndexes()
+    if (get().vault?.root !== vault.root) return
+    // The snapshot was trusted before the index existed; now that the real
+    // listing is here, run the strict check the pre-2.27 restore order gave
+    // for free: every restored tab whose note never materialized is closed,
+    // active or not. refreshNotes cannot do this on its own (its mid-save
+    // exemption and the #384 transient-wipe guard both assume the tabs they
+    // keep were verified once), so a snapshot synced from another machine
+    // would otherwise leave ghost tabs alive for the whole session. Dirty
+    // tabs stay (unsaved edits beat a stale listing), and an empty listing
+    // skips the pass: it is indistinguishable from a failed one (#384).
+    set((s) => {
+      if (s.notes.length === 0) return {}
+      const existing = new Set(s.notes.map((note) => note.path))
+      const keepTab = (path: string): boolean =>
+        existing.has(path) || isWorkspaceVirtualTabPath(path) || s.noteDirty[path] === true
+      const stale = allLeaves(s.paneLayout)
+        .flatMap((leaf) => leaf.tabs)
+        .filter((tab) => !keepTab(tab))
+      if (stale.length === 0) return {}
+      const validated = rewritePathsInTree(s.paneLayout, (path) =>
+        keepTab(path) ? path : null
+      )
+      const ensured = ensureActivePane(validated, s.activePaneId)
+      return {
+        paneLayout: ensured.layout,
+        activePaneId: ensured.activePaneId,
+        ...activeFieldsFrom(ensured.layout, ensured.activePaneId, s.noteContents, s.noteDirty)
+      }
+    })
+    const s = get()
+    // Folder rows did not exist while the workspace painted, so collapse the
+    // ones the index just discovered. Quick Notes and Inbox were decided at
+    // restore time (and may have been toggled since), so they stay untouched.
+    const startupCollapsed = computeStartupCollapsedFolders(
+      s.folders,
+      s.vaultSettings,
+      s.selectedPath
+    )
+    const discovered = startupCollapsed.filter(
+      (key) => key !== 'quick:' && key !== 'inbox:' && !s.collapsedFolders.includes(key)
+    )
+    if (discovered.length > 0) {
+      set({ collapsedFolders: [...s.collapsedFolders, ...discovered] })
+    }
+    const prefetchPaths = workspaceRestorePrefetchContentPaths(
+      get().paneLayout,
+      new Set(get().notes.map((note) => note.path)),
+      new Set(Object.keys(get().noteContents))
+    )
+    if (prefetchPaths.length > 0) {
+      window.setTimeout(() => get().prefetchNotes(prefetchPaths), 120)
     }
   }
 
@@ -5278,6 +5348,19 @@ export const useStore = create<Store>((set, get) => {
     // Rescan immediately: the Tasks view, boards, and calendars should reflect
     // the exclusion without waiting for the next natural refresh.
     await get().refreshTasks()
+  },
+  setTypstPreambleFolder: async (folder) => {
+    const settings = get().vaultSettings
+    const cleaned = normalizeTypstPreambleFolder(folder)
+    const next =
+      cleaned && cleaned !== TYPST_PREAMBLE_FOLDER ? { folder: cleaned } : undefined
+    if ((next?.folder ?? null) === (settings.typstPreambles?.folder ?? null)) return
+    await get().setVaultSettings({ ...settings, typstPreambles: next })
+    // Every note's tags may have changed: the old folder's notes get theirs
+    // back, the new folder's lose them. The index was invalidated by the write,
+    // so a plain refresh is enough to repaint the tag list.
+    await get().refreshNotes()
+    if (get().typstTagPreambles) await get().refreshTypstPreambles()
   },
   toggleFavoriteActiveNote: async () => {
     const path = get().activeNote?.path ?? get().selectedPath
@@ -6521,8 +6604,11 @@ export const useStore = create<Store>((set, get) => {
       if (state.typstPreambleNotes.length) set({ typstPreambleNotes: [] })
       return
     }
+    const preambleFolder = resolveTypstPreambleFolder(
+      state.vaultSettings?.typstPreambles?.folder
+    )
     const candidates = state.notes.filter(
-      (note) => note.folder !== 'trash' && isTypstPreamblePath(note.path)
+      (note) => note.folder !== 'trash' && isTypstPreamblePath(note.path, preambleFolder)
     )
     const loaded: TypstPreambleNote[] = []
     for (const note of candidates) {
@@ -6580,12 +6666,17 @@ export const useStore = create<Store>((set, get) => {
         const applyStartedAt = performance.now()
         const noteMetaByPath = new Map(notes.map((note) => [note.path, note] as const))
         const existingPaths = new Set(notes.map((n) => n.path))
-        // Drop tabs whose notes no longer exist — except keep the currently
-        // focused selectedPath so the editor doesn't blank out mid-save.
+        // Drop tabs whose notes no longer exist. The currently focused
+        // selectedPath is exempt so the editor doesn't blank out mid-save,
+        // but only when its note actually loaded (or holds unsaved edits):
+        // a tab restored from a stale snapshot and promoted to active after
+        // its read failed has nothing to blank, and the exemption would keep
+        // that ghost alive through every refresh (#564).
         const keep = (path: string): boolean =>
           existingPaths.has(path) ||
           isWorkspaceVirtualTabPath(path) ||
-          path === s.selectedPath
+          (path === s.selectedPath &&
+            (s.noteContents[path] !== undefined || s.noteDirty[path] === true))
         const prunedLayout = rewritePathsInTree(s.paneLayout, (path) =>
           keep(path) ? path : null
         )
@@ -7054,7 +7145,12 @@ export const useStore = create<Store>((set, get) => {
       return
     }
 
-    if (ev.kind === 'change') {
+    // 'add' counts as new content for a note we already hold open. A writer
+    // that renames a file into place (ZenNotes saving atomically, but equally
+    // git, rsync, Syncthing or vim) shows up on Linux as IN_MOVED_TO, which the
+    // server's watcher reports as 'add' rather than 'change'; treating it as
+    // noise left the buffer showing content that no longer existed on disk.
+    if (ev.kind === 'change' || ev.kind === 'add') {
       try {
         const content = await window.zen.readNote(ev.path)
         // Drop the watcher echo of our own writes. Without this, an
@@ -7066,6 +7162,12 @@ export const useStore = create<Store>((set, get) => {
           const existing = s.noteContents[ev.path]
           // Ignore noise — only push when disk differs from our buffer.
           if (existing && existing.body === content.body) return s
+          // Never replace a dirty buffer: it holds edits the user has not
+          // saved, and the editor applies this push as a non-undoable doc
+          // swap (#247), so a stale or truncated read here destroyed work
+          // with no way back (#585). Same policy as the resync path above;
+          // the pending save will reconcile disk with the buffer instead.
+          if (s.noteDirty[ev.path]) return s
           const contents = { ...s.noteContents, [ev.path]: content }
           const dirty = { ...s.noteDirty, [ev.path]: false }
           return {
@@ -7125,35 +7227,57 @@ export const useStore = create<Store>((set, get) => {
   },
 
   persistNote: async (path) => {
-    const s = get()
-    const content = s.noteContents[path]
-    if (!content || !s.noteDirty[path]) return
     const pending = pathSaveTimers.get(path)
     if (pending) {
       clearTimeout(pending)
       pathSaveTimers.delete(path)
     }
-    try {
-      // Snapshot the body BEFORE the await so we know what hit disk
-      // even if the user keeps typing while the write resolves.
-      const writtenBody = content.body
-      lastWrittenByPath.set(path, writtenBody)
-      const meta = await window.zen.writeNote(path, writtenBody)
-      // Saving a Typst preamble note changes the definitions every note tagged
-      // for it compiles against — reload so open panes repaint. (#486)
-      if (get().typstTagPreambles && isTypstPreamblePath(path)) {
-        void get().refreshTypstPreambles()
-      }
-      set((cur) => {
-        const dirty = { ...cur.noteDirty, [path]: false }
-        return {
-          noteDirty: dirty,
-          notes: cur.notes.map((n) => (n.path === meta.path ? { ...n, ...meta } : n)),
-          ...activeFieldsFrom(cur.paneLayout, cur.activePaneId, cur.noteContents, dirty)
+    const performWrite = async (): Promise<void> => {
+      const s = get()
+      const content = s.noteContents[path]
+      if (!content || !s.noteDirty[path]) return
+      try {
+        // Snapshot only after earlier writes finish. A second caller sees the
+        // newest buffer here, then becomes the last writer by construction.
+        const writtenBody = content.body
+        lastWrittenByPath.set(path, writtenBody)
+        const meta = await window.zen.writeNote(path, writtenBody)
+        // Saving a Typst preamble note changes the definitions every note tagged
+        // for it compiles against, so reload and repaint open panes. (#486)
+        if (
+          get().typstTagPreambles &&
+          isTypstPreamblePath(
+            path,
+            resolveTypstPreambleFolder(get().vaultSettings?.typstPreambles?.folder)
+          )
+        ) {
+          void get().refreshTypstPreambles()
         }
-      })
-    } catch (err) {
-      console.error('writeNote failed', err)
+        set((cur) => {
+          // Keystrokes that landed while the write was in flight leave the
+          // buffer ahead of disk. The queued caller will persist them next.
+          const stillCurrent = cur.noteContents[path]?.body === writtenBody
+          const dirty = stillCurrent ? { ...cur.noteDirty, [path]: false } : cur.noteDirty
+          return {
+            noteDirty: dirty,
+            notes: cur.notes.map((n) => (n.path === meta.path ? { ...n, ...meta } : n)),
+            ...activeFieldsFrom(cur.paneLayout, cur.activePaneId, cur.noteContents, dirty)
+          }
+        })
+      } catch (err) {
+        console.error('writeNote failed', err)
+      }
+    }
+    const previous = pathSaveQueues.get(path)
+    // Start the first write synchronously through its first await, preserving
+    // the body visible to this call. Later callers wait for that promise and
+    // snapshot the newest buffer only when their turn begins.
+    const run = previous ? previous.catch(() => {}).then(performWrite) : performWrite()
+    pathSaveQueues.set(path, run)
+    try {
+      await run
+    } finally {
+      if (pathSaveQueues.get(path) === run) pathSaveQueues.delete(path)
     }
   },
 
@@ -9988,9 +10112,8 @@ export const useStore = create<Store>((set, get) => {
           vaultSettings,
           workspaceRestored: false
         })
-        await refreshVaultIndexes()
+        await openVaultWorkspace(vault)
         await prefetchInitialVisibleNotes(get())
-        await restoreWorkspaceForVault(vault)
         initializedVault = true
       } else {
         set({
@@ -10147,8 +10270,7 @@ export const useStore = create<Store>((set, get) => {
       workspaceRestored: false
     })
     savePrefs(collectPrefs(get()))
-    await refreshVaultIndexes()
-    await restoreWorkspaceForVault(vault)
+    await openVaultWorkspace(vault)
   },
 
   openLocalVault: async (root: string) => {
@@ -10201,8 +10323,7 @@ export const useStore = create<Store>((set, get) => {
         workspaceRestored: false
       })
       savePrefs(collectPrefs(get()))
-      await refreshVaultIndexes()
-      await restoreWorkspaceForVault(vault)
+      await openVaultWorkspace(vault)
     } catch (err) {
       console.error('openLocalVault failed', err)
       window.alert(err instanceof Error ? err.message : String(err))
@@ -10264,8 +10385,7 @@ export const useStore = create<Store>((set, get) => {
           workspaceRestored: false
         })
         savePrefs(collectPrefs(get()))
-        await refreshVaultIndexes()
-        await restoreWorkspaceForVault(vaultToOpen)
+        await openVaultWorkspace(vaultToOpen)
         return
       }
 
@@ -10437,8 +10557,7 @@ export const useStore = create<Store>((set, get) => {
             : remoteWorkspaceInfo
       })
       savePrefs(collectPrefs(get()))
-      await refreshVaultIndexes()
-      await restoreWorkspaceForVault(vault)
+      await openVaultWorkspace(vault)
     } catch (error) {
       window.alert(error instanceof Error ? error.message : String(error))
     }
@@ -10518,8 +10637,7 @@ export const useStore = create<Store>((set, get) => {
         workspaceRestored: false
       })
       savePrefs(collectPrefs(get()))
-      await refreshVaultIndexes()
-      await restoreWorkspaceForVault(vault)
+      await openVaultWorkspace(vault)
     } catch (error) {
       window.alert(error instanceof Error ? error.message : String(error))
     }
@@ -10601,8 +10719,7 @@ export const useStore = create<Store>((set, get) => {
         workspaceRestored: false
       })
       savePrefs(collectPrefs(get()))
-      await refreshVaultIndexes()
-      await restoreWorkspaceForVault(selectedVault)
+      await openVaultWorkspace(selectedVault)
     } catch (error) {
       window.alert(error instanceof Error ? error.message : String(error))
     }
@@ -10684,8 +10801,7 @@ export const useStore = create<Store>((set, get) => {
         workspaceRestored: false
       })
       savePrefs(collectPrefs(get()))
-      await refreshVaultIndexes()
-      await restoreWorkspaceForVault(vault)
+      await openVaultWorkspace(vault)
     } catch (error) {
       window.alert(error instanceof Error ? error.message : String(error))
     }

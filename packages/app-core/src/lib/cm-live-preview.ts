@@ -431,7 +431,11 @@ class LocalImageWidget extends WidgetType {
     image.alt = this.alt
     image.loading = 'lazy'
     image.draggable = false
+    // The cache key above is url|version, not the height hint, so a cached
+    // element (unlike `figure`, always freshly created) may still carry a
+    // maxHeight from a previous render with a different `|WxH` hint. (#570)
     if (this.height) image.style.maxHeight = `${this.height}px`
+    else image.style.removeProperty('max-height')
 
     const topControls = document.createElement('div')
     topControls.className = 'local-image-embed-controls local-image-embed-controls-top'

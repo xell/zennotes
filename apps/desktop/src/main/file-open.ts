@@ -88,10 +88,25 @@ export function markdownPathsFromArgv(argv: readonly string[]): string[] {
  * app / `zn open <dir>`). The caller stats each path to decide what to do: a
  * markdown file opens a note, a directory opens a temporary session, and
  * anything else (e.g. the launcher's own script path) is ignored.
+ *
+ * `ownAppPath` (the running app's `app.getAppPath()`) must be given for any
+ * launcher that passes the app as a positional argument (`electron <appdir>`).
+ * The index-based skip alone is not enough: nixpkgs wraps Electron so a
+ * Chromium switch (`--ozone-platform-hint=auto` under Wayland) lands BEFORE
+ * the app directory, the skip then eats the flag slot instead, and the app's
+ * own `…/apps/desktop` directory came through as a "folder to open" — every
+ * launch opened a temporary session on a vault literally named "desktop"
+ * instead of the user's configured vault (#579).
  */
-export function candidatePathsFromArgv(argv: readonly string[]): string[] {
+export function candidatePathsFromArgv(
+  argv: readonly string[],
+  skipUnpackagedApplicationEntry = false,
+  ownAppPath: string | null = null
+): string[] {
   const out: string[] = []
-  for (let i = 1; i < argv.length; i++) {
+  const isOwnAppPath = (candidate: string): boolean =>
+    !!ownAppPath && path.resolve(candidate) === path.resolve(ownAppPath)
+  for (let i = skipUnpackagedApplicationEntry ? 2 : 1; i < argv.length; i++) {
     const arg = argv[i]
     if (!arg || arg.startsWith('-')) continue
     if (arg.includes('://')) {
@@ -100,9 +115,10 @@ export function candidatePathsFromArgv(argv: readonly string[]): string[] {
       // with ZenNotes" on a folder a silent no-op; decode them instead.
       // Other schemes (zennotes:// deep links) stay with their own handler.
       const decoded = pathFromFileUrl(arg)
-      if (decoded) out.push(decoded)
+      if (decoded && !isOwnAppPath(decoded)) out.push(decoded)
       continue
     }
+    if (isOwnAppPath(arg)) continue
     out.push(arg)
   }
   return out

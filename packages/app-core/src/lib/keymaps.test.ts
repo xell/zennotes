@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  eventMatchesUserOverride,
   findKeymapConflict,
   getDefaultKeymapBinding,
   getKeymapDefinition,
   getKeymapDefinitions,
+  matchesShortcutBinding,
   normalizeKeymapOverrides,
   normalizeShortcutBinding,
   shortcutBindingFromEvent,
@@ -121,6 +123,68 @@ describe('shortcutBindingFromEvent', () => {
     const event = fakeEvent({ key: '+', code: 'Equal', shiftKey: true, metaKey: true })
     withPlatform('darwin', () => {
       expect(shortcutBindingFromEvent(event)).toBe('Shift+Mod+=')
+    })
+  })
+
+  it('never resolves Alt+numpad digits on Windows (Alt-code character entry)', () => {
+    // Hold Alt, type 0233 on the numpad: an input method, not a shortcut.
+    // With Alt+1..9 shipped as tab defaults (#497) each digit would
+    // otherwise switch tabs mid-entry.
+    const event = fakeEvent({ key: '2', code: 'Numpad2', altKey: true })
+    withPlatform('win32', () => {
+      expect(shortcutBindingFromEvent(event)).toBeNull()
+    })
+    withPlatform('linux', () => {
+      expect(shortcutBindingFromEvent(event)).toBe('Alt+2')
+    })
+  })
+})
+
+describe('matchesShortcutBinding (digit-row layouts, #497)', () => {
+  it('matches Alt+1 on AZERTY where the digit row types punctuation', () => {
+    // French AZERTY: unshifted Digit1 types '&', so the typed-character
+    // binding is "Alt+&" and the stored default "Alt+1" needs the physical
+    // digit-row fallback to fire.
+    const event = fakeEvent({ key: '&', code: 'Digit1', altKey: true })
+    withPlatform('win32', () => {
+      expect(matchesShortcutBinding(event, 'Alt+1')).toBe(true)
+    })
+  })
+
+  it('still matches a binding recorded from the typed character first', () => {
+    const event = fakeEvent({ key: '&', code: 'Digit1', altKey: true })
+    withPlatform('win32', () => {
+      expect(matchesShortcutBinding(event, 'Alt+&')).toBe(true)
+    })
+  })
+
+  it('keeps the numpad out of the digit-row fallback', () => {
+    const event = fakeEvent({ key: '2', code: 'Numpad2', altKey: true })
+    withPlatform('win32', () => {
+      expect(matchesShortcutBinding(event, 'Alt+2')).toBe(false)
+    })
+  })
+})
+
+describe('eventMatchesUserOverride (#497, rebinds outrank new defaults)', () => {
+  it('flags an event landing on a combination the user rebound elsewhere', () => {
+    const event = fakeEvent({ key: '3', code: 'Digit3', altKey: true })
+    withPlatform('win32', () => {
+      expect(
+        eventMatchesUserOverride(event, { 'global.zoomIn': 'Alt+3' }, 'tabs.select3')
+      ).toBe(true)
+    })
+  })
+
+  it('ignores the excluded id and unrelated overrides', () => {
+    const event = fakeEvent({ key: '3', code: 'Digit3', altKey: true })
+    withPlatform('win32', () => {
+      expect(
+        eventMatchesUserOverride(event, { 'tabs.select3': 'Alt+3' }, 'tabs.select3')
+      ).toBe(false)
+      expect(
+        eventMatchesUserOverride(event, { 'global.zoomIn': 'Alt+4' }, 'tabs.select3')
+      ).toBe(false)
     })
   })
 })

@@ -3,6 +3,8 @@ import ReactDOM from 'react-dom/client'
 import App from './App'
 import './styles/index.css'
 
+export { requestCloudAutoSync } from './lib/cloud-auto-sync'
+
 const FloatingNoteApp = lazy(async () => {
   const module = await import('./components/FloatingNoteApp')
   return { default: module.FloatingNoteApp }

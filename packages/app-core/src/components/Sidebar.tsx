@@ -25,6 +25,7 @@ import { Button } from "./ui/Button";
 import { confirmMoveToTrash } from "../lib/confirm-trash";
 import { buildMoveNotePrompt, parseMoveNoteTarget } from "../lib/move-note";
 import { buildTagTree, extractTags, flattenTagTree } from "../lib/tags";
+import { isTypstPreamblePath, resolveTypstPreambleFolder } from "../lib/typst-preamble";
 import type { AssetMeta, FolderColorId, FolderEntry, FolderIconId, NoteFolder, NoteMeta } from "@shared/ipc";
 import type { NoteSortOrder } from "../store";
 import { isArchiveTabPath } from "@shared/archive";
@@ -47,6 +48,7 @@ import {
   GitBranchIcon,
   ImageIcon,
   IsolateIcon,
+  LinkIcon,
   QuicklookIcon,
   PaperclipIcon,
   PanelLeftIcon,
@@ -149,10 +151,44 @@ import {
 import { buildVaultSwitcherEntries } from "../lib/vault-switcher";
 import { appUpdateBadgeLabel, useAppUpdateState } from "../lib/app-update-state";
 import { getISOWeekYear } from "../lib/template-render";
+import { requestPublishNote } from "../lib/publish-note-requests";
+import {
+  notifyPublishedNoteChanged,
+  subscribePublishedNoteChanges,
+} from "../lib/published-note-events";
+import { useToastStore } from "../lib/toast";
 
 const ACTIVE_TAG_PARSE_DELAY_MS = 220;
 const ACTIVE_TAG_PARSE_LARGE_BODY_CHARS = 120_000;
 const ACTIVE_TAG_PARSE_LARGE_BODY_DELAY_MS = 900;
+
+export function getPublishedNoteContextMenuItems({
+  published,
+  onManage,
+  onUnpublish,
+}: {
+  published: boolean;
+  onManage: () => void | Promise<void>;
+  onUnpublish: () => void | Promise<void>;
+}): ContextMenuItem[] {
+  const items: ContextMenuItem[] = [
+    {
+      label: published ? "Manage published note…" : "Publish note…",
+      icon: <LinkIcon />,
+      onSelect: onManage,
+    },
+  ];
+
+  if (published) {
+    items.push({
+      label: "Unpublish note",
+      danger: true,
+      onSelect: onUnpublish,
+    });
+  }
+
+  return items;
+}
 
 function escapeForAttr(value: string): string {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function")
@@ -496,6 +532,9 @@ export function Sidebar(): JSX.Element {
   const toggleQuicklook = useStore((s) => s.toggleQuicklook);
   const activeNote = useStore((s) => s.activeNote);
   const activeDirty = useStore((s) => s.activeDirty);
+  const preambleFolder = useStore((s) =>
+    resolveTypstPreambleFolder(s.vaultSettings?.typstPreambles?.folder),
+  );
   const vaultSettings = useStore((s) => s.vaultSettings);
   const favoritesCollapsed = useStore((s) => s.favoritesCollapsed);
   const toggleFavoritesCollapsed = useStore((s) => s.toggleFavoritesCollapsed);
@@ -1177,6 +1216,9 @@ export function Sidebar(): JSX.Element {
     y: number;
     path: string;
   } | null>(null);
+  const [publishedNotePaths, setPublishedNotePaths] = useState<Set<string>>(
+    () => new Set(),
+  );
   const refreshNotes = useStore((s) => s.refreshNotes);
   const collapsedList = useStore((s) => s.collapsedFolders);
   const toggleCollapseAction = useStore((s) => s.toggleCollapseFolder);
@@ -1198,6 +1240,43 @@ export function Sidebar(): JSX.Element {
     },
     [collapsed, toggleCollapseAction],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    setPublishedNotePaths(new Set());
+    if (typeof window.zen.listCloudPublishedNotes === "function") {
+      void window.zen
+        .listCloudPublishedNotes()
+        .then((publishedNotes) => {
+          if (cancelled) return;
+          setPublishedNotePaths(
+            new Set(
+              publishedNotes.flatMap((publishedNote) =>
+                publishedNote.note_path ? [publishedNote.note_path] : [],
+              ),
+            ),
+          );
+        })
+        .catch(() => {
+          // Publishing remains available when cloud status cannot be loaded.
+        });
+    }
+
+    const unsubscribe = subscribePublishedNoteChanges((change) => {
+      setPublishedNotePaths((current) => {
+        const next = new Set(current);
+        if (change.url === null) next.delete(change.notePath);
+        else next.add(change.notePath);
+        return next;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [vault?.root]);
   const setCollapsed = (next: Set<string>): void =>
     setCollapsedFoldersAction([...next]);
 
@@ -2354,7 +2433,10 @@ export function Sidebar(): JSX.Element {
   useEffect(() => {
     const path = activeNote?.path ?? null;
     const body = activeNote?.body ?? null;
-    if (!path || body == null || !activeDirty) {
+    // Editing a Typst preamble must not put its `#let` / `#var` tokens back
+    // into the tag list that the index deliberately leaves them out of (#562).
+    const isPreamble = path != null && isTypstPreamblePath(path, preambleFolder);
+    if (!path || body == null || !activeDirty || isPreamble) {
       setActiveBodyTagSnapshot((current) => (current === null ? current : null));
       return;
     }
@@ -2405,7 +2487,7 @@ export function Sidebar(): JSX.Element {
         window.cancelIdleCallback(idleId);
       }
     };
-  }, [activeDirty, activeNote?.body, activeNote?.path]);
+  }, [activeDirty, activeNote?.body, activeNote?.path, preambleFolder]);
 
   // Aggregate hashtags across non-trash notes. The active note's live
   // body is parsed only while it has unsaved edits; clean notes use the
@@ -2852,7 +2934,23 @@ export function Sidebar(): JSX.Element {
       ];
     }
 
-    const items: ContextMenuItem[] = [
+    const items: ContextMenuItem[] = [];
+    // A `<Name>.base` folder is a database: its grid opens on click and on
+    // Enter/`l`, and the menu offers the same action so no surface is
+    // mouse-only (Discord report: the m menu had no way to open the grid).
+    if (!isTop && isFormDirName(subpath.split("/").slice(-1)[0])) {
+      items.push({
+        label: "Open database",
+        icon: <DatabaseIcon />,
+        onSelect: async () => {
+          const csvPath = csvPathForFormDir(
+            vaultRelativeFolderPath(folder, subpath, vaultSettings),
+          );
+          await useStore.getState().openDatabase(csvPath);
+        },
+      });
+    }
+    items.push(
       {
         label: "New note",
         onSelect: async () => {
@@ -2877,7 +2975,7 @@ export function Sidebar(): JSX.Element {
           await createDatabase(folder, subpath);
         },
       },
-    ];
+    );
     // Isolate: notes/inbox sub-folders only (never the vault root or other
     // top-level areas). Disabled when this folder is already the isolated root.
     if (folder === "inbox" && subpath) {
@@ -3282,6 +3380,51 @@ export function Sidebar(): JSX.Element {
           },
         });
       }
+      const published = publishedNotePaths.has(n.path);
+      items.push({ kind: "separator" });
+      items.push(
+        ...getPublishedNoteContextMenuItems({
+          published,
+          onManage: async () => {
+            const state = useStore.getState();
+            const content =
+              state.noteContents[n.path] ?? (await window.zen.readNote(n.path));
+            requestPublishNote(content);
+          },
+          onUnpublish: async () => {
+            const confirmed = await confirmApp({
+              title: `Unpublish ${n.title}?`,
+              description:
+                "The public link will stop working. Your local and synced note are not changed.",
+              confirmLabel: "Unpublish",
+              danger: true,
+            });
+            if (!confirmed) return;
+
+            try {
+              const publishedNote = (await window.zen.listCloudPublishedNotes()).find(
+                (candidate) => candidate.note_path === n.path,
+              );
+              if (publishedNote) {
+                await window.zen.unpublishCloudNote(publishedNote.id);
+              }
+              notifyPublishedNoteChanged({ notePath: n.path, url: null });
+              useToastStore
+                .getState()
+                .addToast("Note unpublished.", "success");
+            } catch (error) {
+              useToastStore
+                .getState()
+                .addToast(
+                  error instanceof Error
+                    ? error.message
+                    : "ZenNotes could not unpublish this note.",
+                  "error",
+                );
+            }
+          },
+        }),
+      );
       items.push({ kind: "separator" });
       items.push({
         label: "Change icon…",
@@ -3447,6 +3590,7 @@ export function Sidebar(): JSX.Element {
     noteSortOrder,
     reorderSource,
     buildReorderCommands,
+    publishedNotePaths,
     folderLabels.archive,
     folderLabels.inbox,
     folderLabels.trash,
@@ -6527,15 +6671,18 @@ function SubTree({
   const myIdx = idxCounter.value++;
   const selectionKey = folderSelectionKey(folder, node.subpath);
 
+  const databaseCsvPath = isDatabase
+    ? csvPathForFormDir(
+        vaultRelativeFolderPath(folder, node.subpath, vaultSettings),
+      )
+    : undefined;
+
   const handleSelect = (
     e: React.MouseEvent | React.KeyboardEvent,
   ): void => {
-    if (isDatabase) {
-      const csvPath = csvPathForFormDir(
-        vaultRelativeFolderPath(folder, node.subpath, vaultSettings),
-      );
+    if (databaseCsvPath) {
       onSelectItem(e, { kind: "folder", folder, subpath: node.subpath }, () => {
-        void useStore.getState().openDatabase(csvPath);
+        void useStore.getState().openDatabase(databaseCsvPath);
       });
       return;
     }
@@ -6610,7 +6757,7 @@ function SubTree({
         sidebarIdx={myIdx}
         vimHighlight={vimCursor === myIdx}
         sidebarFocused={sidebarFocused}
-        sidebarData={{ type: "folder", folder, subpath: node.subpath, key }}
+        sidebarData={{ type: "folder", folder, subpath: node.subpath, key, database: databaseCsvPath }}
         selectionKey={selectionKey}
         reserveLeadingSlot={showSidebarChevrons}
         showExpandChevron={showSidebarChevrons}
@@ -7095,7 +7242,17 @@ function TreeRow({
   sidebarIdx?: number;
   vimHighlight?: boolean;
   sidebarFocused?: boolean;
-  sidebarData?: { type: string; folder: string; subpath: string; key: string; dateNavKey?: string };
+  sidebarData?: {
+    type: string;
+    folder: string;
+    subpath: string;
+    key: string;
+    dateNavKey?: string;
+    /** Present only on `<Name>.base` database rows: the grid's csv path, so
+     *  keyboard activation (VimNav Enter/`l`) can open the grid the same way a
+     *  click does instead of taking the plain-folder path. */
+    database?: string;
+  };
   selectionKey?: string;
   /** Optional inline action(s) shown on the right edge, revealed on hover. */
   trailing?: JSX.Element;
@@ -7161,6 +7318,7 @@ function TreeRow({
             // #301: present only on Daily/Weekly date-group rows — VimNav reads
             // it to expand/collapse them via the store's date-nav actions.
             "data-sidebar-datenav-key": sidebarData?.dateNavKey,
+            "data-sidebar-database": sidebarData?.database,
             "data-sidebar-expandable": String(expandable),
             "data-sidebar-collapsed": String(collapsed),
             "data-sidebar-select-key": selectionKey,

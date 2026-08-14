@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { NoteMeta } from '@shared/ipc'
 import type { PaneLayout } from './pane-layout'
-import { getBufferNavigationTarget, getPaneTabAtIndex } from './buffer-navigation'
+import { getBufferNavigationTarget, getBufferSelectTarget, getPaneTabAtIndex } from './buffer-navigation'
 
 function note(path: string, updatedAt: number, folder: NoteMeta['folder'] = 'inbox'): Pick<NoteMeta, 'path' | 'folder' | 'updatedAt'> {
   return { path, folder, updatedAt }
@@ -171,6 +171,54 @@ describe('getBufferNavigationTarget', () => {
     expect(getBufferNavigationTarget(layout, 'pane-a', [], 1)).toEqual({
       kind: 'create-quick'
     })
+  })
+
+  it('walks back multiple tabs for {count}gT, wrapping past the start', () => {
+    const layout = leaf('pane-a', ['one.md', 'two.md', 'three.md'], 'two.md')
+
+    // 4 back from index 1 in a 3-tab ring lands on index 0.
+    expect(getBufferNavigationTarget(layout, 'pane-a', [], -4)).toEqual({
+      kind: 'focus',
+      paneId: 'pane-a',
+      path: 'one.md'
+    })
+  })
+})
+
+describe('getBufferSelectTarget (#497)', () => {
+  it('selects the Nth tab, counted across panes in cycle order', () => {
+    const layout: PaneLayout = {
+      kind: 'split',
+      id: 'root',
+      direction: 'row',
+      sizes: [0.5, 0.5],
+      children: [
+        leaf('pane-a', ['one.md', 'two.md'], 'one.md'),
+        leaf('pane-b', ['three.md'], 'three.md')
+      ]
+    }
+
+    expect(getBufferSelectTarget(layout, 'pane-a', 3)).toEqual({
+      kind: 'focus',
+      paneId: 'pane-b',
+      path: 'three.md'
+    })
+  })
+
+  it('clamps a too-large index to the last tab, like a big {count}gt in vim', () => {
+    const layout = leaf('pane-a', ['one.md', 'two.md'], 'one.md')
+
+    expect(getBufferSelectTarget(layout, 'pane-a', 9)).toEqual({
+      kind: 'focus',
+      paneId: 'pane-a',
+      path: 'two.md'
+    })
+  })
+
+  it('targets open tabs only, never the recent-notes fallback', () => {
+    const layout = leaf('pane-a', [], null)
+
+    expect(getBufferSelectTarget(layout, 'pane-a', 1)).toEqual({ kind: 'none' })
   })
 })
 

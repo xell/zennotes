@@ -4,6 +4,8 @@ import {
   applyColumnOrder,
   arrangeColumns,
   cursorAfterCardMove,
+  kanbanGroupByKeyPlan,
+  kanbanPendingGroupByPlan,
   NO_VALUE_COLUMN_ID,
   taskIdentityKey,
   type Column
@@ -161,5 +163,77 @@ describe('applyColumnOrder (persisted card arrangement replay)', () => {
     const columns = [colWith('today', [a, b])]
     const order = saved('status:today', [taskIdentityKey(b), taskIdentityKey(a)])
     expect(texts(applyColumnOrder('priority', columns, order), 0)).toEqual(['A', 'B'])
+  })
+})
+
+describe('group-by vs gt/gT tab keymaps (#573)', () => {
+  const gKey = { key: 'g', code: 'KeyG' }
+  const event = (init: {
+    key: string
+    code: string
+    shiftKey?: boolean
+    metaKey?: boolean
+  }): KeyboardEvent =>
+    ({
+      key: init.key,
+      code: init.code,
+      ctrlKey: false,
+      metaKey: !!init.metaKey,
+      altKey: false,
+      shiftKey: !!init.shiftKey
+    }) as KeyboardEvent
+
+  it('defers the cycle in vim mode, where g opens the gt/gT sequences', () => {
+    expect(kanbanGroupByKeyPlan(true, null, event(gKey))).toBe('defer')
+  })
+
+  it('cycles immediately with vim off (no tab sequences exist)', () => {
+    expect(kanbanGroupByKeyPlan(false, null, event(gKey))).toBe('cycle-now')
+  })
+
+  it('cycles immediately when the tab keymaps were rebound off the g prefix', () => {
+    const overrides = { 'vim.tabNext': '] t', 'vim.tabPrevious': '[ t' }
+    expect(kanbanGroupByKeyPlan(true, overrides, event(gKey))).toBe('cycle-now')
+  })
+
+  it('yields to the tab switch on the completing t and T', () => {
+    expect(kanbanPendingGroupByPlan(null, event({ key: 't', code: 'KeyT' }))).toBe(
+      'yield-to-tabs'
+    )
+    expect(
+      kanbanPendingGroupByPlan(null, event({ key: 'T', code: 'KeyT', shiftKey: true }))
+    ).toBe('yield-to-tabs')
+  })
+
+  it('keeps the prefix alive across the bare Shift that precedes gT', () => {
+    expect(
+      kanbanPendingGroupByPlan(null, event({ key: 'Shift', code: 'ShiftLeft', shiftKey: true }))
+    ).toBe('keep-pending')
+  })
+
+  it('treats a second g as a repeated prefix', () => {
+    expect(kanbanPendingGroupByPlan(null, event(gKey))).toBe('repeat-prefix')
+  })
+
+  it('drops the prefix on any other key, vim-style', () => {
+    expect(kanbanPendingGroupByPlan(null, event({ key: 'j', code: 'KeyJ' }))).toBe('interrupt')
+    expect(
+      kanbanPendingGroupByPlan(null, event({ key: 'p', code: 'KeyP', metaKey: true }))
+    ).toBe('interrupt')
+  })
+
+  it('follows a rebound completion token', () => {
+    const overrides = { 'vim.tabNext': 'g n' }
+    expect(kanbanPendingGroupByPlan(overrides, event({ key: 'n', code: 'KeyN' }))).toBe(
+      'yield-to-tabs'
+    )
+    // The old completion no longer completes anything: plain t interrupts,
+    // while the untouched gT still finishes through its Shifted T.
+    expect(kanbanPendingGroupByPlan(overrides, event({ key: 't', code: 'KeyT' }))).toBe(
+      'interrupt'
+    )
+    expect(
+      kanbanPendingGroupByPlan(overrides, event({ key: 'T', code: 'KeyT', shiftKey: true }))
+    ).toBe('yield-to-tabs')
   })
 })

@@ -97,7 +97,8 @@ function remarkWikilinks() {
         type: 'image',
         url: target,
         title: null,
-        alt: label
+        alt: label,
+        data: { zenWikilinkEmbed: true }
       }
     }
     if (bang === '!' && assetKind === 'excalidraw') {

@@ -27,16 +27,16 @@ export function isWorkspaceVirtualTabPath(path: string): boolean {
   )
 }
 
-export function initialWorkspaceRestoreContentPaths(
-  layout: PaneLayout,
-  existingPaths: Set<string>
-): string[] {
+/** Restore runs before the vault index exists (#564), so the snapshot's active
+ *  tabs cannot be checked against a note list here: each path is read straight
+ *  from disk, and a failed read prunes its tab. */
+export function initialWorkspaceRestoreContentPaths(layout: PaneLayout): string[] {
   const seen = new Set<string>()
   const paths: string[] = []
 
   for (const leaf of allLeaves(layout)) {
     const path = leaf.activeTab
-    if (!path || isWorkspaceVirtualTabPath(path) || !existingPaths.has(path) || seen.has(path)) {
+    if (!path || isWorkspaceVirtualTabPath(path) || seen.has(path)) {
       continue
     }
     seen.add(path)

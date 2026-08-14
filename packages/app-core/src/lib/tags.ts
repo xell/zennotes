@@ -16,6 +16,7 @@
  *    inline scan, so a `#` in some other field is never a tag (#444).
  */
 import { FRONTMATTER_BLOCK_RE, frontmatterTags } from '@shared/frontmatter'
+import { isTypstPreamblePath } from '@shared/typst-preamble-folder'
 
 export function extractTags(body: string): string[] {
   const seen = new Set<string>()
@@ -87,6 +88,27 @@ export function matchesSelectedTags(
   const want = selectedTags.map((t) => t.toLowerCase())
   return mode === 'any' ? want.some((t) => have.has(t)) : want.every((t) => have.has(t))
 }
+
+/**
+ * The tags a note contributes to the vault's tag surfaces: the live buffer for
+ * the note being edited (so a freshly typed `#tag` counts before the index
+ * catches up), the indexed list for everything else.
+ *
+ * Typst preamble notes contribute nothing. Their bodies are Typst source, so
+ * `#let vec(x) = …` and the `#var` references in formulas are variables rather
+ * than tags (#562). The indexers already drop them, and this keeps the live
+ * path from putting them back the moment the user opens one.
+ */
+export function noteTagsForCount(
+  note: { path: string; tags: readonly string[] },
+  active: { path: string; body: string } | null | undefined,
+  preambleFolder: string
+): readonly string[] {
+  if (isTypstPreamblePath(note.path, preambleFolder)) return EMPTY_TAGS
+  return active && active.path === note.path ? extractTags(active.body) : note.tags
+}
+
+const EMPTY_TAGS: readonly string[] = []
 
 /** A node in the hierarchical (`/`-separated) tag tree. (#439) */
 export interface TagTreeNode {

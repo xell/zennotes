@@ -23,7 +23,13 @@ export function parseEmbedSizeHint(hint: string | null | undefined): EmbedSize |
   if (!hint) return null
   const m = hint.trim().match(SIZE_HINT_RE)
   if (!m) return null
-  return { width: Number(m[1]), height: m[2] ? Number(m[2]) : undefined }
+  const width = Number(m[1])
+  const height = m[2] ? Number(m[2]) : undefined
+  // A zero dimension is not a resize. Treating `|0` or `|0x300` as a hint used
+  // to eat the caption and then skip the zero at the falsy checks downstream,
+  // distorting the image; an invalid hint stays a caption instead.
+  if (width < 1 || (height !== undefined && height < 1)) return null
+  return { width, height }
 }
 
 export interface ImageEmbedLabel {

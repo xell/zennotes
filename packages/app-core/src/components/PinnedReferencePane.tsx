@@ -29,6 +29,7 @@ import { unifiedMergeView } from '@codemirror/merge'
 import { history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { vimWithBlockSelection } from '../lib/cm-vim-block-selection'
 import { vimAwareDefaultKeymap, vimAwareMarkdownKeymap } from '../lib/cm-vim-default-keymap'
+import { vimVisualHighlightExtension } from '../lib/cm-vim-visual-highlight'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
 import {
@@ -52,12 +53,13 @@ import type { LineNumberMode } from '../store'
 import { wysiwygExtensions } from '../lib/cm-wysiwyg-compose'
 import { documentDiagramTheme } from '../lib/use-diagram-theme-mode'
 import { headingFolding } from '../lib/cm-heading-fold'
-import { frontmatterStyle } from '../lib/cm-frontmatter'
+import { frontmatterStyle, frontmatterTagExtension } from '../lib/cm-frontmatter'
 import { slashCommandSource, slashCommandRender } from '../lib/cm-slash-commands'
 import { calloutTypeSource } from '../lib/cm-callouts'
 import { dateShortcutSource } from '../lib/cm-date-shortcuts'
 import { wikilinkSource, wikilinkHeadingSource } from '../lib/cm-wikilinks'
 import { hashtagSource } from '../lib/cm-hashtag-complete'
+import { frontmatterTagSource } from '../lib/cm-frontmatter-tag-complete'
 import { completionKeymapForEditor, completionNavKeymap } from '../lib/cm-completion-nav'
 import { classifyLocalAssetHref, hrefFragment, type LocalAssetKind } from '../lib/local-assets'
 import { assetPathFromTab, isAssetTabPath } from '../lib/asset-tabs'
@@ -278,6 +280,7 @@ export function PinnedReferencePane(): JSX.Element | null {
             'aria-label': 'Pinned reference editor'
           }),
           vimCompartment.of(s0.vimMode ? vimWithBlockSelection() : []),
+          vimVisualHighlightExtension,
           history(),
           drawSelection(),
           tabSizeCompartment.of([
@@ -292,6 +295,7 @@ export function PinnedReferencePane(): JSX.Element | null {
           markdownListIndentPlugin,
           frontmatterStyle,
           orderedListRenumber,
+          frontmatterTagExtension,
           headingCompartment.of(
             headingFolding({ showLevelLabels: s0.showHeadingLevelLabels })
           ),
@@ -315,6 +319,7 @@ export function PinnedReferencePane(): JSX.Element | null {
               slashCommandSource,
               calloutTypeSource,
               dateShortcutSource,
+              frontmatterTagSource,
               hashtagSource,
               wikilinkSource,
               wikilinkHeadingSource

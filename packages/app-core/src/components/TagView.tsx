@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isTagsViewActive, useStore } from '../store'
 import type { NoteMeta } from '@shared/ipc'
-import { buildTagTree, extractTags, flattenTagTree, matchesSelectedTags } from '../lib/tags'
+import { buildTagTree, flattenTagTree, matchesSelectedTags, noteTagsForCount } from '../lib/tags'
+import { resolveTypstPreambleFolder } from '../lib/typst-preamble'
 import { TagIcon, CloseIcon, DocumentIcon } from './icons'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 import { advanceSequence, getKeymapBinding, matchesSequenceToken } from '../lib/keymaps'
@@ -32,6 +33,9 @@ function folderLabel(note: NoteMeta): string {
 export function TagView(): JSX.Element {
   const notes = useStore((s) => s.notes)
   const activeNote = useStore((s) => s.activeNote)
+  const preambleFolder = useStore((s) =>
+    resolveTypstPreambleFolder(s.vaultSettings?.typstPreambles?.folder)
+  )
   const selectedTags = useStore((s) => s.selectedTags)
   const tagMatchMode = useStore((s) => s.tagMatchMode)
   const setTagMatchMode = useStore((s) => s.setTagMatchMode)
@@ -65,16 +69,12 @@ export function TagView(): JSX.Element {
     const counter = new Map<string, number>()
     for (const note of notes) {
       if (note.folder === 'trash') continue
-      const tags =
-        activeNote && activeNote.path === note.path
-          ? extractTags(activeNote.body)
-          : note.tags
-      for (const t of tags) {
+      for (const t of noteTagsForCount(note, activeNote, preambleFolder)) {
         counter.set(t, (counter.get(t) ?? 0) + 1)
       }
     }
     return [...counter.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-  }, [notes, activeNote])
+  }, [notes, activeNote, preambleFolder])
 
   // Nested-tag tree (#439). Shares the collapsed-node set with the sidebar so
   // expand/collapse stays in sync across both surfaces.
@@ -94,12 +94,11 @@ export function TagView(): JSX.Element {
     return notes
       .filter((n) => {
         if (n.folder === 'trash') return false
-        const tags =
-          activeNote && activeNote.path === n.path ? extractTags(activeNote.body) : n.tags
+        const tags = noteTagsForCount(n, activeNote, preambleFolder)
         return matchesSelectedTags(tags, selectedTags, tagMatchMode)
       })
       .sort((a, b) => b.updatedAt - a.updatedAt)
-  }, [notes, activeNote, selectedTags, tagMatchMode])
+  }, [notes, activeNote, selectedTags, tagMatchMode, preambleFolder])
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase()

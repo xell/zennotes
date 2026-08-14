@@ -149,33 +149,56 @@ export function externalLinkUrl(href: string): string | null {
 }
 
 /**
- * The link target at a document offset — a `[[wikilink]]` name, a Markdown
- * link's URL, or a bare URL. Returns null when the offset isn't inside a link.
+ * The link at a document offset — a `[[wikilink]]` name, a Markdown link's
+ * URL, or a bare URL — with its full source range in `doc` offsets. The range
+ * lets pointer-driven callers confirm the mouse actually sits on the link's
+ * rendered glyphs: a position alone cannot tell "on the link" from "clamped to
+ * the link", which is how blank space beside a line once hovered and followed
+ * a line-ending link (#587). Returns null when the offset isn't inside a link.
  */
-export function extractLinkAtCursor(doc: string, pos: number): string | null {
+export function linkRangeAtCursor(
+  doc: string,
+  pos: number
+): { target: string; from: number; to: number } | null {
   const lineStart = doc.lastIndexOf('\n', pos - 1) + 1
   const lineEnd = doc.indexOf('\n', pos)
   const line = doc.slice(lineStart, lineEnd === -1 ? undefined : lineEnd)
   const col = pos - lineStart
+  const hit = (m: RegExpExecArray, target: string) =>
+    col >= m.index && col < m.index + m[0].length
+      ? { target, from: lineStart + m.index, to: lineStart + m.index + m[0].length }
+      : null
   const wikiRe = /\[\[([^\]|]+?)(?:\|[^\]]+)?\]\]/g
   let m: RegExpExecArray | null
   while ((m = wikiRe.exec(line)) !== null) {
-    if (col >= m.index && col < m.index + m[0].length) return m[1]
+    const found = hit(m, m[1])
+    if (found) return found
   }
   // Angle-bracketed URLs can contain `)` so match them specifically first.
   const mdAngleRe = /\[([^\]]*)\]\(<([^>]+)>\)/g
   while ((m = mdAngleRe.exec(line)) !== null) {
-    if (col >= m.index && col < m.index + m[0].length) return m[2]
+    const found = hit(m, m[2])
+    if (found) return found
   }
   const mdRe = /\[([^\]]*)\]\(([^)]+)\)/g
   while ((m = mdRe.exec(line)) !== null) {
-    if (col >= m.index && col < m.index + m[0].length) return unwrapMdUrl(m[2])
+    const found = hit(m, unwrapMdUrl(m[2]))
+    if (found) return found
   }
   const urlRe = /https?:\/\/[^\s)>\]]+/g
   while ((m = urlRe.exec(line)) !== null) {
-    if (col >= m.index && col < m.index + m[0].length) return m[0]
+    const found = hit(m, m[0])
+    if (found) return found
   }
   return null
+}
+
+/**
+ * The link target at a document offset — a `[[wikilink]]` name, a Markdown
+ * link's URL, or a bare URL. Returns null when the offset isn't inside a link.
+ */
+export function extractLinkAtCursor(doc: string, pos: number): string | null {
+  return linkRangeAtCursor(doc, pos)?.target ?? null
 }
 
 /**

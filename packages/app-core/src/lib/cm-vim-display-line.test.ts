@@ -203,6 +203,91 @@ describe('zenMoveByDisplayLine no-progress fallback (#423)', () => {
   })
 })
 
+describe('measurement-crash fallback (#574)', () => {
+  // codemirror-vim rethrows a motion exception after clearing its state, and
+  // the un-preventDefault-ed keydown then types the pressed key into the note.
+  // A throw anywhere in the pixel path must therefore degrade to the logical
+  // step, never escape.
+
+  it('j falls back to one logical line down when findPosV throws', () => {
+    const cm = {
+      firstLine: () => 0,
+      lastLine: () => 100,
+      findPosV: () => {
+        throw new TypeError("Cannot read properties of null (reading 'top')")
+      },
+      charCoords: () => ({ left: 42 })
+    } as unknown as Cm
+    const res = zenMoveByDisplayLine(cm, { line: 50, ch: 10 }, { forward: true, repeat: 1 }, {})
+    expect(res).toEqual({ line: 51, ch: 10 })
+  })
+
+  it('k falls back to one logical line up when charCoords throws', () => {
+    const cm = {
+      firstLine: () => 0,
+      lastLine: () => 100,
+      findPosV: () => ({ line: 49, ch: 10 }),
+      charCoords: () => {
+        throw new TypeError('measure failed')
+      }
+    } as unknown as Cm
+    const res = zenMoveByDisplayLine(cm, { line: 50, ch: 10 }, { forward: false, repeat: 1 }, {})
+    expect(res).toEqual({ line: 49, ch: 10 })
+  })
+
+  it('the fallback still clamps to the document bounds', () => {
+    const cm = {
+      firstLine: () => 0,
+      lastLine: () => 100,
+      findPosV: () => {
+        throw new Error('boom')
+      },
+      charCoords: () => ({ left: 42 })
+    } as unknown as Cm
+    const res = zenMoveByDisplayLine(cm, { line: 0, ch: 5 }, { forward: false, repeat: 1 }, {})
+    expect(res).toEqual({ line: 0, ch: 5 })
+  })
+
+  it('a bare $ falls back to the logical line end when goLineRight throws', () => {
+    const cm = {
+      execCommand: () => {
+        throw new Error('boom')
+      },
+      getCursor: vi.fn()
+    }
+    const res = zenMoveToDisplayLineBoundary(cm, { line: 4, ch: 7 }, { forward: true, repeat: 1 })
+    expect(res).toEqual({ line: 4, ch: Infinity })
+  })
+
+  it('g0 falls back to column 0 when the row measurement throws', () => {
+    const cm = {
+      execCommand: vi.fn(),
+      getCursor: vi.fn(),
+      charCoords: () => {
+        throw new Error('boom')
+      },
+      coordsChar: vi.fn()
+    }
+    const res = zenMoveToDisplayLineBoundary(cm, { line: 4, ch: 30 }, { forward: false, repeat: 1 })
+    expect(res).toEqual({ line: 4, ch: 0 })
+  })
+
+  it('H stays put instead of throwing when the viewport measurement fails', () => {
+    const cm = {
+      firstLine: () => 0,
+      lastLine: () => 99,
+      getScrollInfo: () => {
+        throw new Error('boom')
+      },
+      coordsChar: vi.fn(),
+      getLine: () => '',
+      findPosV: vi.fn()
+    }
+    const res = zenMoveToViewportEdge(cm, { line: 15, ch: 4 }, { forward: false, repeat: 1 })
+    expect(res).toEqual({ line: 15, ch: 4 })
+  })
+})
+
 describe('wrapped display-row boundaries (#536)', () => {
   it('moves $ to the end of the current display row', () => {
     let cursor = { line: 4, ch: 7, sticky: 'before' }
@@ -246,6 +331,195 @@ describe('wrapped display-row boundaries (#536)', () => {
       zenMoveToDisplayLineBoundary(cm, { line: 4, ch: 7 }, { forward: true, repeat: 3 })
     ).toEqual({ line: 6, ch: Infinity })
     expect(cm.execCommand).not.toHaveBeenCalled()
+  })
+})
+
+describe('wrap-point landings disambiguate by goal column (#580)', () => {
+  // Line 2 (0-based line 1) holds 100 chars wrapping into rows of 30, so the
+  // wrap points sit at ch 30/60/90. coordsAtPos honors the side argument:
+  // side -1 is the end of the previous row (right edge, x 240), side 1 the
+  // start of the next (left edge, x 0). vim.lastHSPos is the goal x.
+  const DOC = `alpha\n${'x'.repeat(100)}\nomega`
+
+  function wrapCm(findPosVResult: { line: number; ch: number }) {
+    const state = EditorState.create({ doc: DOC })
+    const coordsAtPos = (offset: number, side: 1 | -1 = 1) => {
+      if (offset < 6 || offset > 106) return null
+      const rel = offset - 6
+      const effective = side === -1 ? Math.max(0, rel - 1) : rel
+      const row = Math.min(3, Math.floor(effective / 30))
+      const left = side === -1 && rel % 30 === 0 && rel > 0 ? 240 : (rel % 30) * 8
+      const top = 100 + row * 20
+      return { left, right: left, top, bottom: top + 18 }
+    }
+    const findPosV = vi.fn((_start: { line: number; ch: number }) => ({ ...findPosVResult }))
+    const charCoords = vi.fn((_pos: { line: number; ch: number }) => ({ left: 42 }))
+    return {
+      cm: {
+        firstLine: () => 0,
+        lastLine: () => 2,
+        findPosV,
+        charCoords,
+        cm6: {
+          state,
+          coordsAtPos,
+          contentDOM: { getBoundingClientRect: () => ({ left: 0 }) }
+        } as unknown as EditorView
+      } as unknown as Cm,
+      findPosV,
+      charCoords
+    }
+  }
+
+  // Sticky goal columns across presses need vim.lastMotion to be this motion.
+  const vimWithGoal = (lastHSPos: number): VimState =>
+    ({ lastMotion: zenMoveByDisplayLine, lastHSPos }) as VimState
+
+  it('a right-edge goal landing on a wrap point rests on the last character of the previous row', () => {
+    const { cm } = wrapCm({ line: 1, ch: 60 })
+    const res = zenMoveByDisplayLine(
+      cm,
+      { line: 1, ch: 29 },
+      { forward: true, repeat: 1 },
+      vimWithGoal(235)
+    )
+    expect(res).toEqual({ line: 1, ch: 59 })
+  })
+
+  it('a left-edge goal landing on a wrap point keeps the start of the next row', () => {
+    const { cm } = wrapCm({ line: 1, ch: 60 })
+    const res = zenMoveByDisplayLine(
+      cm,
+      { line: 1, ch: 30 },
+      { forward: true, repeat: 1 },
+      vimWithGoal(2)
+    )
+    expect(res).toEqual({ line: 1, ch: 60 })
+  })
+
+  it('mid-row landings are untouched either way', () => {
+    const { cm } = wrapCm({ line: 1, ch: 45 })
+    const res = zenMoveByDisplayLine(
+      cm,
+      { line: 1, ch: 15 },
+      { forward: true, repeat: 1 },
+      vimWithGoal(235)
+    )
+    expect(res).toEqual({ line: 1, ch: 45 })
+  })
+
+  it('line starts and ends are not wrap points', () => {
+    const { cm } = wrapCm({ line: 2, ch: 0 })
+    const res = zenMoveByDisplayLine(
+      cm,
+      { line: 1, ch: 100 },
+      { forward: true, repeat: 1 },
+      vimWithGoal(235)
+    )
+    expect(res).toEqual({ line: 2, ch: 0 })
+  })
+})
+
+describe('display-row boundaries from row midpoints (#575)', () => {
+  // Simulated layout: line 2 (0-based line 1) holds 100 chars wrapping into
+  // rows of 30 (offsets 6-35, 36-65, 66-95, 96-106). coordsAtPos reports a
+  // top per row; `jitter` adds sub-pixel noise like the fractional-scaling
+  // environments where x hit-testing mislands.
+  const DOC = `alpha\n${'x'.repeat(100)}\nomega`
+
+  function boundaryCm(jitter = false) {
+    const state = EditorState.create({ doc: DOC })
+    const coordsAtPos = (offset: number) => {
+      if (offset < 6 || offset > 106) return null
+      const row = Math.min(3, Math.floor((offset - 6) / 30))
+      const noise = jitter ? ((offset * 7) % 5) - 2 : 0
+      const top = 100 + row * 20 + noise
+      return { left: 0, right: 0, top, bottom: top + 18 }
+    }
+    return {
+      execCommand: vi.fn(),
+      getCursor: vi.fn(),
+      cm6: { state, coordsAtPos } as unknown as EditorView
+    }
+  }
+
+  it('$ from a row start lands on the last character of that row', () => {
+    const cm = boundaryCm()
+    const res = zenMoveToDisplayLineBoundary(cm, { line: 1, ch: 0 }, { forward: true, repeat: 1 })
+    expect(res).toEqual({ line: 1, ch: 29 })
+    expect(cm.execCommand).not.toHaveBeenCalled()
+  })
+
+  it('$ from the middle of an inner row lands on the last character of that row', () => {
+    const cm = boundaryCm()
+    const res = zenMoveToDisplayLineBoundary(cm, { line: 1, ch: 70 }, { forward: true, repeat: 1 })
+    expect(res).toEqual({ line: 1, ch: 89 })
+  })
+
+  it('$ on the last row reaches the actual line end', () => {
+    const cm = boundaryCm()
+    const res = zenMoveToDisplayLineBoundary(cm, { line: 1, ch: 97 }, { forward: true, repeat: 1 })
+    expect(res).toEqual({ line: 1, ch: 99 })
+  })
+
+  it('g0 lands on the first character of the current row', () => {
+    const cm = boundaryCm()
+    const res = zenMoveToDisplayLineBoundary(cm, { line: 1, ch: 70 }, { forward: false, repeat: 1 })
+    expect(res).toEqual({ line: 1, ch: 60 })
+  })
+
+  it('sub-pixel jitter in the row coordinates changes nothing', () => {
+    const cm = boundaryCm(true)
+    expect(
+      zenMoveToDisplayLineBoundary(cm, { line: 1, ch: 0 }, { forward: true, repeat: 1 })
+    ).toEqual({ line: 1, ch: 29 })
+    expect(
+      zenMoveToDisplayLineBoundary(cm, { line: 1, ch: 97 }, { forward: true, repeat: 1 })
+    ).toEqual({ line: 1, ch: 99 })
+    expect(
+      zenMoveToDisplayLineBoundary(cm, { line: 1, ch: 70 }, { forward: false, repeat: 1 })
+    ).toEqual({ line: 1, ch: 60 })
+  })
+
+  it('falls back to the LOGICAL line end when coordinates are unavailable (#582)', () => {
+    // goLineRight would resolve the rightmost visible glyph, which live
+    // preview's hidden closing tokens pull short of the real end; plain
+    // Vim's logical $ is the safe degradation.
+    const state = EditorState.create({ doc: DOC })
+    const cm = {
+      execCommand: vi.fn(),
+      getCursor: vi.fn(),
+      cm6: { state, coordsAtPos: () => null } as unknown as EditorView
+    }
+    const res = zenMoveToDisplayLineBoundary(cm, { line: 1, ch: 0 }, { forward: true, repeat: 1 })
+    expect(cm.execCommand).not.toHaveBeenCalled()
+    expect(res).toEqual({ line: 1, ch: Infinity })
+  })
+
+  it('a taller inline chip on the row does not read as a wrap (#582)', () => {
+    // The line-end coords sit lower and taller (a rendered wikilink chip)
+    // but still overlap the text row; $ must reach the line end, not stop
+    // at an imaginary wrap before the chip.
+    const state = EditorState.create({ doc: 'alpha\nnote [[wikilink]]\nomega' })
+    const line = { from: 6, to: 23 }
+    const coordsAtPos = (offset: number) => {
+      if (offset < line.from || offset > line.to) return null
+      // Text glyphs: top 100..118 (midpoint 109). The trailing chip region:
+      // top 106..134 (midpoint 120), a skew past the old half-row midpoint
+      // tolerance, yet clearly overlapping the same visual row.
+      const inChip = offset >= 11
+      const top = inChip ? 106 : 100
+      const bottom = inChip ? 134 : 118
+      return { left: (offset - line.from) * 8, right: 0, top, bottom }
+    }
+    const cm = {
+      execCommand: vi.fn(),
+      getCursor: vi.fn(),
+      cm6: { state, coordsAtPos } as unknown as EditorView
+    }
+    const res = zenMoveToDisplayLineBoundary(cm, { line: 1, ch: 0 }, { forward: true, repeat: 1 })
+    expect(cm.execCommand).not.toHaveBeenCalled()
+    expect(res).toEqual({ line: 1, ch: 16 }) // line length 17, $ rests ON the last char
   })
 })
 

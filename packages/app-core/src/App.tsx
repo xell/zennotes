@@ -20,11 +20,18 @@ import { NoteList } from './components/NoteList'
 import { TitleBar } from './components/TitleBar'
 import { PromptHost } from './components/PromptHost'
 import { ConfirmHost } from './components/ConfirmHost'
+import { PublishNoteHost } from './components/PublishNoteHost'
 import { ServerDirectoryPickerHost } from './components/ServerDirectoryPickerHost'
 import { ToastHost } from './components/ui'
 import { ExcalidrawEmbedMenuHost } from './components/ExcalidrawEmbedMenuHost'
 import { resolveQuickNoteTitle } from './lib/quick-note-title'
-import { isMacPlatform, matchesShortcut, matchesSequenceToken } from './lib/keymaps'
+import {
+  eventMatchesUserOverride,
+  isMacPlatform,
+  matchesShortcut,
+  matchesSequenceToken,
+  TAB_SELECT_KEYMAP_IDS
+} from './lib/keymaps'
 import { confirmApp, confirmAppChoice } from './lib/confirm-requests'
 import {
   anyPdfBufferDirty,
@@ -32,6 +39,7 @@ import {
   saveAllDirtyPdfBuffers
 } from './lib/pdf-buffers'
 import { selectedInboxFolderForIsolation, goUpIsolationWithConfirm } from './lib/sidebar-isolation'
+import { selectActiveBuffer } from './lib/buffer-navigation'
 import { focusPaneOrEdgePanel, focusLastActivePane } from './lib/pane-nav'
 import {
   activatePanelRow,
@@ -54,6 +62,7 @@ import {
   appUpdatePrimaryActionLabel,
   useAppUpdateState
 } from './lib/app-update-state'
+import { ensureCloudAutoSyncStarted, stopCloudAutoSync } from './lib/cloud-auto-sync'
 
 let editorModulePromise: Promise<typeof import('./components/Editor')> | null = null
 const EDITOR_MODULE_WARMUP_GRACE_MS = 40
@@ -394,6 +403,12 @@ function App(): JSX.Element {
   useEffect(() => {
     void init()
   }, [init])
+
+  useEffect(() => {
+    if (!vault) return undefined
+    ensureCloudAutoSyncStarted()
+    return stopCloudAutoSync
+  }, [vault?.root])
 
   useEffect(() => {
     if (!vault) return undefined
@@ -757,6 +772,36 @@ function App(): JSX.Element {
         state.setWordWrap(!state.wordWrap)
         return
       }
+      // Alt+1..9 (⌃1..9 on macOS): jump straight to tab N (#497). Position
+      // counts across panes in the same order gt cycles through. Bails while
+      // a modal, palette, menu, or Settings (with its keymap recorder) is
+      // open, per the house rule for global key handlers: switching the tab
+      // under an overlay strands the user on a different note than they left.
+      const tabSelectBlocked =
+        state.settingsOpen ||
+        state.searchOpen ||
+        state.vaultTextSearchOpen ||
+        state.commandPaletteOpen ||
+        state.bufferPaletteOpen ||
+        state.templatePaletteOpen ||
+        state.embedDrawingPaletteOpen ||
+        state.outlinePaletteOpen ||
+        document.querySelector('[data-ctx-menu]') ||
+        document.querySelector('[data-prompt-modal]') ||
+        document.querySelector('[data-confirm-modal]')
+      if (!tabSelectBlocked) {
+        for (let i = 0; i < TAB_SELECT_KEYMAP_IDS.length; i += 1) {
+          const id = TAB_SELECT_KEYMAP_IDS[i]
+          if (!matchesShortcut(e, overrides, id)) continue
+          // These defaults were inserted mid-handler: when the combination is
+          // one the user explicitly rebound to another action (checked later
+          // in this chain), the rebind wins over the shipped default.
+          if (!overrides[id] && eventMatchesUserOverride(e, overrides, id)) continue
+          e.preventDefault()
+          selectActiveBuffer(state, i + 1)
+          return
+        }
+      }
       if (matchesShortcut(e, overrides, 'global.exportNotePdf')) {
         e.preventDefault()
         void state.exportActiveNotePdf()
@@ -1046,29 +1091,11 @@ function App(): JSX.Element {
         window.dispatchEvent(new Event('zen:add-comment'))
         return
       }
-      // Pane-focus shortcuts (⌥h/j/k/l by default) are handled by a separate
-      // capture-phase listener so a remap onto an editor key still wins over
-      // CodeMirror — see focusPaneHandler below. (#124)
-      if (matchesShortcut(e, overrides, 'global.modeEdit')) {
-        e.preventDefault()
-        requestPaneMode('edit')
-        return
-      }
-      if (matchesShortcut(e, overrides, 'global.modeSplit')) {
-        e.preventDefault()
-        requestPaneMode('split')
-        return
-      }
-      if (matchesShortcut(e, overrides, 'global.modePreview')) {
-        e.preventDefault()
-        requestPaneMode('preview')
-        return
-      }
-      if (matchesShortcut(e, overrides, 'global.modeDiff')) {
-        e.preventDefault()
-        requestPaneMode('diff')
-        return
-      }
+      // Pane-focus shortcuts (⌥h/j/k/l by default) and the pane-mode
+      // shortcuts (⌘4/5/6 by default, plus this fork's own Diff mode) are
+      // handled by a separate capture-phase listener so a remap onto an
+      // editor key still wins over CodeMirror — see focusPaneHandler below.
+      // (#124, #579)
       // ⌘. — toggle Zen mode
       if (matchesShortcut(e, overrides, 'global.toggleZenMode')) {
         e.preventDefault()
@@ -1160,6 +1187,29 @@ function App(): JSX.Element {
         e.preventDefault()
         e.stopImmediatePropagation()
         focusPaneOrEdgePanel(paneDir)
+        return
+      }
+
+      // Pane-mode shortcuts need the same capture treatment (#579): remapped
+      // onto an editor chord (Ctrl+P, Ctrl+E, …), the bubble-phase handler ran
+      // only after CodeMirror had already consumed the key, so the shortcuts
+      // went dead exactly when the editor held focus — which split mode
+      // guarantees. The defaults (⌘4/5/6) collide with nothing, so for them
+      // this is just a phase change. Diff mode (this fork's own pane mode)
+      // gets the same treatment for the same reason.
+      const paneMode = matchesShortcut(e, overrides, 'global.modeEdit')
+        ? ('edit' as const)
+        : matchesShortcut(e, overrides, 'global.modeSplit')
+          ? ('split' as const)
+          : matchesShortcut(e, overrides, 'global.modePreview')
+            ? ('preview' as const)
+            : matchesShortcut(e, overrides, 'global.modeDiff')
+              ? ('diff' as const)
+              : null
+      if (paneMode) {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        requestPaneMode(paneMode)
         return
       }
 
@@ -1264,6 +1314,7 @@ function App(): JSX.Element {
         </Suspense>
         <PromptHost />
         <ConfirmHost />
+        <PublishNoteHost />
         <ToastHost />
         <ExcalidrawEmbedMenuHost />
         <ServerDirectoryPickerHost />
@@ -1281,6 +1332,7 @@ function App(): JSX.Element {
         </Suspense>
         <PromptHost />
         <ConfirmHost />
+        <PublishNoteHost />
         <ToastHost />
         <ExcalidrawEmbedMenuHost />
         <ServerDirectoryPickerHost />
@@ -1364,6 +1416,7 @@ function App(): JSX.Element {
       )}
       <PromptHost />
       <ConfirmHost />
+      <PublishNoteHost />
       <ToastHost />
       <ExcalidrawEmbedMenuHost />
       <ServerDirectoryPickerHost />

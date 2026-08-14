@@ -37,18 +37,18 @@ export interface TypstPreambleNote {
   body: string
 }
 
-/** Folder name that marks preamble notes, at any depth in the vault. */
-export const TYPST_PREAMBLE_FOLDER = 'typst'
-
 /**
- * True when `path` sits in a folder named `typst`, e.g.
- * `inbox/typst/physics.md` or `archive/notes/typst/maths.md`.
+ * Which folder marks a preamble note, and whether a path is one, both live in
+ * shared-domain: the vault's tag scanners (desktop main, MCP, the Go server)
+ * leave preamble notes out of the tag index, and they and this module have to
+ * agree on the folder or a note would resolve as a preamble here while still
+ * contributing `#let` to the tag list there. (#562)
  */
-export function isTypstPreamblePath(path: string): boolean {
-  const parts = path.split('/')
-  // The last part is the file itself, so look for the folder among the parents.
-  return parts.slice(0, -1).some((part) => part.toLowerCase() === TYPST_PREAMBLE_FOLDER)
-}
+export {
+  DEFAULT_TYPST_PREAMBLE_FOLDER as TYPST_PREAMBLE_FOLDER,
+  isTypstPreamblePath,
+  resolveTypstPreambleFolder
+} from '@shared/typst-preamble-folder'
 
 /** The dotted key a preamble note is addressed by — its title, lower-cased. */
 export function preambleKeyFromTitle(title: string): string {

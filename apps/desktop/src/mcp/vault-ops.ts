@@ -19,6 +19,11 @@ import {
   normalizeTasksExcludedFolders
 } from '@shared/tasks-excluded-folders'
 import {
+  DEFAULT_TYPST_PREAMBLE_FOLDER,
+  isTypstPreamblePath,
+  resolveTypstPreambleFolder
+} from '@shared/typst-preamble-folder'
+import {
   isObsidianExcalidrawMarkdown,
   isObsidianExcalidrawPath
 } from '@shared/excalidraw'
@@ -667,6 +672,10 @@ async function readMeta(root: string, abs: string, folder: NoteFolder): Promise<
     /* treat as empty */
   }
   const rel = toPosix(path.relative(root, abs))
+  // Typst preambles hold Typst source, whose `#let` / `#var` tokens are
+  // variables rather than tags (#562). Skipped here so agents see the same tag
+  // list the app does; everything else about the note is reported as usual.
+  const isPreamble = isTypstPreamblePath(rel, await readTypstPreambleFolder(root))
   return {
     path: rel,
     link: buildOpenNoteDeepLink(rel),
@@ -675,7 +684,7 @@ async function readMeta(root: string, abs: string, folder: NoteFolder): Promise<
     createdAt: stat.birthtimeMs || stat.ctimeMs,
     updatedAt: stat.mtimeMs,
     size: stat.size,
-    tags: extractTags(body),
+    tags: isPreamble ? [] : extractTags(body),
     wikilinks: extractWikilinks(body),
     excerpt: buildExcerpt(body)
   }
@@ -1547,6 +1556,22 @@ function todayIsoLocal(): string {
 /** The vault's `tasks.excludedFolders` list (#458), read straight off
  *  vault.json like readSystemFolderPaths above; validation comes from the
  *  shared normalizer, so the rules cannot drift from the other runtimes. */
+/** The vault's Typst preamble folder (#562), read the same way. Preamble notes
+ *  are Typst source, so an agent asking for a note's tags must not be handed
+ *  `let` and a pile of variable names. */
+async function readTypstPreambleFolder(root: string): Promise<string> {
+  const settingsPath = path.join(root, INTERNAL_VAULT_DIR, VAULT_SETTINGS_FILE)
+  let raw: Record<string, unknown>
+  try {
+    raw = JSON.parse(await fs.readFile(settingsPath, 'utf8')) as Record<string, unknown>
+  } catch {
+    return DEFAULT_TYPST_PREAMBLE_FOLDER
+  }
+  const preambles = raw['typstPreambles']
+  if (!preambles || typeof preambles !== 'object') return DEFAULT_TYPST_PREAMBLE_FOLDER
+  return resolveTypstPreambleFolder((preambles as { folder?: unknown }).folder)
+}
+
 async function readTasksExcludedFolders(root: string): Promise<string[]> {
   const settingsPath = path.join(root, INTERNAL_VAULT_DIR, VAULT_SETTINGS_FILE)
   let raw: Record<string, unknown>

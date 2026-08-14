@@ -23,6 +23,7 @@ import { Vim } from '@replit/codemirror-vim'
 import { history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { vimWithBlockSelection } from '../lib/cm-vim-block-selection'
 import { vimAwareDefaultKeymap, vimAwareMarkdownKeymap } from '../lib/cm-vim-default-keymap'
+import { vimVisualHighlightExtension } from '../lib/cm-vim-visual-highlight'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
 import { applyVimInsertEscape } from '../lib/vim-insert-escape'
@@ -160,6 +161,7 @@ export function ExternalFileApp(): JSX.Element {
             'aria-label': 'External file editor'
           }),
           new Compartment().of(prefs.vimMode ? vimWithBlockSelection() : []),
+          vimVisualHighlightExtension,
           history(),
           drawSelection(),
           editorTabSize(prefs.editorTabSize),

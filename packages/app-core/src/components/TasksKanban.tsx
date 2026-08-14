@@ -36,6 +36,11 @@ import { ArrowUpRightIcon, PencilIcon } from './icons'
 import { InlineMarkdown } from '../lib/inline-markdown'
 import { TaskStateBox } from './TaskStateBox'
 import { isImeComposing } from '../lib/ime'
+import {
+  getSequenceTokens,
+  sequenceTokenFromEvent,
+  type KeymapOverrides
+} from '../lib/keymaps'
 
 interface Props {
   tasks: VaultTask[]
@@ -435,6 +440,60 @@ export function arrangeColumns(columns: Column[], order: string[]): Column[] {
   return [...sorted, ...noValue]
 }
 
+/** How long an armed `g` waits for a tab-sequence completion before the
+ *  group-by cycle fires. Matches VimNav's own gt/gT pending window. */
+export const GROUP_BY_PENDING_MS = 500
+
+/** What a `g` keydown on the board should do (#573). Bare `g` cycles the
+ *  grouping, but Vim's gt/gT tab switches begin with the same token, and this
+ *  handler runs in the capture phase ahead of VimNav, so consuming `g`
+ *  outright made the tab keys unreachable from the Kanban. When the pressed
+ *  key opens one of the (rebindable) tab sequences in Vim mode, the cycle is
+ *  deferred for one pending window instead. */
+export function kanbanGroupByKeyPlan(
+  vimMode: boolean,
+  overrides: KeymapOverrides | null | undefined,
+  event: KeyboardEvent
+): 'cycle-now' | 'defer' {
+  if (!vimMode) return 'cycle-now'
+  const token = sequenceTokenFromEvent(event)
+  if (!token) return 'cycle-now'
+  const next = getSequenceTokens(overrides, 'vim.tabNext')
+  const previous = getSequenceTokens(overrides, 'vim.tabPrevious')
+  const opensTabSequence =
+    (next.length === 2 && token === next[0]) ||
+    (previous.length === 2 && token === previous[0])
+  return opensTabSequence ? 'defer' : 'cycle-now'
+}
+
+/** Resolve the key that follows an armed `g` (#573). Bare modifier presses
+ *  keep the prefix alive (Shift precedes the T of gT), a tab-sequence
+ *  completion stands the deferred cycle down (VimNav performs the switch),
+ *  another prefix press cycles for the buffered one and re-arms, and any
+ *  other key drops the prefix vim-style and acts normally. */
+export function kanbanPendingGroupByPlan(
+  overrides: KeymapOverrides | null | undefined,
+  event: KeyboardEvent
+): 'keep-pending' | 'yield-to-tabs' | 'repeat-prefix' | 'interrupt' {
+  const token = sequenceTokenFromEvent(event)
+  if (!token) return 'keep-pending'
+  const next = getSequenceTokens(overrides, 'vim.tabNext')
+  const previous = getSequenceTokens(overrides, 'vim.tabPrevious')
+  if (
+    (next.length === 2 && token === next[1]) ||
+    (previous.length === 2 && token === previous[1])
+  ) {
+    return 'yield-to-tabs'
+  }
+  if (
+    (next.length === 2 && token === next[0]) ||
+    (previous.length === 2 && token === previous[0])
+  ) {
+    return 'repeat-prefix'
+  }
+  return 'interrupt'
+}
+
 interface ActiveColumnDrag {
   columnId: string
   pointerId: number
@@ -531,6 +590,9 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
   const dragOverColumnRef = useRef<string | null>(null)
   const dragOverElementRef = useRef<HTMLElement | null>(null)
   const suppressCardClickUntilRef = useRef(0)
+  // #573: a pressed `g` waiting out the gt/gT window before cycling group-by.
+  const groupByPendingRef = useRef(false)
+  const groupByTimerRef = useRef<number | null>(null)
 
   const openTaskMenu = useCallback(
     (e: React.MouseEvent, task: VaultTask): void => {
@@ -975,12 +1037,15 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
   // never needs the mouse. (#354)
   const cycleGroupBy = useCallback(() => {
     if (groupByOptions.length === 0) return
-    const i = groupByOptions.findIndex((o) => o.value === groupBy)
+    // Read at call time: the deferred #573 cycle fires from a timer, and a
+    // captured value would replay the previous board instead of advancing.
+    const current = useStore.getState().kanbanGroupBy
+    const i = groupByOptions.findIndex((o) => o.value === current)
     const next = groupByOptions[(i + 1) % groupByOptions.length]
     setGroupBy(next.value)
     setColIdx(0)
     setCardIdx(0)
-  }, [groupBy, groupByOptions, setGroupBy])
+  }, [groupByOptions, setGroupBy])
 
   const scheduleDropIndicatorPosition = useCallback((x: number, y: number, width: number) => {
     dropIndicatorRectRef.current = { x, y, width }
@@ -1238,6 +1303,19 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
 
   useEffect(() => clearDropTarget, [clearDropTarget])
 
+  const clearGroupByPending = useCallback((): void => {
+    groupByPendingRef.current = false
+    if (groupByTimerRef.current !== null) {
+      window.clearTimeout(groupByTimerRef.current)
+      groupByTimerRef.current = null
+    }
+  }, [])
+
+  // A tab switch can unmount the board before the deferred group-by cycle
+  // fires (VimNav may consume the completing key before this handler sees
+  // it); a pending must not outlive the board that armed it.
+  useEffect(() => clearGroupByPending, [clearGroupByPending])
+
   // Local key handler — capture phase + stopImmediatePropagation so we
   // beat VimNav's global handler (which otherwise hijacks h/j/k/l).
   useEffect(() => {
@@ -1249,6 +1327,19 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
         const tag = active.tagName
         if (tag === 'INPUT' || tag === 'TEXTAREA' || active.isContentEditable) return
       }
+
+      // A deferred group-by cycle is waiting on the gt/gT window (#573).
+      // Resolved before the modifier guard so a chord also drops the prefix.
+      if (groupByPendingRef.current) {
+        const plan = kanbanPendingGroupByPlan(useStore.getState().keymapOverrides, e)
+        if (plan === 'keep-pending') return
+        clearGroupByPending()
+        if (plan === 'yield-to-tabs') return
+        if (plan === 'repeat-prefix') cycleGroupBy()
+        // repeat-prefix re-arms through the `g` case below; an interrupting
+        // key just drops the prefix and acts normally.
+      }
+
       if (e.metaKey || e.ctrlKey || e.altKey) return
 
       const consume = (): void => {
@@ -1258,8 +1349,20 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
 
       switch (e.key) {
         case 'g':
-          consume()
-          cycleGroupBy()
+          if (kanbanGroupByKeyPlan(vimMode, useStore.getState().keymapOverrides, e) === 'cycle-now') {
+            consume()
+            cycleGroupBy()
+            return
+          }
+          // Vim's gt/gT open with this token. Leave the keydown unconsumed so
+          // VimNav arms its own tab pending, and only cycle when nothing
+          // completes the sequence.
+          groupByPendingRef.current = true
+          groupByTimerRef.current = window.setTimeout(() => {
+            groupByPendingRef.current = false
+            groupByTimerRef.current = null
+            cycleGroupBy()
+          }, GROUP_BY_PENDING_MS)
           return
         case 'h':
         case 'ArrowLeft':
@@ -1341,6 +1444,7 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
   }, [
+    clearGroupByPending,
     columns.length,
     cycleGroupBy,
     dndEnabled,
@@ -1349,7 +1453,8 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
     moveFocusedCard,
     moveFocusedColumn,
     onOpenTask,
-    onToggleTask
+    onToggleTask,
+    vimMode
   ])
 
   return (

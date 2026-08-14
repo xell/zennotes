@@ -9,6 +9,11 @@ export interface OpenNoteDeepLinkRequest {
   path: string
 }
 
+export interface CloudAuthDeepLinkRequest {
+  code: string
+  state: string
+}
+
 const OPEN_NOTE_ACTION_TARGETS: Record<string, OpenNoteDeepLinkTarget> = {
   open: 'tab',
   'open-window': 'window'
@@ -30,6 +35,29 @@ export function parseQuickCaptureDeepLink(rawUrl: string): boolean {
   }
 
   return parsed.protocol === `${ZENNOTES_DEEP_LINK_SCHEME}:` && deepLinkAction(parsed) === 'quick-capture'
+}
+
+export function parseCloudAuthDeepLink(rawUrl: string): CloudAuthDeepLinkRequest | null {
+  const trimmed = rawUrl.trim()
+  if (!trimmed) return null
+
+  let parsed: URL
+  try {
+    parsed = new URL(trimmed)
+  } catch {
+    return null
+  }
+
+  if (parsed.protocol !== `${ZENNOTES_DEEP_LINK_SCHEME}:` || deepLinkAction(parsed) !== 'auth') {
+    return null
+  }
+
+  const code = parsed.searchParams.get('code') ?? ''
+  const state = parsed.searchParams.get('state') ?? ''
+  if (!/^[A-Za-z0-9]+$/.test(code) || code.length > 256) return null
+  if (!/^[A-Za-z0-9._-]+$/.test(state) || state.length > 128) return null
+
+  return { code, state }
 }
 
 export function parseOpenNoteDeepLink(rawUrl: string): OpenNoteDeepLinkRequest | null {

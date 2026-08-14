@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  TYPST_PREAMBLE_FOLDER,
   isTypstPreamblePath,
   preambleKeyFromTitle,
   preambleKeysForTag,
   resolveTypstPreamble,
+  resolveTypstPreambleFolder,
   type TypstPreambleNote
 } from './typst-preamble'
 
@@ -11,12 +13,23 @@ const preamble = (key: string, body: string): TypstPreambleNote => ({ key, body 
 
 describe('typst preamble resolution (#486)', () => {
   it('recognises preamble notes by their folder, at any depth', () => {
-    expect(isTypstPreamblePath('inbox/typst/physics.md')).toBe(true)
-    expect(isTypstPreamblePath('archive/course/typst/maths.md')).toBe(true)
-    expect(isTypstPreamblePath('inbox/TYPST/physics.md')).toBe(true)
+    const folder = TYPST_PREAMBLE_FOLDER
+    expect(isTypstPreamblePath('inbox/typst/physics.md', folder)).toBe(true)
+    expect(isTypstPreamblePath('archive/course/typst/maths.md', folder)).toBe(true)
+    expect(isTypstPreamblePath('inbox/TYPST/physics.md', folder)).toBe(true)
     // A note merely *named* typst is not a preamble.
-    expect(isTypstPreamblePath('inbox/typst.md')).toBe(false)
-    expect(isTypstPreamblePath('inbox/notes/typstish/x.md')).toBe(false)
+    expect(isTypstPreamblePath('inbox/typst.md', folder)).toBe(false)
+    expect(isTypstPreamblePath('inbox/notes/typstish/x.md', folder)).toBe(false)
+  })
+
+  // The folder is configurable (#562), so resolution has to follow the vault's
+  // setting rather than the shipped default, or a renamed folder would stop
+  // resolving preambles while its notes stayed out of the tag index.
+  it('follows a renamed preamble folder', () => {
+    expect(isTypstPreamblePath('inbox/Preambles/physics.md', 'Preambles')).toBe(true)
+    expect(isTypstPreamblePath('inbox/typst/physics.md', 'Preambles')).toBe(false)
+    expect(resolveTypstPreambleFolder(undefined)).toBe(TYPST_PREAMBLE_FOLDER)
+    expect(resolveTypstPreambleFolder('Preambles')).toBe('Preambles')
   })
 
   it('walks a nested tag from broad to specific', () => {

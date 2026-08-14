@@ -43,7 +43,9 @@ import { Vim } from '@replit/codemirror-vim'
 import { history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { vimWithBlockSelection } from '../lib/cm-vim-block-selection'
 import { vimAwareDefaultKeymap, vimAwareMarkdownKeymap } from '../lib/cm-vim-default-keymap'
+import { vimVisualHighlightExtension } from '../lib/cm-vim-visual-highlight'
 import { registerDisplayLineMotion } from '../lib/cm-vim-display-line'
+import { registerHeadingMotion } from '../lib/cm-vim-heading-motion'
 import { toggleWrap, wrapLink } from '../lib/cm-format'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
@@ -213,6 +215,7 @@ function registerCaptureVimCommands(): void {
   // #312: this window is a separate Electron renderer with its own Vim, so it
   // needs its own registration to get the main editor's j/k display-line motion.
   registerDisplayLineMotion()
+  registerHeadingMotion()
 
   Vim.defineEx('write', 'w', () => {
     setTimeout(() => {
@@ -534,6 +537,7 @@ export function QuickCaptureApp(): JSX.Element {
           appMarkdownSnippetExtension(),
           vimImeControl(),
           new Compartment().of(prefs.vimMode ? vimWithBlockSelection() : []),
+          vimVisualHighlightExtension,
           // #312: inline-format shortcuts (bold/italic/code/strike/highlight/
           // math/link) — the same markers the main editor's VimNav binds — so
           // the Quick Note window formats identically instead of falling through

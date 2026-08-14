@@ -4,6 +4,8 @@ import path from 'node:path'
 
 const KEYTAR_SERVICE = 'ZenNotes Remote Workspace'
 const KEYTAR_ACCOUNT_PREFIX = 'remote-workspace:'
+const CLOUD_KEYTAR_SERVICE = 'ZenNotes Cloud'
+const CLOUD_KEYTAR_ACCOUNT_PREFIX = 'cloud:'
 const FALLBACK_FILE = 'remote-workspace-secrets.json'
 
 let warnedAboutFallback = false
@@ -67,7 +69,10 @@ function encodeSecret(secret: string): string | null {
     if (!warnedAboutMissingSecureStorage) {
       warnedAboutMissingSecureStorage = true
       console.warn(
-        'ZenNotes could not persist a remote workspace token securely because no OS secret store is available.'
+        'ZenNotes could not persist a remote workspace token securely because no OS secret store is available.' +
+          (process.platform === 'linux'
+            ? ' If a Secret Service keyring is running, launch ZenNotes with --password-store=gnome-libsecret.'
+            : '')
       )
     }
     return null
@@ -141,5 +146,69 @@ export async function deleteRemoteWorkspaceSecret(id: string): Promise<void> {
   const fallback = await loadFallbackSecrets()
   if (!(normalizedId in fallback)) return
   delete fallback[normalizedId]
+  await saveFallbackSecrets(fallback)
+}
+
+function cloudFallbackKey(baseUrl: string): string {
+  return `${CLOUD_KEYTAR_ACCOUNT_PREFIX}${baseUrl}`
+}
+
+export async function getCloudServiceSecret(baseUrl: string): Promise<string | null> {
+  const normalizedBaseUrl = baseUrl.trim()
+  if (!normalizedBaseUrl) return null
+
+  const keytar = await loadKeytar()
+  if (keytar) {
+    return await keytar.getPassword(
+      CLOUD_KEYTAR_SERVICE,
+      `${CLOUD_KEYTAR_ACCOUNT_PREFIX}${normalizedBaseUrl}`
+    )
+  }
+
+  const fallback = await loadFallbackSecrets()
+  const encoded = fallback[cloudFallbackKey(normalizedBaseUrl)]
+  return encoded ? decodeSecret(encoded) : null
+}
+
+export async function setCloudServiceSecret(baseUrl: string, secret: string): Promise<boolean> {
+  const normalizedBaseUrl = baseUrl.trim()
+  const normalizedSecret = secret.trim()
+  if (!normalizedBaseUrl || !normalizedSecret) return false
+
+  const keytar = await loadKeytar()
+  if (keytar) {
+    await keytar.setPassword(
+      CLOUD_KEYTAR_SERVICE,
+      `${CLOUD_KEYTAR_ACCOUNT_PREFIX}${normalizedBaseUrl}`,
+      normalizedSecret
+    )
+    return true
+  }
+
+  const encoded = encodeSecret(normalizedSecret)
+  if (!encoded) return false
+  const fallback = await loadFallbackSecrets()
+  fallback[cloudFallbackKey(normalizedBaseUrl)] = encoded
+  await saveFallbackSecrets(fallback)
+  return true
+}
+
+export async function deleteCloudServiceSecret(baseUrl: string): Promise<void> {
+  const normalizedBaseUrl = baseUrl.trim()
+  if (!normalizedBaseUrl) return
+
+  const keytar = await loadKeytar()
+  if (keytar) {
+    await keytar.deletePassword(
+      CLOUD_KEYTAR_SERVICE,
+      `${CLOUD_KEYTAR_ACCOUNT_PREFIX}${normalizedBaseUrl}`
+    )
+    return
+  }
+
+  const fallback = await loadFallbackSecrets()
+  const key = cloudFallbackKey(normalizedBaseUrl)
+  if (!(key in fallback)) return
+  delete fallback[key]
   await saveFallbackSecrets(fallback)
 }

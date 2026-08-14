@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildOpenNoteDeepLink,
+  parseCloudAuthDeepLink,
   parseOpenNoteDeepLink,
   parseQuickCaptureDeepLink
 } from './deep-links'
@@ -86,5 +87,20 @@ describe('parseQuickCaptureDeepLink', () => {
   it('rejects other links', () => {
     expect(parseQuickCaptureDeepLink('zennotes://open?path=note.md')).toBe(false)
     expect(parseQuickCaptureDeepLink('https://quick-capture')).toBe(false)
+  })
+})
+
+describe('parseCloudAuthDeepLink', () => {
+  it('accepts the one-time code and state callback', () => {
+    expect(
+      parseCloudAuthDeepLink('zennotes://auth?code=AbC123&state=state_123-abc.xyz')
+    ).toEqual({ code: 'AbC123', state: 'state_123-abc.xyz' })
+  })
+
+  it('rejects malformed callbacks and unrelated actions', () => {
+    expect(parseCloudAuthDeepLink('zennotes://auth?code=abc')).toBeNull()
+    expect(parseCloudAuthDeepLink('zennotes://auth?code=abc%2Fdef&state=state')).toBeNull()
+    expect(parseCloudAuthDeepLink('zennotes://open?code=abc&state=state')).toBeNull()
+    expect(parseCloudAuthDeepLink('https://zennotes.org/auth?code=abc&state=state')).toBeNull()
   })
 })

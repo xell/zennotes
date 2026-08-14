@@ -8,6 +8,7 @@ import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Text } from '@codemirror/state'
 import {
+  renderInlineCell,
   tableBlockAt,
   tablePlugin,
   nextWordStart,
@@ -468,5 +469,44 @@ describe('tableBlockAt — the fallback when the parse has not caught up (#485)'
     const t = doc(text)
     const range = tableBlockAt(t, 0)
     expect(range).toEqual({ from: 0, to: text.length })
+  })
+})
+
+describe('renderInlineCell', () => {
+  // A cell is inline content, so a leading block marker is just a character.
+  // These all rendered as empty blocks before, losing the text outright. (#559)
+  it('keeps a cell that is only a list marker visible', () => {
+    expect(renderInlineCell('-')).toBe('-')
+    expect(renderInlineCell('+')).toBe('+')
+    expect(renderInlineCell('*')).toBe('*')
+  })
+
+  it('keeps the other block markers literal too', () => {
+    expect(renderInlineCell('#')).toBe('#')
+    expect(renderInlineCell('1.')).toBe('1.')
+    expect(renderInlineCell('---')).toBe('---')
+    expect(renderInlineCell('# H')).toBe('# H')
+    expect(renderInlineCell('- x')).toBe('- x')
+    expect(renderInlineCell('> q')).toBe('&gt; q')
+  })
+
+  it('still renders inline markup', () => {
+    expect(renderInlineCell('**b**')).toBe('<strong>b</strong>')
+    expect(renderInlineCell('`c`')).toBe('<code>c</code>')
+    expect(renderInlineCell('[[note]]')).toContain('class="wikilink"')
+    expect(renderInlineCell('#tag')).toContain('class="hashtag"')
+  })
+
+  it('renders a literal pipe rather than splitting the synthetic row', () => {
+    expect(renderInlineCell('a | b')).toBe('a | b')
+  })
+
+  it('renders nothing for an empty cell', () => {
+    expect(renderInlineCell('')).toBe('')
+    expect(renderInlineCell('   ')).toBe('')
+  })
+
+  it('flattens a pasted newline instead of breaking out of the cell', () => {
+    expect(renderInlineCell('a\nb')).toBe('a b')
   })
 })

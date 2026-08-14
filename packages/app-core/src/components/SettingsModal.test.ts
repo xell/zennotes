@@ -1,16 +1,24 @@
 // @vitest-environment jsdom
 
-import { act, createElement } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { SettingsModal } from './SettingsModal'
+import { act, createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SettingsModal } from "./SettingsModal";
+import { requestSettingsTarget } from "../lib/settings-navigation";
+
+const cloudMocks = vi.hoisted(() => ({
+  getCloudAccountStatus: vi
+    .fn()
+    .mockResolvedValue({ state: "disconnected", account: null }),
+  onCloudAccountChange: vi.fn(() => vi.fn()),
+}));
 
 const mocks = vi.hoisted(() => {
   const state = new Proxy(
     {
       autoCalendarPanel: true,
       calendarShowWeekNumbers: true,
-      calendarWeekStart: 'monday',
+      calendarWeekStart: "monday",
       customTemplates: [],
       darkSidebar: false,
       editorFontSize: 16,
@@ -20,7 +28,7 @@ const mocks = vi.hoisted(() => {
       hideBuiltinTemplates: false,
       interfaceFont: null,
       keymapOverrides: {},
-      lineNumberMode: 'off',
+      lineNumberMode: "off",
       monoFont: null,
       previewMaxWidth: 760,
       quickNoteTitlePrefix: null,
@@ -31,44 +39,44 @@ const mocks = vi.hoisted(() => {
       setVaultSettings: vi.fn(),
       showSidebarChevrons: true,
       systemFolderLabels: {},
-      textReplacements: { '->': '→' },
+      textReplacements: { "->": "→" },
       textReplacementsEnabled: true,
       setTextReplacements: vi.fn(),
       textFont: null,
-      themeFamily: 'apple',
-      themeId: 'apple-light',
-      themeMode: 'light',
-      vault: { root: '/tmp/zennotes-test-vault', name: 'Test Vault' },
+      themeFamily: "apple",
+      themeId: "apple-light",
+      themeMode: "light",
+      vault: { root: "/tmp/zennotes-test-vault", name: "Test Vault" },
       vaultSettings: {
-        primaryNotesLocation: 'inbox',
-        dailyNotes: { enabled: true, directory: 'Daily Not' },
-        weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
-        monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
-        folderIcons: {}
+        primaryNotesLocation: "inbox",
+        dailyNotes: { enabled: true, directory: "Daily Not" },
+        weeklyNotes: { enabled: false, directory: "Weekly Notes" },
+        monthlyNotes: { enabled: false, directory: "Monthly Notes" },
+        folderIcons: {},
       },
       vaultTextSearchBackend: 'auto',
       vimInsertEscape: '',
       vimKeymap: '',
       vimMode: false,
-      whichKeyHintMode: 'timed',
+      whichKeyHintMode: "timed",
       whichKeyHintTimeoutMs: 1200,
       whichKeyHints: true,
-      workspaceMode: 'local'
+      workspaceMode: "local",
     },
     {
       get(target, property: string) {
-        if (property in target) return target[property as keyof typeof target]
-        return vi.fn()
-      }
-    }
-  )
+        if (property in target) return target[property as keyof typeof target];
+        return vi.fn();
+      },
+    },
+  );
 
   return {
     state,
     setSettingsOpen: state.setSettingsOpen,
-    setVaultSettings: state.setVaultSettings
-  }
-})
+    setVaultSettings: state.setVaultSettings,
+  };
+});
 
 vi.mock('../store', () => {
   const useStore = (selector: (state: typeof mocks.state) => unknown) => selector(mocks.state)
@@ -78,159 +86,192 @@ vi.mock('../store', () => {
   return { useStore }
 })
 
-vi.mock('../lib/system-fonts', () => ({
+vi.mock("../lib/system-fonts", () => ({
   hasSystemFontAccess: () => false,
-  listSystemFonts: vi.fn().mockResolvedValue([])
-}))
+  listSystemFonts: vi.fn().mockResolvedValue([]),
+}));
 
-vi.mock('../lib/app-update-state', () => ({
-  useAppUpdateState: () => ({ phase: 'idle', message: 'Manual check' })
-}))
+vi.mock("../lib/app-update-state", () => ({
+  useAppUpdateState: () => ({ phase: "idle", message: "Manual check" }),
+}));
 
-vi.mock('@zennotes/bridge-contract/bridge', () => ({
+vi.mock("@zennotes/bridge-contract/bridge", () => ({
   getZenBridge: () => ({
     getAppInfo: () => ({
-      runtime: 'desktop',
-      version: '2.4.0',
-      description: 'ZenNotes',
-      homepage: 'https://github.com/ZenNotes/zennotes/releases/latest'
+      runtime: "desktop",
+      version: "2.4.0",
+      description: "ZenNotes",
+      homepage: "https://github.com/ZenNotes/zennotes/releases/latest",
     }),
     getCapabilities: () => ({
       supportsCustomTemplates: true,
-      supportsRemoteWorkspace: false
-    })
-  })
-}))
+      supportsRemoteWorkspace: false,
+      supportsCloudSync: true,
+    }),
+    ...cloudMocks,
+  }),
+}));
 
 function changeInput(input: HTMLInputElement, value: string): void {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-  setter?.call(input, value)
-  input.dispatchEvent(new Event('input', { bubbles: true }))
+  const setter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    "value",
+  )?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 function blurInput(input: HTMLInputElement): void {
-  input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+  input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
 }
 
-describe('SettingsModal date note directories', () => {
-  let root: Root
-  let host: HTMLDivElement
+describe("SettingsModal date note directories", () => {
+  let root: Root;
+  let host: HTMLDivElement;
 
   beforeEach(() => {
-    vi.clearAllMocks()
-    ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-    Object.defineProperty(window, 'zen', {
+    vi.clearAllMocks();
+    (
+      globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = true;
+    Object.defineProperty(window, "zen", {
       configurable: true,
       value: {
-        getVaultTextSearchCapabilities: vi.fn().mockResolvedValue({ ripgrep: false, fzf: false }),
-        checkForAppUpdates: vi.fn().mockResolvedValue({ phase: 'idle', message: 'Manual check' })
-      }
-    })
-    Object.defineProperty(window, 'matchMedia', {
+        getVaultTextSearchCapabilities: vi
+          .fn()
+          .mockResolvedValue({ ripgrep: false, fzf: false }),
+        checkForAppUpdates: vi
+          .fn()
+          .mockResolvedValue({ phase: "idle", message: "Manual check" }),
+      },
+    });
+    Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn().mockReturnValue({
         matches: false,
         addEventListener: vi.fn(),
-        removeEventListener: vi.fn()
-      })
-    })
-    host = document.createElement('div')
-    document.body.append(host)
-    root = createRoot(host)
-  })
+        removeEventListener: vi.fn(),
+      }),
+    });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
 
   afterEach(() => {
-    act(() => root.unmount())
-    host.remove()
-  })
+    act(() => root.unmount());
+    host.remove();
+  });
 
-  it('does not restore the default daily directory while the field is being cleared', async () => {
+  it("does not restore the default daily directory while the field is being cleared", async () => {
     await act(async () => {
-      root.render(createElement(SettingsModal))
-    })
+      root.render(createElement(SettingsModal));
+    });
 
-    const search = [...host.querySelectorAll<HTMLInputElement>('input')].find(
-      (input) => input.placeholder === 'Search settings…'
-    )
-    expect(search).toBeTruthy()
-
-    await act(async () => {
-      changeInput(search!, 'daily notes directory')
-    })
-
-    const dailyDirectory = [...host.querySelectorAll<HTMLInputElement>('input')].find(
-      (input) => input.value === 'Daily Not'
-    )
-    expect(dailyDirectory).toBeTruthy()
+    const search = [...host.querySelectorAll<HTMLInputElement>("input")].find(
+      (input) => input.placeholder === "Search settings…",
+    );
+    expect(search).toBeTruthy();
 
     await act(async () => {
-      changeInput(dailyDirectory!, '')
-    })
+      changeInput(search!, "daily notes directory");
+    });
 
-    expect(mocks.setVaultSettings).not.toHaveBeenCalled()
-  })
-
-  it('saves the daily directory when the edit is committed', async () => {
-    await act(async () => {
-      root.render(createElement(SettingsModal))
-    })
-
-    const search = [...host.querySelectorAll<HTMLInputElement>('input')].find(
-      (input) => input.placeholder === 'Search settings…'
-    )
-    expect(search).toBeTruthy()
+    const dailyDirectory = [
+      ...host.querySelectorAll<HTMLInputElement>("input"),
+    ].find((input) => input.value === "Daily Not");
+    expect(dailyDirectory).toBeTruthy();
 
     await act(async () => {
-      changeInput(search!, 'daily notes directory')
-    })
+      changeInput(dailyDirectory!, "");
+    });
 
-    const dailyDirectory = [...host.querySelectorAll<HTMLInputElement>('input')].find(
-      (input) => input.value === 'Daily Not'
-    )
-    expect(dailyDirectory).toBeTruthy()
+    expect(mocks.setVaultSettings).not.toHaveBeenCalled();
+  });
+
+  it("saves the daily directory when the edit is committed", async () => {
+    await act(async () => {
+      root.render(createElement(SettingsModal));
+    });
+
+    const search = [...host.querySelectorAll<HTMLInputElement>("input")].find(
+      (input) => input.placeholder === "Search settings…",
+    );
+    expect(search).toBeTruthy();
 
     await act(async () => {
-      changeInput(dailyDirectory!, 'inbox/Journal')
-    })
+      changeInput(search!, "daily notes directory");
+    });
 
-    expect(mocks.setVaultSettings).not.toHaveBeenCalled()
+    const dailyDirectory = [
+      ...host.querySelectorAll<HTMLInputElement>("input"),
+    ].find((input) => input.value === "Daily Not");
+    expect(dailyDirectory).toBeTruthy();
 
     await act(async () => {
-      blurInput(dailyDirectory!)
-    })
+      changeInput(dailyDirectory!, "inbox/Journal");
+    });
+
+    expect(mocks.setVaultSettings).not.toHaveBeenCalled();
+
+    await act(async () => {
+      blurInput(dailyDirectory!);
+    });
 
     expect(mocks.setVaultSettings).toHaveBeenCalledWith({
-      primaryNotesLocation: 'inbox',
-      dailyNotes: { enabled: true, directory: 'inbox/Journal' },
-      weeklyNotes: { enabled: false, directory: 'Weekly Notes' },
-      monthlyNotes: { enabled: false, directory: 'Monthly Notes' },
-      folderIcons: {}
-    })
-  })
+      primaryNotesLocation: "inbox",
+      dailyNotes: { enabled: true, directory: "inbox/Journal" },
+      weeklyNotes: { enabled: false, directory: "Weekly Notes" },
+      monthlyNotes: { enabled: false, directory: "Monthly Notes" },
+      folderIcons: {},
+    });
+  });
 
-  it('opens the text replacements tab and saves edited rules', async () => {
+  it("opens the text replacements tab and saves edited rules", async () => {
     await act(async () => {
-      root.render(createElement(SettingsModal))
-    })
+      root.render(createElement(SettingsModal));
+    });
 
-    const editorButton = [...host.querySelectorAll<HTMLButtonElement>('button')].find(
-      (button) => button.textContent?.trim() === 'Editor'
-    )
-    expect(editorButton).toBeTruthy()
-    await act(async () => editorButton!.click())
+    const editorButton = [
+      ...host.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((button) => button.textContent?.trim() === "Editor");
+    expect(editorButton).toBeTruthy();
+    await act(async () => editorButton!.click());
 
-    const replacementsTab = [...host.querySelectorAll<HTMLButtonElement>('button')].find(
-      (button) => button.textContent?.trim() === 'Text replacements'
-    )
-    expect(replacementsTab).toBeTruthy()
-    await act(async () => replacementsTab!.click())
+    const replacementsTab = [
+      ...host.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((button) => button.textContent?.trim() === "Text replacements");
+    expect(replacementsTab).toBeTruthy();
+    await act(async () => replacementsTab!.click());
 
-    const trigger = host.querySelector<HTMLInputElement>('input[aria-label="Text to replace"]')
-    const replacement = host.querySelector<HTMLInputElement>('input[aria-label="Replacement text"]')
-    expect(trigger?.value).toBe('->')
-    expect(replacement?.value).toBe('→')
+    const trigger = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Text to replace"]',
+    );
+    const replacement = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Replacement text"]',
+    );
+    expect(trigger?.value).toBe("->");
+    expect(replacement?.value).toBe("→");
 
-    await act(async () => changeInput(trigger!, '(c)'))
-    expect(mocks.state.setTextReplacements).toHaveBeenCalledWith({ '(c)': '→' })
-  })
-})
+    await act(async () => changeInput(trigger!, "(c)"));
+    expect(mocks.state.setTextReplacements).toHaveBeenCalledWith({
+      "(c)": "→",
+    });
+  });
+
+  it("opens directly to ZenNotes Cloud when requested by the app shell", async () => {
+    requestSettingsTarget("cloud");
+    await act(async () => {
+      root.render(createElement(SettingsModal));
+    });
+
+    const cloudButton = [
+      ...host.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((button) => button.textContent?.trim() === "Cloud");
+    expect(cloudButton).toBeTruthy();
+    expect(cloudButton?.className).toContain("bg-paper-200/85");
+
+    expect(host.textContent).toContain("Keep your vault available everywhere");
+    expect(host.textContent).toContain("Connect ZenNotes Cloud");
+  });
+});

@@ -1596,6 +1596,22 @@ textarea,
   background: rgb(var(--z-accent) / 0.22) !important;
 }
 
+/* --- Vim visual-mode selection (#581) --------------------------------- */
+/* In visual mode the browser-style selection layer (which fills every row
+ * but the last to the content column's right edge) is hidden and
+ * cm-vim-visual-highlight paints the selected text itself, like Vim. The
+ * native ::selection is silenced with it: the rule above re-tints it, and
+ * double-painting under the marks would darken the glyphs. */
+.cm-editor.zen-vim-visual-active .cm-selectionLayer {
+  display: none;
+}
+.cm-editor.zen-vim-visual-active ::selection {
+  background: transparent !important;
+}
+.cm-editor .cm-vim-visual-selection {
+  background: rgb(var(--z-accent) / 0.22);
+}
+
 /* --- Vim block cursor (normal mode) ---------------------------------- */
 /*
  * @replit/codemirror-vim inserts a `.cm-fat-cursor` element in normal mode
@@ -5789,6 +5805,19 @@ html[data-completed-task-style="gray-strikethrough"] .prose-zen li.task-list-ite
 .zen-pdf-container .textLayer br {
   user-select: text;
   -webkit-user-select: text;
+}
+
+/* Frontmatter `tags:` values are also clickable chips, styled a little smaller
+   than inline hashtags so they sit comfortably in the compact metadata block. */
+.cm-wysiwyg .cm-editor .cm-frontmatter-tag {
+  color: rgb(var(--z-accent));
+  cursor: pointer;
+  border-radius: 0.35em;
+  padding: 0.05em 0.35em;
+  background-color: rgb(var(--z-accent) / 0.08);
+}
+.cm-wysiwyg .cm-editor .cm-frontmatter-tag:hover {
+  background-color: rgb(var(--z-accent) / 0.15);
 }
 
 /* Task metadata on task lines (#454): priorities, due dates, and @fields get

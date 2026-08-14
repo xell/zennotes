@@ -585,18 +585,16 @@ export function VimNav(): JSX.Element | null {
         }
       }
 
-      if (
-        !leaderPending.current &&
-        !(
-          isEditorFocused(state.editorViewRef) &&
-          (isEditorInsertMode(state.editorViewRef, state.vimMode) ||
-            // While Vim is mid-command awaiting an argument (after f/F/t/T/r, an
-            // operator, or a count), the next key is that command's literal
-            // target — e.g. `f[` finds `[`. Don't let the `[b`/`]b` buffer-nav
-            // or `gt`/`gT` prefixes swallow it; let it reach codemirror-vim.
-            isVimAwaitingArgument(state.editorViewRef))
-        )
-      ) {
+      // Buffer and tab sequences as a GLOBAL fallback: they exist for when
+      // focus sits anywhere but the editor (#321). A focused editor has
+      // codemirror-vim, which carries `[b`/`]b` and `gt`/`gT` of its own, so
+      // this layer must not touch its keys. Consuming the first key here meant
+      // no Vim sequence beginning with `[` or `]` could ever run: `]]` and
+      // `[[` were swallowed before Vim saw either press (#578). The same
+      // problem was already visible for a pending argument (`f[` finding a
+      // bracket) and patched narrowly then; standing down for the whole
+      // focused editor is the rule that covers both.
+      if (!leaderPending.current && !isEditorFocused(state.editorViewRef)) {
         const consumeBufferKey = (): void => {
           e.preventDefault()
           e.stopImmediatePropagation()
@@ -1147,11 +1145,18 @@ export function VimNav(): JSX.Element | null {
         }
       }
 
+      // A pending Vim sequence owns the next character: after `f`/`t`/`r` (or
+      // a count or register prefix), `m` is the operand, not the menu key.
+      // This runs on window capture, so without the guard Vim never even saw
+      // the key and the orphaned motion swallowed the next one (#568). The
+      // native context-menu key is not a character and stays available.
       const wantsEditorTextContextMenu =
         isEditorFocused(state.editorViewRef) &&
         !editorInsertMode &&
         !state.editorViewRef?.state.selection.main.empty &&
-        (matchesSequenceToken(e, overrides, 'nav.contextMenu') || wantsNativeContextMenuKey(e))
+        ((matchesSequenceToken(e, overrides, 'nav.contextMenu') &&
+          !isVimAwaitingArgument(state.editorViewRef)) ||
+          wantsNativeContextMenuKey(e))
       if (wantsEditorTextContextMenu) {
         e.preventDefault()
         e.stopImmediatePropagation()
@@ -1225,7 +1230,10 @@ export function VimNav(): JSX.Element | null {
         const wantsTextContextMenu =
           hasEditorSelection &&
           !isEditorInsertMode(state.editorViewRef, state.vimMode) &&
-          (matchesSequenceToken(e, overrides, 'nav.contextMenu') || wantsNativeContextMenuKey(e))
+          // Same #568 guard as above: a pending f/t/r owns the character.
+          ((matchesSequenceToken(e, overrides, 'nav.contextMenu') &&
+            !isVimAwaitingArgument(state.editorViewRef)) ||
+            wantsNativeContextMenuKey(e))
         if (wantsTextContextMenu) {
           e.preventDefault()
           e.stopImmediatePropagation()
@@ -2619,6 +2627,17 @@ export function VimNav(): JSX.Element | null {
     }
     const itemType = el.dataset.sidebarType
     if (itemType === 'folder') {
+      // A `<Name>.base` folder is a database. Its grid only opened through a
+      // real click (the database case lives in the row's click handler), so
+      // in Vim mode Enter/`l` fell into the plain-folder path below and the
+      // grid was mouse-only. Open it like the click does; expanding to browse
+      // the record notes stays on the chevron and the toggle-folder key.
+      const databaseCsv = el.dataset.sidebarDatabase
+      if (databaseCsv) {
+        state.setFocusedPanel('editor')
+        void state.openDatabase(databaseCsv)
+        return
+      }
       const folder = el.dataset.sidebarFolder as 'inbox' | 'quick' | 'archive' | 'trash'
       const subpath = el.dataset.sidebarSubpath ?? ''
       // A `<Name>.base` folder is a database. Enter opens its grid in the

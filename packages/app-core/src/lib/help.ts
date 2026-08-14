@@ -124,7 +124,7 @@ export const HELP_HOW_TO_GUIDES: HelpCard[] = [
   {
     title: 'Turn a CSV into a database',
     body:
-      'Run “New Database” from the command palette (or right-click a folder in the sidebar → New database) to create one, or just open an existing `.csv` file from the vault. ZenNotes stores a database as a `<Name>.base` folder: `data.csv` (the rows), `schema.json` (field types, select options, saved views), and the record-page notes rows open into. Edit cells inline in the Table view, group records in a Board by any select field, switch the raw-CSV toggle to see the underlying file, and press `o` on a row to open it as a full Markdown page whose frontmatter mirrors the row’s properties. The whole grid is keyboard-driven — see the Database grid shortcuts.'
+      'Run “New Database” from the command palette (or right-click a folder in the sidebar → New database) to create one, or just open an existing `.csv` file from the vault. ZenNotes stores a database as a `<Name>.base` folder: `data.csv` (the rows), `schema.json` (field types, select options, saved views), and the record-page notes rows open into. A database opens from its sidebar row like a note: click it, or press Enter or `l` on it in Vim mode (the row’s `m` menu carries Open database too); the chevron still expands the folder to browse its record pages, and the open grid closes like any tab. Edit cells inline in the Table view, group records in a Board by any select field, switch the raw-CSV toggle to see the underlying file, and press `o` on a row to open it as a full Markdown page whose frontmatter mirrors the row’s properties. The whole grid is keyboard-driven — see the Database grid shortcuts.'
   },
   {
     title: 'Move a note without dragging',
@@ -169,7 +169,7 @@ export const HELP_HOW_TO_GUIDES: HelpCard[] = [
   {
     title: 'Share Typst definitions across notes with tags',
     body:
-      'With the **Typst** math renderer, Settings → Editor → **Typst definitions from tags** lets a note\'s tags decide which Typst definitions its formulas compile against — so `vector()` can be an arrow in physics and bold in maths without redefining it in every note. Write a preamble as an ordinary note inside a folder named `typst`, titled with the tag path in dots: `typst/physics.md` applies to `#physics`, `typst/physics.mechanics.md` to `#physics/mechanics`. Nested tags layer general → specific, so the narrower tag wins, and a note carrying several tags gets them in alphabetical order so the same tags always compile the same way. Preamble notes are ordinary notes: they sync, they are searchable, and editing one re-renders every note that uses it. Off by default, and it costs nothing when off.'
+      'With the **Typst** math renderer, Settings → Editor → **Typst definitions from tags** lets a note\'s tags decide which Typst definitions its formulas compile against, so `vector()` can be an arrow in physics and bold in maths without redefining it in every note. Write a preamble as an ordinary note inside the preamble folder (named `typst` unless you change it), titled with the tag path in dots: `typst/physics.md` applies to `#physics`, `typst/physics.mechanics.md` to `#physics/mechanics`. Nested tags layer general → specific, so the narrower tag wins, and a note carrying several tags gets them in alphabetical order so the same tags always compile the same way. Preamble notes are ordinary notes: they sync, they are searchable, and editing one re-renders every note that uses it. Off by default, and it costs nothing when off.\n\nOne thing preambles do **not** do is add tags. A preamble is Typst source, where `#let vec(x) = bold(x)` defines a variable and formulas refer to it as `#vec`, so treating those as hashtags filled the tag list with `let` and every variable name. Notes in the preamble folder are left out of the tag index on every runtime: the app, the `zn` CLI, MCP, and the self-hosted server. If you already keep ordinary tagged notes in a folder called `typst`, point Settings → Editor → **Typst preamble folder** somewhere else and those notes get their tags back. The name is stored in the vault, so it travels with it.'
   },
   {
     title: 'Connect the desktop app to a self-hosted server',
@@ -377,7 +377,7 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
   {
     title: 'Links are actionable',
     body:
-      'Use [[wikilinks]] or markdown links. Following a link — click it, Cmd/Ctrl-click it, or use the follow-link motion (`gd`) in normal mode — opens the note under the cursor and pins PDFs into the reference pane. If the note does not exist yet, following the link offers to create it (after you confirm) rather than leaving a dead link. Prefix a wikilink with `!` to embed rather than link: `![[Note]]` inlines the target note content in the reading view and PDF export — recursively, with cycle protection — so a master note can pull in sub-notes and export to PDF as one document. `![[image.png]]` embeds an image, and `![[drawing.excalidraw]]` embeds an Excalidraw drawing as a PNG preview.'
+      'Use [[wikilinks]] or markdown links. Following a link — click it, Cmd/Ctrl-click it, or use the follow-link motion (`gd`) in normal mode — opens the note under the cursor and pins PDFs into the reference pane. If the note does not exist yet, following the link offers to create it (after you confirm) rather than leaving a dead link. Prefix a wikilink with `!` to embed rather than link: `![[Note]]` inlines the target note content in the reading view and PDF export — recursively, with cycle protection — so a master note can pull in sub-notes and export to PDF as one document. `![[image.png]]` embeds an image and `![[drawing.excalidraw]]` embeds an Excalidraw drawing as a PNG preview; both take optional `|width` or `|WxH` size hints (`![[image.png|300]]`, `![[image.png|600x400]]`), and the markdown form carries the same hint after the alt text (`![caption|300](image.png)`).'
   },
   {
     title: 'Files stay local',
@@ -463,6 +463,7 @@ export const HELP_SHORTCUT_SECTIONS: HelpShortcutSection[] = [
       { keys: 'Mod+.', action: 'Toggle Zen mode', detail: 'Hide or restore the app chrome so only the active editor, preview, or split view stays on screen.' },
       { keys: 'Mod+W', action: 'Close active tab', detail: 'Close the current note or virtual tab.' },
       { keys: 'Ctrl+Tab', action: 'Switch to previous note', detail: 'Switch to the most recently used note. Press again to alternate between the last two notes.' },
+      { keys: 'Alt+1 … Alt+9', action: 'Go to tab 1 through 9', detail: 'Jump straight to a tab by position, browser-style (Ctrl+1 … Ctrl+9 on macOS, where Option types characters and the ⌘ digits are taken). Tab numbers count across panes in the same order gt cycles; rebindable under Settings → Keymaps. Vim users get the same jump as {count}gt. Heads-up for macOS with multiple Spaces: Mission Control claims Ctrl+digit for Switch to Desktop, so rebind here or free the key under System Settings → Keyboard Shortcuts.' },
       { keys: 'Shift+Mod+T', action: 'Reopen closed tab', detail: 'Reopen the most recently closed tab, restoring its position and pinned state. Repeat to walk back through your close history.' },
       { keys: 'Mod+O', action: 'Open file', detail: 'Desktop only: pick a Markdown file with the native dialog. A file inside a known vault opens against that vault; anything else opens in a standalone external-file window.' },
       { keys: 'Mod+4 / Mod+5 / Mod+6', action: 'Edit / Split / Preview mode', detail: 'Switch the active note between the raw editor, side-by-side split, and rendered preview.' },
@@ -500,6 +501,7 @@ export const HELP_SHORTCUT_SECTIONS: HelpShortcutSection[] = [
       { keys: 'Space f', action: 'Search notes', detail: 'Open the vault-wide note search palette.' },
       { keys: 'Space s t', action: 'Search vault text', detail: 'Fuzzy-search matching text lines across notes in Inbox, Quick Notes, and Archive.' },
       { keys: 'Space e', action: 'Toggle left sidebar', detail: 'Show or hide the folder/tag sidebar without touching the mouse.' },
+      { keys: ']] / [[', action: 'Next / previous heading', detail: 'Jump the cursor to the next or previous markdown heading in the note, the way Vim’s section motions move between sections. It is a motion, so it composes: `d]]` deletes to the next heading, `v]]` selects to it, `3]]` skips three, and `Ctrl+O` jumps back. Headings inside code fences and frontmatter are skipped, matching the outline. With no heading left that way, the cursor goes to the end or start of the note.' },
       { keys: 'Space p', action: 'Note outline', detail: 'Jump to any heading in the active note via a searchable overlay.' },
       { keys: 'Space v', action: 'Switch vault', detail: 'Open the command palette directly to the local vault switcher.' },
       { keys: 'Space a', action: 'Open workflows', detail: 'Open the Workflows view, where saved pipelines over your notes are built and run. Workflows are off by default; turn them on under Settings → Workflows first.' },
@@ -766,9 +768,14 @@ export const HELP_VIM_COMMANDS: HelpExCommand[] = [
     detail: 'Keep only the active tab in the current pane.'
   },
   {
-    command: ':qa / :quitall / :xa / :wa',
+    command: ':qa / :quitall / :xa / :wqa',
     summary: 'Close every tab everywhere',
-    detail: 'Closes all tabs across all panes. The write aliases act the same way here.'
+    detail: 'Closes all tabs across all panes. The write-and-quit aliases save on the way out.'
+  },
+  {
+    command: ':wa / :wall',
+    summary: 'Write every unsaved note',
+    detail: 'Saves all dirty notes across all panes without closing anything, like vim.'
   },
   {
     command: ':help / :h',
@@ -904,6 +911,11 @@ export const HELP_VIM_COMMANDS: HelpExCommand[] = [
     command: 'gt / gT',
     summary: 'Next / previous tab',
     detail: 'Move through the tabs in the active pane. Also `:tabnext` / `:tabprevious` on the ex line, and rebindable under Settings → Keymaps.'
+  },
+  {
+    command: '{count}gt / {count}gT',
+    summary: 'Jump straight to a tab',
+    detail: 'Vim-style direct tab selection: `2gt` goes to tab 2, `5gt` to tab 5 (a count past the end lands on the last tab). `{count}gT` walks that many tabs back instead. Tab numbers count across panes in the same order plain `gt` cycles.'
   },
   {
     command: ':closepanel / :closep',

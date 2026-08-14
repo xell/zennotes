@@ -71,6 +71,7 @@ export const IPC = {
   VAULT_MOVE_NOTE: 'vault:move-note',
   VAULT_IMPORT_FILES: 'vault:import-files',
   VAULT_IMPORT_PASTED_IMAGE: 'vault:import-pasted-image',
+  VAULT_READ_ASSET_BASE64: 'vault:read-asset-base64',
   VAULT_RENAME_ASSET: 'vault:rename-asset',
   VAULT_MOVE_ASSET: 'vault:move-asset',
   VAULT_DUPLICATE_ASSET: 'vault:duplicate-asset',
@@ -113,6 +114,32 @@ export const IPC = {
   APP_UPDATER_DOWNLOAD: 'app-updater:download',
   APP_UPDATER_INSTALL: 'app-updater:install',
   APP_UPDATER_ON_STATE: 'app-updater:on-state',
+  CLOUD_ACCOUNT_GET: 'cloud-account:get',
+  CLOUD_ACCOUNT_CONNECT: 'cloud-account:connect',
+  CLOUD_ACCOUNT_LOGOUT: 'cloud-account:logout',
+  CLOUD_ACCOUNT_ON_CHANGE: 'cloud-account:on-change',
+  CLOUD_VAULTS_LIST: 'cloud-vaults:list',
+  CLOUD_SERVICE_ACCOUNT_GET: 'cloud-service-account:get',
+  CLOUD_PUBLISHED_NOTES_LIST: 'cloud-published-notes:list',
+  CLOUD_PUBLISHED_NOTE_CREATE: 'cloud-published-note:create',
+  CLOUD_PUBLISHED_NOTE_UPDATE: 'cloud-published-note:update',
+  CLOUD_PUBLISHED_NOTE_DELETE: 'cloud-published-note:delete',
+  CLOUD_VAULT_LINK_GET: 'cloud-vault-link:get',
+  CLOUD_VAULT_LINK_SET: 'cloud-vault-link:set',
+  CLOUD_VAULT_LINK_CREATE: 'cloud-vault-link:create',
+  CLOUD_VAULT_LINK_DELETE: 'cloud-vault-link:delete',
+  CLOUD_VAULT_SYNC: 'cloud-vault:sync',
+  CLOUD_VAULT_SETTINGS_CONFLICT_GET: 'cloud-vault-settings-conflict:get',
+  CLOUD_VAULT_SETTINGS_CONFLICT_RESOLVE: 'cloud-vault-settings-conflict:resolve',
+  CLOUD_BACKUPS_LIST: 'cloud-backups:list',
+  CLOUD_BACKUP_SCHEDULE_GET: 'cloud-backup-schedule:get',
+  CLOUD_BACKUP_SCHEDULE_UPDATE: 'cloud-backup-schedule:update',
+  CLOUD_BACKUP_ITEMS_LIST: 'cloud-backup-items:list',
+  CLOUD_BACKUP_CREATE: 'cloud-backup:create',
+  CLOUD_BACKUP_DOWNLOAD: 'cloud-backup:download',
+  CLOUD_BACKUP_DELETE: 'cloud-backup:delete',
+  CLOUD_BACKUP_RESTORE: 'cloud-backup:restore',
+  CLOUD_BACKUP_NOTE_RESTORE: 'cloud-backup-note:restore',
   VAULT_ON_CHANGE: 'vault:on-change',
   WINDOW_TOGGLE_MAXIMIZE: 'window:toggle-maximize',
   WINDOW_MINIMIZE: 'window:minimize',
@@ -473,6 +500,16 @@ export interface VaultSettings {
    * can land beside it without another migration.
    */
   tasks?: { excludedFolders?: string[] }
+  /**
+   * Typst preamble settings (#486, #562). `folder` names the directory whose
+   * notes are Typst preambles, matched at any depth; absent means `typst`.
+   * Those notes are Typst source rather than prose, so no scanner reads their
+   * `#let` / `#var` tokens as tags on any runtime. Configurable so a vault that
+   * already keeps ordinary notes in a folder called `typst` can move the
+   * preambles instead of losing those notes' tags. An object rather than a bare
+   * string so later preamble settings land beside it without another migration.
+   */
+  typstPreambles?: { folder?: string }
 }
 
 export const DEFAULT_DAILY_NOTES_DIRECTORY = 'Daily Notes'

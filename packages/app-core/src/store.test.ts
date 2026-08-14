@@ -1520,6 +1520,26 @@ describe('assetSortOrder (#473: Assets view sort is sticky)', () => {
   })
 })
 
+describe('theme persistence', () => {
+  it('keeps Rosé Pine after the app reloads', async () => {
+    installZen()
+    const first = await loadStore()
+
+    first.useStore
+      .getState()
+      .setTheme({ id: 'rose-pine-moon', family: 'rose-pine', mode: 'dark' })
+
+    vi.resetModules()
+    const reloaded = await import('./store')
+
+    expect(reloaded.useStore.getState()).toMatchObject({
+      themeId: 'rose-pine-moon',
+      themeFamily: 'rose-pine',
+      themeMode: 'dark'
+    })
+  })
+})
+
 describe('setKanbanColumnOrder (#389 — manual Kanban column order)', () => {
   it('stores a trimmed, deduped order per board and clears it on empty', async () => {
     installZen()

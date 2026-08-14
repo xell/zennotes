@@ -1,4 +1,5 @@
 import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete'
+import type { EditorState, TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 
 export interface TemplateVariable {
@@ -21,6 +22,37 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { name: 'week', insert: '{{week}}', detail: 'ISO week number' },
   { name: 'cursor', insert: '{{cursor}}', detail: 'Where the caret lands' }
 ]
+
+/**
+ * Builds the change that applies a chosen variable. The inserted text carries
+ * its own `}}`, so the replaced range swallows up to two closing braces
+ * already sitting at the caret: with auto-pair brackets on, typing `{{`
+ * produced `{{}}` around the caret, and completing inside an existing
+ * `{{…}}` pair hits the same leftover (#566). The closers are only swallowed
+ * when they can belong to this variable's own `{{`: if an earlier `{{` on
+ * the line is still open (prose documenting Handlebars/Jinja syntax), the
+ * braces after the caret are its closers, literal note content that must
+ * survive the completion. Kept separate from the completion option so it can
+ * be tested without a mounted editor.
+ */
+export function templateVariableApplySpec(
+  state: EditorState,
+  from: number,
+  to: number,
+  insert: string
+): TransactionSpec {
+  const line = state.doc.lineAt(from)
+  const prefix = state.doc.sliceString(line.from, from)
+  const openBefore = (prefix.match(/\{\{/g) ?? []).length
+  const closedBefore = (prefix.match(/\}\}/g) ?? []).length
+  const ownsClosers = openBefore <= closedBefore
+  const after = state.doc.sliceString(to, to + 2)
+  const consumed = !ownsClosers ? 0 : after.startsWith('}}') ? 2 : after.startsWith('}') ? 1 : 0
+  return {
+    changes: { from, to: to + consumed, insert },
+    selection: { anchor: from + insert.length }
+  }
+}
 
 /**
  * CodeMirror autocomplete source for template `{{variables}}`. Triggers once
@@ -46,10 +78,7 @@ export function templateVariableSource(context: CompletionContext): CompletionRe
         // these rows render with the same icon/label/detail layout.
         _icon: '{}',
         apply: (view: EditorView, _completion: Completion, _from: number, to: number) => {
-          view.dispatch({
-            changes: { from, to, insert: variable.insert },
-            selection: { anchor: from + variable.insert.length }
-          })
+          view.dispatch(templateVariableApplySpec(view.state, from, to, variable.insert))
         }
       }) as Completion
   )

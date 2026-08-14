@@ -51,6 +51,7 @@ import {
 } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { isImeComposing } from '../lib/ime'
+import { displayRowBoundaryKeymap } from '../lib/cm-display-row'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
 import {
   listIndentGuides as listIndentGuidesExt,
@@ -64,6 +65,7 @@ import { toggleCheckbox } from '../lib/cm-toggle-checkbox'
 import { completionKeymapForEditor, completionNavKeymap } from '../lib/cm-completion-nav'
 import { vimWithBlockSelection } from '../lib/cm-vim-block-selection'
 import { vimAwareDefaultKeymap, vimAwareMarkdownKeymap } from '../lib/cm-vim-default-keymap'
+import { isVimAwaitingArgument } from '../lib/vim-nav'
 import { toCodeMirrorKey, vimHalfPageKeymap } from '../lib/vim-half-page-keymap'
 import { scrollOff } from '../lib/cm-scrolloff'
 import { followLinkTarget } from '../lib/follow-link'
@@ -74,7 +76,8 @@ import {
   vimClipboardPasteExtension,
 } from '../lib/cm-vim-clipboard'
 import { wireYankHighlight, yankHighlightExtension } from '../lib/cm-yank-highlight'
-import { frontmatterStyle } from '../lib/cm-frontmatter'
+import { vimVisualHighlightExtension } from '../lib/cm-vim-visual-highlight'
+import { frontmatterStyle, frontmatterTagExtension } from '../lib/cm-frontmatter'
 import { codeBlockFontPlugin } from '../lib/cm-code-block-font'
 import {
   orderedListRenumber,
@@ -103,6 +106,7 @@ import { findLeaf, inferPaneDropEdge } from '../lib/pane-layout'
 // its additions were folded into the shared module instead.
 import { wysiwygExtensions } from '../lib/cm-wysiwyg-compose'
 import { hashtagSource } from '../lib/cm-hashtag-complete'
+import { frontmatterTagSource } from '../lib/cm-frontmatter-tag-complete'
 import { applyHighlight, HIGHLIGHT_COLORS } from '../lib/cm-highlight'
 import {
   documentDiagramTheme,
@@ -114,12 +118,13 @@ import { offerCreateNoteFromLink } from '../lib/create-note-from-link'
 import { slashCommandSource, slashCommandRender } from '../lib/cm-slash-commands'
 import { calloutTypeSource } from '../lib/cm-callouts'
 import { dateShortcutSource } from '../lib/cm-date-shortcuts'
+import { latexCommandSource } from '../lib/cm-latex-completions'
 import { wikilinkSource, wikilinkHeadingSource, atNoteSource } from '../lib/cm-wikilinks'
 import { resolveWikilinkTarget, wikilinkHeadingAnchor } from '../lib/wikilinks'
 import { openDatabaseFromWikilink, openWikilinkHeading } from '../lib/wikilink-navigation'
 import {
   externalLinkUrl,
-  extractLinkAtCursor,
+  linkRangeAtCursor,
   markdownLinkAt,
   plannerLinkUrl,
   resolveInternalNoteHref
@@ -136,6 +141,7 @@ import { selectTypstPreambleFor } from '../lib/typst-preamble-select'
 import { CommentsPanel, type CommentDraft } from './CommentsPanel'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 import { promptApp } from '../lib/prompt-requests'
+import { PublishedNoteButton } from './PublishedNoteButton'
 import { TasksView } from './TasksView'
 import { DatabaseView } from './DatabaseView'
 import { LazyExcalidrawView } from './LazyExcalidrawView'
@@ -300,8 +306,36 @@ const LARGE_DOC_EDITOR_HYDRATE_DELAY_MS = 180
 // chords are stripped from `defaultKeymap` so Vim's `<C-d>` & co. work (see
 // cm-vim-default-keymap). Built behind a compartment and reconfigured on Vim
 // toggle or keymap-override changes.
+/**
+ * Whether the pointer actually rests on the rendered glyphs of [from, to].
+ * posAtCoords clamps coordinates in the blank space beside a line to the
+ * nearest caret, and live preview hides a link's closing syntax, so that
+ * caret lands inside a link that merely ends its line; without this check the
+ * whole blank stretch after the line hovers and follows like the link (#587).
+ */
+function pointerOverRange(
+  view: EditorView,
+  from: number,
+  to: number,
+  x: number,
+  y: number
+): boolean {
+  const start = view.coordsAtPos(from, 1)
+  const end = view.coordsAtPos(to, -1)
+  if (!start || !end) return false
+  if (y < start.top || y > end.bottom) return false
+  if (y <= start.bottom && x < start.left) return false
+  if (y >= end.top && x > end.right) return false
+  return true
+}
+
 function buildEditorKeymap(vimMode: boolean, overrides: KeymapOverrides): Extension {
   return keymap.of([
+    // Home/End on the display row the user can see. Listed before
+    // defaultKeymap, whose versions hit-test an x coordinate at the editor's
+    // edge and misland on wrapped lines under fractional display scaling
+    // (#591, the same resolution #575 removed from `$`).
+    ...displayRowBoundaryKeymap,
     {
       key: 'Mod-f',
       run: () => {
@@ -387,6 +421,7 @@ function markdownEditingExtensions(showHeadingLevelLabels = false): Extension[] 
     // mode, so the editor half shows raw Markdown); adding it to this static
     // list too would defeat that toggle.
     frontmatterStyle,
+    frontmatterTagExtension,
     orderedListRenumber,
     forwardOnCheckboxArrow,
     headingFolding({ showLevelLabels: showHeadingLevelLabels }),
@@ -864,6 +899,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const autoCalendarPanel = useStore((s) => s.autoCalendarPanel)
   const isGitRepo = useStore((s) => s.isGitRepo)
   const diffInlineDiffs = useStore((s) => s.diffInlineDiffs)
+  const supportsCloudPublishing = window.zen.getCapabilities().supportsCloudSync === true
   // Tag-driven Typst definitions for this pane's note (#486); '' unless the
   // setting is on, Typst is the renderer, and the note's tags match a preamble.
   const typstPreamble = useStore((s) => selectTypstPreambleFor(s, content?.path ?? null))
@@ -1826,6 +1862,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
           highlightActiveLine(),
           taskJumpHighlightField,
           yankHighlightExtension,
+          vimVisualHighlightExtension,
           vimClipboardPasteExtension,
           commentDecorationField,
           wordWrapCompartment.of(s0.wordWrap ? EditorView.lineWrapping : []),
@@ -1868,7 +1905,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
               slashCommandSource,
               calloutTypeSource,
               dateShortcutSource,
+              latexCommandSource,
               atNoteSource,
+              frontmatterTagSource,
               hashtagSource,
               wikilinkSource,
               wikilinkHeadingSource
@@ -1898,14 +1937,21 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
                 if (pos != null) {
                   const doc = view.state.doc.toString()
                   if (event.metaKey || event.ctrlKey) {
-                    const linkTarget = extractLinkAtCursor(doc, pos)
-                    if (linkTarget && followLinkTarget(linkTarget)) {
+                    const link = linkRangeAtCursor(doc, pos)
+                    if (
+                      link &&
+                      pointerOverRange(view, link.from, link.to, event.clientX, event.clientY) &&
+                      followLinkTarget(link.target)
+                    ) {
                       event.preventDefault()
                       return true
                     }
                   } else {
                     const link = markdownLinkAt(doc, pos)
-                    if (link) {
+                    if (
+                      link &&
+                      pointerOverRange(view, link.from, link.to, event.clientX, event.clientY)
+                    ) {
                       const sel = view.state.selection.main
                       const rendered = sel.to < link.from || sel.from > link.to
                       if (rendered && followLinkTarget(link.href)) {
@@ -1939,7 +1985,19 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
                 return false
               }
               const line = view.state.doc.lineAt(pos)
-              setHoveredLink(extractLinkAtCursor(line.text, pos - line.from))
+              const link = linkRangeAtCursor(line.text, pos - line.from)
+              setHoveredLink(
+                link &&
+                  pointerOverRange(
+                    view,
+                    line.from + link.from,
+                    line.from + link.to,
+                    event.clientX,
+                    event.clientY
+                  )
+                  ? link.target
+                  : null
+              )
               return false
             },
             mouseleave: () => {
@@ -1982,7 +2040,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
                 const cm = getCM(view)
                 const insertMode = !!cm?.state.vim?.insertMode
                 const sel = view.state.selection.main
-                if (!insertMode && !sel.empty) {
+                // A pending sequence owns the next key: `v f m` jumps to the
+                // next `m`, it does not open the menu (#568).
+                if (!insertMode && !sel.empty && !isVimAwaitingArgument(view)) {
                   event.preventDefault()
                   event.stopPropagation()
                   openEditorContextMenu()
@@ -3840,6 +3900,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
                 if (next && next !== content.title) void renameActive(next)
               }}
             />
+            {supportsCloudPublishing && content.folder !== 'trash' && (
+              <PublishedNoteButton key={content.path} note={content} />
+            )}
             {isDirty && (
               <span
                 aria-label="Unsaved changes"
