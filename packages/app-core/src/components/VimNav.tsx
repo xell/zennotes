@@ -585,6 +585,37 @@ export function VimNav(): JSX.Element | null {
         }
       }
 
+      // Ctrl+1..9: jump straight to the Nth tab (1-indexed, left to right) in
+      // the active pane. Hard-coded rather than a configurable keymap, and
+      // deliberately the literal Control key instead of `Mod` — Cmd+1 is
+      // already "Toggle sidebar" (Mod+1), and Cmd+1..9 more generally is
+      // macOS's own native window-tab switcher once tabbingMode is enabled
+      // (see the window-tabbing work), so `Mod` would collide on both counts.
+      //
+      // Its own guard, separate from the buffer/tab fallback below: unlike
+      // `[b`/`]b`/`gt`/`gT`/bufferPrevious/bufferNext, codemirror-vim has no
+      // Ctrl+digit mapping of its own to fall back to, so this must still
+      // fire with the editor focused in normal/visual mode — only stand
+      // down in insert mode (where the digits should type) or mid-command
+      // (an operator/count/f-t-r awaiting its argument).
+      if (
+        !leaderPending.current &&
+        !(
+          isEditorFocused(state.editorViewRef) &&
+          (isEditorInsertMode(state.editorViewRef, state.vimMode) ||
+            isVimAwaitingArgument(state.editorViewRef))
+        )
+      ) {
+        for (let i = 0; i < 9; i++) {
+          if (matchesShortcutBinding(e, `Ctrl+${i + 1}`)) {
+            e.preventDefault()
+            e.stopImmediatePropagation()
+            focusPaneTabByIndex(useStore.getState(), i)
+            return
+          }
+        }
+      }
+
       // Buffer and tab sequences as a GLOBAL fallback: they exist for when
       // focus sits anywhere but the editor (#321). A focused editor has
       // codemirror-vim, which carries `[b`/`]b` and `gt`/`gT` of its own, so
@@ -622,21 +653,6 @@ export function VimNav(): JSX.Element | null {
           )
         ) {
           return
-        }
-
-        // Ctrl+1..9: jump straight to the Nth tab (1-indexed, left to right)
-        // in the active pane. Hard-coded rather than a configurable keymap,
-        // and deliberately the literal Control key instead of `Mod` — Cmd+1
-        // is already "Toggle sidebar" (Mod+1), and Cmd+1..9 more generally is
-        // macOS's own native window-tab switcher once tabbingMode is enabled
-        // (see the window-tabbing work), so `Mod` would collide on both counts.
-        for (let i = 0; i < 9; i++) {
-          if (matchesShortcutBinding(e, `Ctrl+${i + 1}`)) {
-            e.preventDefault()
-            e.stopImmediatePropagation()
-            focusPaneTabByIndex(useStore.getState(), i)
-            return
-          }
         }
 
         // #321: gt/gT global fallback (they only fired inside the focused editor
