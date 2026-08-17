@@ -398,58 +398,6 @@ export function registerDisplayLineMotion(): void {
     'zenMoveToViewportEdge',
     zenMoveToViewportEdge as unknown as Parameters<typeof Vim.defineMotion>[1]
   )
-  type VimActionTable = {
-    enterInsertMode: (
-      cm: unknown,
-      args: {
-        head: { line: number; ch: number }
-        insertAt: 'inplace'
-        repeat?: number
-      },
-      vim: unknown
-    ) => void
-  }
-  Vim.defineAction(
-    'zenEnterInsertAtDisplayLineBoundary',
-    function (
-      this: VimActionTable,
-      cm: VimDisplayBoundaryCm,
-      actionArgs: { forward?: boolean; repeat?: number },
-      vim: unknown
-    ) {
-      let target: { line: number; ch: number }
-      if (actionArgs.forward) {
-        // Insert at the raw display boundary. The normal-mode `$` motion
-        // backs up to the last visible character, but `A` belongs after it.
-        target = pixelMotionFallback(
-          () => {
-            const view = cm.cm6
-            const cursor = cm.getCursor()
-            if (view && cursor.line + 1 <= view.state.doc.lines) {
-              const line = view.state.doc.line(cursor.line + 1)
-              const pos = Math.min(line.to, line.from + Math.max(0, cursor.ch))
-              const edge = displayRowEdge(view, pos, true)
-              if (edge != null) return new CodeMirror.Pos(cursor.line, edge - line.from)
-              // No usable coordinates: append at the LOGICAL line end, like
-              // plain Vim, rather than goLineRight's rightmost visible glyph,
-              // which live preview's hidden closing tokens pull short (#582).
-              return new CodeMirror.Pos(cursor.line, line.length)
-            }
-            cm.execCommand('goLineRight')
-            return cm.getCursor()
-          },
-          () => cm.getCursor()
-        )
-      } else {
-        target = zenMoveToDisplayLineBoundary(cm, cm.getCursor(), { forward: false })
-      }
-      this.enterInsertMode(
-        cm,
-        { head: target, insertAt: 'inplace', repeat: actionArgs.repeat },
-        vim
-      )
-    } as unknown as Parameters<typeof Vim.defineAction>[1]
-  )
   for (const context of ['normal', 'visual'] as const) {
     Vim.mapCommand(
       'j',
@@ -496,18 +444,10 @@ export function registerDisplayLineMotion(): void {
       { context }
     )
   }
-  Vim.mapCommand(
-    'A',
-    'action',
-    'zenEnterInsertAtDisplayLineBoundary',
-    { forward: true },
-    { context: 'normal', isEdit: true }
-  )
-  Vim.mapCommand(
-    'I',
-    'action',
-    'zenEnterInsertAtDisplayLineBoundary',
-    { forward: false },
-    { context: 'normal', isEdit: true }
-  )
+  // `A` and `I` are deliberately NOT remapped here (unlike `$`/`g0`/`H`/`L`
+  // above): real Vim always appends/inserts at the true start/end of the
+  // logical line, full stop — there's no `gA`/`gI` display-line variant in
+  // Vim itself, so shadowing the plain keys had no `g`-prefixed escape hatch
+  // and surprised users who already knew `g$` was the display-line one.
+  // codemirror-vim's own default `A`/`I` already do the correct thing.
 }
