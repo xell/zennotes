@@ -6032,16 +6032,16 @@ function installAppMenu(): void {
       submenu: [
         { role: 'reload' },
         { role: 'forceReload' },
-        // Hidden in production builds — devtools access there is a debugging
-        // surface, not a user feature. installZoomControls (see below) already
-        // gives Cmd+0/+/- a window-level handler, so these menu items are
-        // deliberately left without their own accelerator: Electron does not
-        // suppress before-input-event for a menu-bound key, and giving both
-        // paths the same shortcut would double the zoom step per press.
-        ...(app.isPackaged
-          ? []
-          : ([{ role: 'toggleDevTools' }] as Electron.MenuItemConstructorOptions[])),
+        // Not gated on app.isPackaged (unlike upstream, which hides this in
+        // production): every build Leo runs is `install:mac:fast`'s packaged
+        // output — there's no separate unpackaged dev channel — so hiding it
+        // there would hide it always.
+        { role: 'toggleDevTools', accelerator: 'CmdOrCtrl+Alt+I' },
         { type: 'separator' },
+        // No accelerator on these three: installZoomControls (below) already
+        // gives Cmd+0/+/- a window-level before-input-event handler, and
+        // Electron doesn't suppress that path for a menu-bound key — adding
+        // one here would double the zoom step per press.
         {
           label: 'Actual Size',
           click: () => {
