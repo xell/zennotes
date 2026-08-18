@@ -626,6 +626,10 @@ interface Prefs {
   hideActiveLineMarkup: boolean
   /** Show an H1 through H6 badge before Markdown headings in the editor. */
   showHeadingLevelLabels: boolean
+  /** Replace the H1-H3 fold arrow with a level-specific icon, colored by
+   *  fold state (open: --z-bg-2, folded: --z-accent). H4-H6 keep the
+   *  plain glyph arrow either way. */
+  showHeadingLevelIcons: boolean
   /** Vertical guide lines at each nested-list level in the editor (#491). */
   listIndentGuides: boolean
   /** How a completed task's text is styled (strike / gray / both / none) in the
@@ -1116,6 +1120,7 @@ export const DEFAULT_PREFS: Prefs = {
   renderTablesInLivePreview: 'rich',
   hideActiveLineMarkup: false,
   showHeadingLevelLabels: false,
+  showHeadingLevelIcons: false,
   listIndentGuides: true,
   completedTaskStyle: 'none',
   mathRenderer: 'katex',
@@ -1286,6 +1291,10 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
       typeof p.showHeadingLevelLabels === 'boolean'
         ? p.showHeadingLevelLabels
         : DEFAULT_PREFS.showHeadingLevelLabels,
+    showHeadingLevelIcons:
+      typeof p.showHeadingLevelIcons === 'boolean'
+        ? p.showHeadingLevelIcons
+        : DEFAULT_PREFS.showHeadingLevelIcons,
     listIndentGuides:
       typeof p.listIndentGuides === 'boolean'
         ? p.listIndentGuides
@@ -2518,6 +2527,7 @@ function collectPrefs(s: {
   renderTablesInLivePreview: TableRenderMode
   hideActiveLineMarkup: boolean
   showHeadingLevelLabels: boolean
+  showHeadingLevelIcons: boolean
   listIndentGuides: boolean
   completedTaskStyle: CompletedTaskStyle
   mathRenderer: MathRenderer
@@ -2627,6 +2637,7 @@ function collectPrefs(s: {
     imeEnglishLayoutId: s.imeEnglishLayoutId,
     livePreview: s.livePreview,
     showHeadingLevelLabels: s.showHeadingLevelLabels,
+    showHeadingLevelIcons: s.showHeadingLevelIcons,
     listIndentGuides: s.listIndentGuides,
     renderTablesInLivePreview: s.renderTablesInLivePreview,
     hideActiveLineMarkup: s.hideActiveLineMarkup,
@@ -3135,6 +3146,7 @@ interface Store {
   /** Hide Markdown markup on the caret's line in live preview. Persisted. */
   hideActiveLineMarkup: boolean
   showHeadingLevelLabels: boolean
+  showHeadingLevelIcons: boolean
   listIndentGuides: boolean
   completedTaskStyle: CompletedTaskStyle
   mathRenderer: MathRenderer
@@ -3759,6 +3771,7 @@ interface Store {
   setRenderTablesInLivePreview: (mode: TableRenderMode) => void
   setHideActiveLineMarkup: (on: boolean) => void
   setShowHeadingLevelLabels: (on: boolean) => void
+  setShowHeadingLevelIcons: (on: boolean) => void
   setListIndentGuides: (on: boolean) => void
   setCompletedTaskStyle: (style: CompletedTaskStyle) => void
   setMathRenderer: (renderer: MathRenderer) => void
@@ -5139,6 +5152,7 @@ export const useStore = create<Store>((set, get) => {
   imeEnglishLayoutId: loadPrefs().imeEnglishLayoutId,
   livePreview: loadPrefs().livePreview,
   showHeadingLevelLabels: loadPrefs().showHeadingLevelLabels,
+  showHeadingLevelIcons: loadPrefs().showHeadingLevelIcons,
   listIndentGuides: loadPrefs().listIndentGuides,
   renderTablesInLivePreview: loadPrefs().renderTablesInLivePreview,
   hideActiveLineMarkup: loadPrefs().hideActiveLineMarkup,
@@ -7968,6 +7982,10 @@ export const useStore = create<Store>((set, get) => {
   },
   setShowHeadingLevelLabels: (on) => {
     set({ showHeadingLevelLabels: on })
+    savePrefs(collectPrefs(get()))
+  },
+  setShowHeadingLevelIcons: (on) => {
+    set({ showHeadingLevelIcons: on })
     savePrefs(collectPrefs(get()))
   },
   setListIndentGuides: (on) => {

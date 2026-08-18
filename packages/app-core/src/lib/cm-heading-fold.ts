@@ -191,18 +191,31 @@ export function unfoldHeadingAtCursor(view: EditorView): boolean {
 class HeadingFoldArrow extends WidgetType {
   constructor(
     private readonly line: number,
-    private readonly folded: boolean
+    private readonly folded: boolean,
+    // Set only for H1-H3 while "Heading level icons" is on. H4-H6, and every
+    // level with the setting off, keep the plain glyph arrow (useIcon false).
+    private readonly useIcon: boolean
   ) {
     super()
   }
 
   eq(other: HeadingFoldArrow): boolean {
-    return other.line === this.line && other.folded === this.folded
+    return (
+      other.line === this.line &&
+      other.folded === this.folded &&
+      other.useIcon === this.useIcon
+    )
   }
 
   toDOM(view: EditorView): HTMLElement {
     const el = document.createElement('span')
-    el.className = `cm-heading-fold-arrow ${this.folded ? 'is-folded' : 'is-open'}`
+    el.className = [
+      'cm-heading-fold-arrow',
+      this.folded ? 'is-folded' : 'is-open',
+      this.useIcon ? 'has-icon' : ''
+    ]
+      .filter(Boolean)
+      .join(' ')
     el.setAttribute('role', 'button')
     el.setAttribute('aria-label', this.folded ? 'Expand heading' : 'Collapse heading')
     el.setAttribute('aria-expanded', String(!this.folded))
@@ -214,7 +227,14 @@ class HeadingFoldArrow extends WidgetType {
     // disengage. Folding stays reachable by mouse, keyboard, and vim, so hiding
     // it from the accessibility tree costs nothing.
     el.setAttribute('aria-hidden', 'true')
-    el.textContent = this.folded ? '▸' : '▾'
+    // Icon mode paints entirely through CSS (mask-image + background-color,
+    // keyed off the h1/h2/h3 ancestor and the is-open/is-folded class above),
+    // so the glyph must stay out of the DOM here — a mask clips the whole
+    // element's paint, so a visible text node under it would just get cut
+    // into the icon's silhouette instead of being replaced by it.
+    if (!this.useIcon) {
+      el.textContent = this.folded ? '▸' : '▾'
+    }
     // Eat mousedown so CodeMirror's own handler doesn't interpret the
     // click as a caret position and steal focus before we dispatch
     // the fold effect. The actual toggle fires on the click event so
@@ -279,7 +299,11 @@ function toggleHeadingFold(view: EditorView, lineNumber: number): void {
   })
 }
 
-function buildDecorations(view: EditorView, showLevelLabels: boolean): DecorationSet {
+function buildDecorations(
+  view: EditorView,
+  showLevelLabels: boolean,
+  showLevelIcons: boolean
+): DecorationSet {
   const { state } = view
   const builder: { from: number; to: number; deco: Decoration }[] = []
   const folded = foldedRanges(state)
@@ -290,19 +314,27 @@ function buildDecorations(view: EditorView, showLevelLabels: boolean): Decoratio
     for (let n = first; n <= last; n++) {
       const level = headingLevelAt(state, n)
       if (level === null) continue
+      // `range` is null when the heading has nothing below it to fold — the
+      // last line of the document, or immediately followed by an
+      // equal-or-higher heading. That only means there is nothing to
+      // fold/unfold (toggleHeadingFold already no-ops in that case); the
+      // line decoration and arrow/label widgets below must still render, or
+      // a heading typed as the newest last line stays unrecognized until a
+      // line is added below it (#ui.md).
       const range = rangeForHeading(state, n, level)
-      if (!range) continue
       const line = state.doc.line(n)
 
       // Check whether this exact heading range is currently folded.
       let isFolded = false
-      folded.between(range.from, range.to, (rf, rt) => {
-        if (rf === range.from && rt === range.to) {
-          isFolded = true
-          return false
-        }
-        return undefined
-      })
+      if (range) {
+        folded.between(range.from, range.to, (rf, rt) => {
+          if (rf === range.from && rt === range.to) {
+            isFolded = true
+            return false
+          }
+          return undefined
+        })
+      }
 
       // Line decoration adds `cm-heading-line` to the cm-line div so
       // CSS can target heading rows specifically. The active-line
@@ -336,7 +368,7 @@ function buildDecorations(view: EditorView, showLevelLabels: boolean): Decoratio
         to: line.from,
         deco: Decoration.widget({
           side: -1,
-          widget: new HeadingFoldArrow(n, isFolded)
+          widget: new HeadingFoldArrow(n, isFolded, showLevelIcons && level <= 3)
         })
       })
     }
@@ -346,7 +378,7 @@ function buildDecorations(view: EditorView, showLevelLabels: boolean): Decoratio
   return Decoration.set(builder.map((b) => b.deco.range(b.from, b.to)))
 }
 
-function headingArrowPlugin(showLevelLabels: boolean): Extension {
+function headingArrowPlugin(showLevelLabels: boolean, showLevelIcons: boolean): Extension {
   return ViewPlugin.fromClass(
     class {
       private readonly view: EditorView
@@ -356,7 +388,7 @@ function headingArrowPlugin(showLevelLabels: boolean): Extension {
 
       constructor(view: EditorView) {
         this.view = view
-        this.decorations = buildDecorations(view, showLevelLabels)
+        this.decorations = buildDecorations(view, showLevelLabels, showLevelIcons)
         this.cursorFixFrame = requestAnimationFrame(() => fixFatCursorHeight(this.view))
       }
 
@@ -369,7 +401,7 @@ function headingArrowPlugin(showLevelLabels: boolean): Extension {
             tr.effects.some((e) => e.is(foldEffect) || e.is(unfoldEffect))
           )
         ) {
-          this.decorations = buildDecorations(update.view, showLevelLabels)
+          this.decorations = buildDecorations(update.view, showLevelLabels, showLevelIcons)
         }
         if (
           update.selectionSet ||
@@ -394,6 +426,9 @@ function headingArrowPlugin(showLevelLabels: boolean): Extension {
 
 export interface HeadingFoldingOptions {
   showLevelLabels?: boolean
+  /** Replace the H1-H3 fold arrow with a level-specific icon (H4-H6 keep
+   *  the plain glyph arrow regardless). See HeadingFoldArrow. */
+  showLevelIcons?: boolean
 }
 
 /**
@@ -450,10 +485,11 @@ export function headingFolding(options: HeadingFoldingOptions = {}): Extension {
   // that hide folded ranges. Without it, our dispatches go through
   // with no visible effect.
   const showLevelLabels = options.showLevelLabels ?? false
+  const showLevelIcons = options.showLevelIcons ?? false
   return [
     codeFolding(),
     service,
-    headingArrowPlugin(showLevelLabels),
+    headingArrowPlugin(showLevelLabels, showLevelIcons),
     // The level chips sit LEFT of the arrow slot, wider than .cm-content's
     // default 32px padding. The centered column's auto margin cannot host
     // them: it is zero whenever the pane is narrower than the column cap,

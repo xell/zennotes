@@ -74,6 +74,7 @@ export const PORTABLE_PREF_KEYS = [
   // editor
   'livePreview',
   'showHeadingLevelLabels',
+  'showHeadingLevelIcons',
   'listIndentGuides',
   'renderTablesInLivePreview',
   'hideActiveLineMarkup',
@@ -215,6 +216,7 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   renderTablesInLivePreview: 'rich',
   hideActiveLineMarkup: false,
   showHeadingLevelLabels: false,
+  showHeadingLevelIcons: false,
   listIndentGuides: true,
   completedTaskStyle: 'none',
   mathRenderer: 'katex',

@@ -137,7 +137,8 @@ export function TemplateEditorModal({
         vimAwareMarkdownKeymap,
         markdownListIndentPlugin,
         headingFolding({
-          showLevelLabels: useStore.getState().showHeadingLevelLabels
+          showLevelLabels: useStore.getState().showHeadingLevelLabels,
+          showLevelIcons: useStore.getState().showHeadingLevelIcons
         }),
         syntaxHighlighting(templateHighlight),
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),

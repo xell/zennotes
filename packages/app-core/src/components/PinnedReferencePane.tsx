@@ -184,6 +184,7 @@ export function PinnedReferencePane(): JSX.Element | null {
   const isGitRepo = useStore((s) => s.isGitRepo)
   const diffInlineDiffs = useStore((s) => s.diffInlineDiffs)
   const showHeadingLevelLabels = useStore((s) => s.showHeadingLevelLabels)
+  const showHeadingLevelIcons = useStore((s) => s.showHeadingLevelIcons)
   const lineNumberMode = useStore((s) => s.lineNumberMode)
   const editorTabSizeValue = useStore((s) => s.editorTabSize)
   const listIndentGuidesOn = useStore((s) => s.listIndentGuides)
@@ -297,7 +298,10 @@ export function PinnedReferencePane(): JSX.Element | null {
           orderedListRenumber,
           frontmatterTagExtension,
           headingCompartment.of(
-            headingFolding({ showLevelLabels: s0.showHeadingLevelLabels })
+            headingFolding({
+              showLevelLabels: s0.showHeadingLevelLabels,
+              showLevelIcons: s0.showHeadingLevelIcons
+            })
           ),
           codeBlockFontPlugin,
           syntaxHighlighting(paperHighlight),
@@ -422,10 +426,13 @@ export function PinnedReferencePane(): JSX.Element | null {
     if (!view || !comp) return
     view.dispatch({
       effects: comp.reconfigure(
-        headingFolding({ showLevelLabels: showHeadingLevelLabels })
+        headingFolding({
+          showLevelLabels: showHeadingLevelLabels,
+          showLevelIcons: showHeadingLevelIcons
+        })
       )
     })
-  }, [showHeadingLevelLabels])
+  }, [showHeadingLevelLabels, showHeadingLevelIcons])
   useEffect(() => {
     const view = viewRef.current
     const comp = tabSizeCompartmentRef.current

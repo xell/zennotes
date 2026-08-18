@@ -45,6 +45,11 @@ fold arrows are always available. Click an arrow, press `Ctrl+Alt+F` or
 `Ctrl+Alt+U` (`Cmd+Option+F` or `Cmd+Option+U` on macOS), or use `zc` and `zo`
 in Vim mode to collapse or expand the section at the cursor.
 
+`Heading level icons` replaces the fold arrow on H1, H2, and H3 headings with
+a level-specific icon instead of the plain arrow glyph, always visible rather
+than hover-revealed, tinted to match whether the heading is open or folded.
+H4 through H6 keep the plain arrow either way.
+
 ### Tab size
 
 Tab size accepts values from 1 through 8. It controls both the rendered tab

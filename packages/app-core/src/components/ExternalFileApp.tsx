@@ -174,7 +174,10 @@ export function ExternalFileApp(): JSX.Element {
           markdownListIndentPlugin,
           frontmatterStyle,
           orderedListRenumber,
-          headingFolding({ showLevelLabels: prefs.showHeadingLevelLabels }),
+          headingFolding({
+            showLevelLabels: prefs.showHeadingLevelLabels,
+            showLevelIcons: prefs.showHeadingLevelIcons
+          }),
           codeBlockFontPlugin,
           syntaxHighlighting(paperHighlight),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),

@@ -412,7 +412,10 @@ function buildEditorKeymap(vimMode: boolean, overrides: KeymapOverrides): Extens
   ])
 }
 
-function markdownEditingExtensions(showHeadingLevelLabels = false): Extension[] {
+function markdownEditingExtensions(
+  showHeadingLevelLabels = false,
+  showHeadingLevelIcons = false
+): Extension[] {
   return [
     markdown({ base: markdownLanguage, codeLanguages: resolveCodeLanguage, addKeymap: false }),
     vimAwareMarkdownKeymap,
@@ -424,7 +427,10 @@ function markdownEditingExtensions(showHeadingLevelLabels = false): Extension[] 
     frontmatterTagExtension,
     orderedListRenumber,
     forwardOnCheckboxArrow,
-    headingFolding({ showLevelLabels: showHeadingLevelLabels }),
+    headingFolding({
+      showLevelLabels: showHeadingLevelLabels,
+      showLevelIcons: showHeadingLevelIcons
+    }),
     codeBlockFontPlugin
   ]
 }
@@ -870,6 +876,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const vimYankToClipboard = useStore((s) => s.vimYankToClipboard)
   const livePreview = useStore((s) => s.livePreview)
   const showHeadingLevelLabels = useStore((s) => s.showHeadingLevelLabels)
+  const showHeadingLevelIcons = useStore((s) => s.showHeadingLevelIcons)
   const renderTablesInLivePreview = useStore((s) => s.renderTablesInLivePreview)
   const hideActiveLineMarkup = useStore((s) => s.hideActiveLineMarkup)
   // Diagrams carry their palette inside the SVG, so a theme switch has to
@@ -1870,7 +1877,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
           markdownCompartment.of(
             deferInitialRichMarkdown
               ? []
-              : markdownEditingExtensions(s0.showHeadingLevelLabels)
+              : markdownEditingExtensions(s0.showHeadingLevelLabels, s0.showHeadingLevelIcons)
           ),
           markdownSyntaxCompartment.of(
             deferInitialRichMarkdown ? [] : markdownSyntaxHighlightExtensions()
@@ -2097,7 +2104,10 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
           richMarkdownDeferredRef.current = false
           const restoreEffects = [
             markdownCompartment.reconfigure(
-              markdownEditingExtensions(useStore.getState().showHeadingLevelLabels)
+              markdownEditingExtensions(
+                useStore.getState().showHeadingLevelLabels,
+                useStore.getState().showHeadingLevelIcons
+              )
             ),
             markdownSyntaxCompartment.reconfigure(markdownSyntaxHighlightExtensions())
           ]
@@ -2193,7 +2203,10 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       richMarkdownDeferredRef.current = false
       effects.push(
         markdownCompartment.reconfigure(
-          markdownEditingExtensions(useStore.getState().showHeadingLevelLabels)
+          markdownEditingExtensions(
+            useStore.getState().showHeadingLevelLabels,
+            useStore.getState().showHeadingLevelIcons
+          )
         ),
         markdownSyntaxCompartment.reconfigure(markdownSyntaxHighlightExtensions())
       )
@@ -2274,7 +2287,10 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
         richMarkdownDeferredRef.current = false
         const restoreEffects = [
           markdownCompartment.reconfigure(
-            markdownEditingExtensions(useStore.getState().showHeadingLevelLabels)
+            markdownEditingExtensions(
+              useStore.getState().showHeadingLevelLabels,
+              useStore.getState().showHeadingLevelIcons
+            )
           ),
           markdownSyntaxCompartment.reconfigure(markdownSyntaxHighlightExtensions())
         ]
@@ -2335,7 +2351,10 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
         if (markdownCompartment) {
           effects.push(
             markdownCompartment.reconfigure(
-              markdownEditingExtensions(useStore.getState().showHeadingLevelLabels)
+              markdownEditingExtensions(
+                useStore.getState().showHeadingLevelLabels,
+                useStore.getState().showHeadingLevelIcons
+              )
             )
           )
         }
@@ -2384,9 +2403,11 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     const comp = markdownCompartmentRef.current
     if (!view || !comp || richMarkdownDeferredRef.current) return
     view.dispatch({
-      effects: comp.reconfigure(markdownEditingExtensions(showHeadingLevelLabels))
+      effects: comp.reconfigure(
+        markdownEditingExtensions(showHeadingLevelLabels, showHeadingLevelIcons)
+      )
     })
-  }, [showHeadingLevelLabels])
+  }, [showHeadingLevelLabels, showHeadingLevelIcons])
   useEffect(() => {
     const view = viewRef.current
     const comp = lineNumbersCompartmentRef.current

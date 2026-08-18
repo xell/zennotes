@@ -127,6 +127,7 @@ export interface FloatingPrefs {
   editorLineHeight: number
   editorTabSize: number
   showHeadingLevelLabels: boolean
+  showHeadingLevelIcons: boolean
   lineNumberMode: LineNumberMode
   wordWrap: boolean
   interfaceFont: string | null
@@ -147,6 +148,7 @@ export function loadFloatingPrefs(): FloatingPrefs {
     editorLineHeight: 1.7,
     editorTabSize: 4,
     showHeadingLevelLabels: false,
+    showHeadingLevelIcons: false,
     lineNumberMode: 'off',
     wordWrap: true,
     interfaceFont: null,
@@ -419,7 +421,10 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
           markdownListIndentPlugin,
           frontmatterStyle,
           orderedListRenumber,
-          headingFolding({ showLevelLabels: prefs.showHeadingLevelLabels }),
+          headingFolding({
+            showLevelLabels: prefs.showHeadingLevelLabels,
+            showLevelIcons: prefs.showHeadingLevelIcons
+          }),
           codeBlockFontPlugin,
           syntaxHighlighting(paperHighlight),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),

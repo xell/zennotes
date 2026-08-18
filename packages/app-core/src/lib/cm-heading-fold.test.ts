@@ -115,6 +115,36 @@ describe('heading folding', () => {
     parent.remove()
   })
 
+  it('shows the arrow on a heading with nothing below it yet to fold', () => {
+    // A heading typed as the newest last line of the document (or one
+    // immediately followed by an equal-or-higher heading) has no foldable
+    // range yet — that must not stop the line from being recognized. Typing
+    // "## Design" and stopping there, without pressing Enter to create a
+    // line below it, is exactly this case (#ui.md).
+    const parent = document.createElement('div')
+    document.body.append(parent)
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: '',
+        extensions: [markdown({ base: markdownLanguage }), headingFolding({ showLevelIcons: true })]
+      })
+    })
+
+    for (const ch of '## Design') {
+      view.dispatch({
+        changes: { from: view.state.doc.length, insert: ch },
+        selection: { anchor: view.state.doc.length + 1 }
+      })
+    }
+
+    expect(parent.querySelector('.cm-heading-fold-arrow.has-icon')).not.toBeNull()
+    expect(parent.querySelector('.cm-heading-line-h2')).not.toBeNull()
+
+    view.destroy()
+    parent.remove()
+  })
+
   it('keeps heading level labels out of the editor by default', () => {
     const parent = document.createElement('div')
     document.body.append(parent)

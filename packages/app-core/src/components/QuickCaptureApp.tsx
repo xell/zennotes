@@ -98,6 +98,7 @@ interface QuickCapturePrefs {
   editorLineHeight: number
   editorTabSize: number
   showHeadingLevelLabels: boolean
+  showHeadingLevelIcons: boolean
   interfaceFont: string | null
   textFont: string | null
   monoFont: string | null
@@ -115,6 +116,7 @@ function loadPrefs(): QuickCapturePrefs {
     editorLineHeight: 1.6,
     editorTabSize: 4,
     showHeadingLevelLabels: false,
+    showHeadingLevelIcons: false,
     interfaceFont: null,
     textFont: null,
     monoFont: null
@@ -562,7 +564,10 @@ export function QuickCaptureApp(): JSX.Element {
           markdown({ base: markdownLanguage, codeLanguages: resolveCodeLanguage, addKeymap: false }),
           vimAwareMarkdownKeymap,
           markdownListIndentPlugin,
-          headingFolding({ showLevelLabels: prefs.showHeadingLevelLabels }),
+          headingFolding({
+            showLevelLabels: prefs.showHeadingLevelLabels,
+            showLevelIcons: prefs.showHeadingLevelIcons
+          }),
           syntaxHighlighting(captureHighlight),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
           placeholder('Start writing…'),

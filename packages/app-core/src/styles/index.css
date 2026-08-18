@@ -4660,6 +4660,52 @@ html[data-completed-task-style="gray-strikethrough"] .prose-zen li.task-list-ite
   color: rgb(var(--z-accent));
 }
 
+/* --- Heading level icons (H1-H3 only, "Heading level icons" setting) -- */
+/* Replaces the plain glyph above with a level-specific icon. The source
+ * SVGs (packages/app-core/src/assets/heading-{1,2,3}-indicator.svg) are
+ * solid white; mask-image reads only their alpha and background-color
+ * supplies the real color, so the same artwork recolors for open vs
+ * folded instead of needing a second asset per level. Unlike the glyph
+ * arrow, this is always visible while the setting is on, not
+ * hover/active-line revealed — hover only adds a ring in whichever color
+ * is already showing, it does not change the fill or the opacity. */
+.cm-heading-fold-arrow.has-icon {
+  opacity: 1;
+  mask-repeat: no-repeat;
+  -webkit-mask-repeat: no-repeat;
+  mask-position: center;
+  -webkit-mask-position: center;
+  mask-size: contain;
+  -webkit-mask-size: contain;
+  background-color: rgb(var(--z-bg-2));
+}
+.cm-heading-line-h1 .cm-heading-fold-arrow.has-icon {
+  mask-image: url(../assets/heading-1-indicator.svg);
+  -webkit-mask-image: url(../assets/heading-1-indicator.svg);
+}
+.cm-heading-line-h2 .cm-heading-fold-arrow.has-icon {
+  mask-image: url(../assets/heading-2-indicator.svg);
+  -webkit-mask-image: url(../assets/heading-2-indicator.svg);
+}
+.cm-heading-line-h3 .cm-heading-fold-arrow.has-icon {
+  mask-image: url(../assets/heading-3-indicator.svg);
+  -webkit-mask-image: url(../assets/heading-3-indicator.svg);
+}
+.cm-heading-fold-arrow.has-icon.is-folded {
+  background-color: rgb(var(--z-accent));
+}
+/* Explicit, not relying on cascade order against the glyph arrow's own
+ * `:hover` rule above (same selector specificity) — restate the fill so
+ * hover only adds the ring, whichever state the icon is already in. */
+.cm-heading-fold-arrow.has-icon:hover {
+  background-color: rgb(var(--z-bg-2));
+  box-shadow: 0 0 0 1px rgb(var(--z-bg-2));
+}
+.cm-heading-fold-arrow.has-icon.is-folded:hover {
+  background-color: rgb(var(--z-accent));
+  box-shadow: 0 0 0 1px rgb(var(--z-accent));
+}
+
 /* The chip gutter must fit inside .cm-content's own box. The fold arrow
  * (≤28px + ≤10px gap) was sized to live inside the default 32px padding;
  * the chip needs another 30px beyond it, which only exists as centered-

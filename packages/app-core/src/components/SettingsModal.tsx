@@ -508,9 +508,13 @@ export function SettingsModal(): JSX.Element {
   const markdownSnippets = useStore((s) => s.markdownSnippets);
   const setMarkdownSnippets = useStore((s) => s.setMarkdownSnippets);
   const showHeadingLevelLabels = useStore((s) => s.showHeadingLevelLabels);
+  const showHeadingLevelIcons = useStore((s) => s.showHeadingLevelIcons);
   const listIndentGuides = useStore((s) => s.listIndentGuides);
   const setShowHeadingLevelLabels = useStore(
     (s) => s.setShowHeadingLevelLabels,
+  );
+  const setShowHeadingLevelIcons = useStore(
+    (s) => s.setShowHeadingLevelIcons,
   );
   const editorTabSize = useStore((s) => s.editorTabSize);
   const setEditorTabSize = useStore((s) => s.setEditorTabSize);
@@ -2048,6 +2052,13 @@ export function SettingsModal(): JSX.Element {
           keywords: ["heading", "header", "h1", "h2", "outline", "level"],
         },
         {
+          id: "heading-level-icons",
+          title: "Heading level icons",
+          description:
+            "Replace the fold arrow on H1, H2, and H3 headings with a level-specific icon.",
+          keywords: ["heading", "header", "h1", "h2", "h3", "icon", "fold", "arrow"],
+        },
+        {
           id: "editor-tab-size",
           title: "Tab size",
           description: "Choose how many spaces a tab occupies in the editor.",
@@ -2446,6 +2457,7 @@ export function SettingsModal(): JSX.Element {
             "sync-title-heading-on-rename",
             "markdown-overrides",
             "heading-level-labels",
+            "heading-level-icons",
             "editor-tab-size",
             "list-indent-guides",
             "auto-pairs",
@@ -2576,6 +2588,13 @@ export function SettingsModal(): JSX.Element {
                   value={showHeadingLevelLabels}
                   settingId="heading-level-labels"
                   onChange={setShowHeadingLevelLabels}
+                />
+                <ToggleRow
+                  label="Heading level icons"
+                  description="Replace the fold arrow on H1, H2, and H3 headings with a level-specific icon, always visible, tinted by whether the heading is open or folded. H4 through H6 keep the plain arrow."
+                  value={showHeadingLevelIcons}
+                  settingId="heading-level-icons"
+                  onChange={setShowHeadingLevelIcons}
                 />
                 <SliderRow
                   label="Tab size"
