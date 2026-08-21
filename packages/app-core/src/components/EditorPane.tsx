@@ -254,6 +254,7 @@ import {
   pastedImageFilesFromClipboard,
   pastedImageInputFromFile
 } from '../lib/editor-paste-images'
+import { htmlToMarkdown, htmlWorthConverting } from '../lib/html-to-markdown'
 import {
   paneModeForPath,
   ZEN_SET_PANE_MODE_EVENT,
@@ -2028,6 +2029,29 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
               return true
             },
             paste: (event, view) => {
+              // Rich text (Word, a web page) becomes Markdown rather than the
+              // flattened plain text the browser would otherwise give us. The
+              // converter is dynamically imported so its ~100KB of unified
+              // chain stays off the launch path.
+              const html = event.clipboardData?.getData('text/html') ?? ''
+              if (html && htmlWorthConverting(html)) {
+                event.preventDefault()
+                event.stopPropagation()
+                const { from, to } = view.state.selection.main
+                void htmlToMarkdown(html).then((markdown) => {
+                  // Null means the HTML held nothing structural after cleanup;
+                  // fall back to the plain text rather than inserting nothing.
+                  const insert = markdown ?? event.clipboardData?.getData('text/plain') ?? ''
+                  if (!insert) return
+                  view.dispatch({
+                    changes: { from, to, insert },
+                    selection: { anchor: from + insert.length },
+                    userEvent: 'input.paste',
+                    scrollIntoView: true
+                  })
+                })
+                return true
+              }
               // Text wins over an image whenever the clipboard has both. Word
               // and the other iWork/Office apps attach a bitmap of the
               // selection alongside the real text, so an image-first handler
