@@ -250,6 +250,7 @@ import {
   importedAssetForExistingVaultAsset
 } from '../lib/editor-drops'
 import {
+  clipboardHasPastableText,
   pastedImageFilesFromClipboard,
   pastedImageInputFromFile
 } from '../lib/editor-paste-images'
@@ -2027,6 +2028,12 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
               return true
             },
             paste: (event, view) => {
+              // Text wins over an image whenever the clipboard has both. Word
+              // and the other iWork/Office apps attach a bitmap of the
+              // selection alongside the real text, so an image-first handler
+              // pasted a picture of every Word copy. See
+              // clipboardHasPastableText for why plain text is the test.
+              if (clipboardHasPastableText(event.clipboardData)) return false
               const files = pastedImageFilesFromClipboard(event.clipboardData)
               if (files.length === 0) return false
               event.preventDefault()
