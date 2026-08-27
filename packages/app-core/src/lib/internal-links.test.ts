@@ -140,6 +140,37 @@ describe('plannerLinkUrl', () => {
     expect(plannerLinkUrl('not a url', base)).toBeNull()
     expect(plannerLinkUrl('http://localhost:5173/', '')).toBeNull()
   })
+
+  it('rebuilds an /open/<ref> item link against the current Planner URL, regardless of origin', () => {
+    // The old host (a stale dev port, a prior domain) is discarded; only the
+    // reference tail carries forward. (see zennotes commit 79420e9, day-planner
+    // commit c745955)
+    expect(plannerLinkUrl('https://old-planner.example.com/open/dp1:r:iuLcj68P6TCKRthO', base)).toBe(
+      'http://localhost:5173/open/dp1:r:iuLcj68P6TCKRthO'
+    )
+    expect(plannerLinkUrl('http://localhost:5173/open/dp1:e:R3Cl8wWXuifFhCVJ?tab=notes#x', base)).toBe(
+      'http://localhost:5173/open/dp1:e:R3Cl8wWXuifFhCVJ?tab=notes#x'
+    )
+    // A future format revision (new version digit, new kind letter, a
+    // different token length) keeps matching without a code change here.
+    expect(plannerLinkUrl('https://planner.example.com/open/dp2:t:abcdefghijklmnop', base)).toBe(
+      'http://localhost:5173/open/dp2:t:abcdefghijklmnop'
+    )
+    // Rebuilds against a nested Planner base path too.
+    expect(
+      plannerLinkUrl('http://old-host:9999/open/dp1:r:iuLcj68P6TCKRthO', 'http://localhost:5173/planner/')
+    ).toBe('http://localhost:5173/planner/open/dp1:r:iuLcj68P6TCKRthO')
+  })
+
+  it('does not treat an arbitrary /open/ path as a portable reference', () => {
+    for (const href of [
+      'https://elsewhere.example.com/open/foo',
+      'https://elsewhere.example.com/open/dp1:e:short',
+      'https://elsewhere.example.com/open/notdp:e:R3Cl8wWXuifFhCVJ'
+    ]) {
+      expect(plannerLinkUrl(href, base), href).toBeNull()
+    }
+  })
 })
 
 describe('linkRangeAtCursor', () => {

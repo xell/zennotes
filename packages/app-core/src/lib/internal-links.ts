@@ -116,6 +116,13 @@ function unwrapMdUrl(url: string): string {
 const LOCAL_FILE_EXT_RE =
   /\.(md|markdown|txt|png|apng|avif|gif|jpe?g|svg|webp|pdf|mp3|m4a|aac|flac|ogg|wav|mp4|m4v|mov|ogv|webm|canvas|excalidraw)$/i
 
+// A Planner item reference: `dp<version>:<kind>:<token>`, e.g.
+// `dp1:r:iuLcj68P6TCKRthO`. Planner mints and resolves these itself; ZenNotes
+// only needs to recognize the shape, never interpret it. The version and kind
+// segments are left open-ended (not pinned to `dp1`/`e`/`r`) so a future
+// Planner format revision keeps matching without a ZenNotes code change.
+const PLANNER_ITEM_REF_RE = /^dp\d+:[a-z]:[A-Za-z0-9_-]{8,}$/
+
 /** Return a URL under the configured Planner base, or null for ordinary links. */
 export function plannerLinkUrl(href: string, plannerBaseUrl: string): string | null {
   const raw = href.trim()
@@ -125,6 +132,19 @@ export function plannerLinkUrl(href: string, plannerBaseUrl: string): string | n
     const target = new URL(raw)
     const baseUrl = new URL(base)
     const basePath = baseUrl.pathname.replace(/\/+$/, '') || '/'
+
+    // `/open/<ref>` links carry a portable item reference rather than a
+    // location. The URL text in a note is whatever host Planner happened to
+    // be running on when the link was written (a dev port, an old domain),
+    // so match on the reference shape alone and rebuild the link against the
+    // *current* Planner URL instead of requiring the origin to still match.
+    const segments = target.pathname.split('/')
+    const ref = segments.at(-1) ?? ''
+    if (segments.at(-2) === 'open' && PLANNER_ITEM_REF_RE.test(ref)) {
+      const openBase = basePath === '/' ? '' : basePath
+      return `${baseUrl.origin}${openBase}/open/${ref}${target.search}${target.hash}`
+    }
+
     const pathMatches = basePath === '/' || target.pathname === basePath || target.pathname.startsWith(`${basePath}/`)
     if (target.origin !== baseUrl.origin || !pathMatches) return null
     return target.toString()
