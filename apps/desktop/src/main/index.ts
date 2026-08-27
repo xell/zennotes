@@ -1133,6 +1133,12 @@ function killPtySessionsForWebContents(wcId: number): void {
 // at before-input-event level (see createWindow).
 const terminalFocusedWcIds = new Set<number>()
 
+// Same idea for the Planner panel's embedded page: keydown events fired while
+// its iframe holds focus never reach the renderer's own keymap (a nested
+// document doesn't bubble keys to the parent), so this is the only way to
+// offer an escape hatch back to the editor. See createWindow.
+const plannerFocusedWcIds = new Set<number>()
+
 function terminalSessionForWebContents(wcId: number): PtySession | undefined {
   for (const session of ptySessions.values()) {
     if (session.webContentsId === wcId) return session
@@ -2232,6 +2238,25 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
     session.pty.write(input.shift ? '\x02p' : '\x02n')
   })
 
+  // Hardcoded escape hatch: while the Planner panel's embedded page holds
+  // focus, Mod+T always returns focus to the editor. Same before-input-event
+  // reasoning as the tmux handler above — this doesn't just need to run
+  // before xterm/a menu accelerator, it needs to run before the Planner
+  // iframe's own page gets the key at all, since a nested document's keydown
+  // never reaches this window's renderer-level keymap. Fixed combo, not the
+  // live remappable keymap: this only needs to work reliably, not be
+  // reconfigurable, and mirroring the settings keymap here would mean keeping
+  // main in sync with every edit made in Settings → Keyboard.
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    if (input.code !== 'KeyT') return
+    const modOk = mac ? input.meta && !input.control : input.control && !input.meta
+    if (!modOk || input.alt) return
+    if (!plannerFocusedWcIds.has(win.webContents.id)) return
+    event.preventDefault()
+    win.webContents.send(IPC.PLANNER_FOCUS_EDITOR)
+  })
+
   // Focus is the one moment we can be sure this window is on the *visible*
   // Space, so it's when we learn its Space — and we persist right away rather
   // than relying on the quit-time flush, which was capturing correctly in
@@ -2280,6 +2305,7 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
     readyWindowIds.delete(win.id)
     pendingWindowNoteOpens.delete(win.id)
     killPtySessionsForWebContents(winWebContentsId)
+    plannerFocusedWcIds.delete(winWebContentsId)
     zenModeWindows.delete(win.id)
     tabBarHiddenForZen.delete(win.id)
     void reconcileAndPersistTabGroups()
@@ -5511,6 +5537,11 @@ function registerIpc(): void {
     if (!isTrustedIpcSender(event.sender)) return
     if (focused) terminalFocusedWcIds.add(event.sender.id)
     else terminalFocusedWcIds.delete(event.sender.id)
+  })
+  ipcMain.on(IPC.PLANNER_FOCUS, (event, focused: boolean) => {
+    if (!isTrustedIpcSender(event.sender)) return
+    if (focused) plannerFocusedWcIds.add(event.sender.id)
+    else plannerFocusedWcIds.delete(event.sender.id)
   })
 
   handle(IPC.CUSTOM_THEMES_LIST, () => listCustomThemes())

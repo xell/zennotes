@@ -740,6 +740,15 @@ const api: ZenBridge = {
     }
   },
 
+  planner: {
+    setFocused: (focused: boolean): void => ipcRenderer.send(IPC.PLANNER_FOCUS, focused),
+    onFocusEditor: (cb: () => void): (() => void) => {
+      const listener = (): void => cb()
+      ipcRenderer.on(IPC.PLANNER_FOCUS_EDITOR, listener)
+      return () => ipcRenderer.removeListener(IPC.PLANNER_FOCUS_EDITOR, listener)
+    }
+  },
+
   listCustomThemes: (): Promise<CustomTheme[]> => ipcRenderer.invoke(IPC.CUSTOM_THEMES_LIST),
   getCustomThemesDir: (): Promise<string | null> =>
     ipcRenderer.invoke(IPC.CUSTOM_THEMES_GET_DIR),

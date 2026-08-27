@@ -159,6 +159,8 @@ export const IPC = {
   TERMINAL_DATA: 'terminal:data',
   TERMINAL_EXIT: 'terminal:exit',
   TERMINAL_FOCUS: 'terminal:focus',
+  PLANNER_FOCUS: 'planner:focus',
+  PLANNER_FOCUS_EDITOR: 'planner:focus-editor',
   APP_PLATFORM: 'app:platform',
   APP_SHOW_DEFINITION_FOR_SELECTION: 'app:show-definition-for-selection',
   APP_GET_QUICK_CAPTURE_HOTKEY: 'app:get-quick-capture-hotkey',

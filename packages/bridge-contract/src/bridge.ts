@@ -490,6 +490,19 @@ export interface ZenBridge {
     onExit(cb: (sessionId: string, exitCode: number) => void): () => void
   }
 
+  planner: {
+    /** Tell the main process whether the Planner panel's embedded page
+     *  currently holds keyboard focus. Focus inside that iframe never reaches
+     *  the renderer's own shortcut handling (a hard DOM boundary — keydown
+     *  doesn't bubble out of a nested document), so while it's true, main
+     *  intercepts Cmd+T at the `before-input-event` level, below both that
+     *  frame and this app's normal keymap, and fires `onFocusEditor`. */
+    setFocused(focused: boolean): void
+    /** Fired when main intercepted the Planner-panel escape hatch (Cmd+T) and
+     *  wants the renderer to return keyboard focus to the editor. */
+    onFocusEditor(cb: () => void): () => void
+  }
+
   /** Returns true when the currently open vault root is inside a Git repository. */
   gitIsRepo(): Promise<boolean>
   /** Returns the index (staged) content for a vault-relative path, or null when

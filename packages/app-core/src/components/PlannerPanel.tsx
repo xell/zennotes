@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { focusEditorNormalMode } from '../lib/editor-focus'
 import { useStore } from '../store'
 
 /**
@@ -45,13 +46,50 @@ export function PlannerPanel({ visible }: Props): JSX.Element | null {
   // Bumped to force a reload without leaving the tab — handy when the dev
   // server was not up when this opened, which otherwise leaves a blank frame.
   const [reloadKey, setReloadKey] = useState(0)
+  const iframeKey = `${plannerNonce}:${reloadKey}`
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+
+  // Keyboard focus inside the iframe is a separate document — its keydown
+  // events never reach this app's own shortcut handling, so the renderer
+  // can't tell on its own when Planner has focus. Report it to main instead,
+  // which intercepts one fixed escape hatch (Mod+T, see createWindow in the
+  // desktop main process) below the frame boundary and asks us to focus the
+  // editor via onFocusEditor.
+  //
+  // Detecting "the iframe has focus" by polling `document.activeElement`
+  // rather than a `focus`/`blur` listener on the iframe element itself: for
+  // the first click into a cross-origin frame, Chromium doesn't reliably
+  // fire that event on the element, only `document.activeElement` reliably
+  // becomes the iframe. Re-runs on every remount since the iframe key
+  // changes on reload/re-open (a new DOM node needs its own poll target).
+  useEffect(() => {
+    if (!visible) return undefined
+    const iframe = iframeRef.current
+    if (!iframe) return undefined
+    let reported = false
+    const tick = (): void => {
+      const focused = document.activeElement === iframe
+      if (focused === reported) return
+      reported = focused
+      window.zen?.planner?.setFocused(focused)
+    }
+    tick()
+    const interval = window.setInterval(tick, 200)
+    return () => {
+      window.clearInterval(interval)
+      if (reported) window.zen?.planner?.setFocused(false)
+    }
+  }, [visible, iframeKey])
+
+  useEffect(() => window.zen?.planner?.onFocusEditor(() => focusEditorNormalMode()), [])
 
   if (!visible) return null
 
   return (
     <div className="zen-planner-panel flex min-h-0 min-w-0 flex-1 flex-col">
       <iframe
-        key={`${plannerNonce}:${reloadKey}`}
+        ref={iframeRef}
+        key={iframeKey}
         src={plannerSrc}
         title="Planner"
         // `allow-same-origin` — unlike the vault's HTML asset viewer, which
