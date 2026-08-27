@@ -214,6 +214,15 @@ export function linkRangeAtCursor(
     const found = hit(m, unwrapMdUrl(m[2]))
     if (found) return found
   }
+  // CommonMark's bare autolink — `<scheme:...>` — with no `[label]` in front.
+  // Unlike the bare-URL fallback below, the scheme isn't restricted to
+  // http(s): the angle brackets are themselves the explicit "this is a link"
+  // marker, so any `scheme:` (mailto:, tel:, a future planner:, …) counts.
+  const autolinkRe = /<([a-zA-Z][a-zA-Z\d+.-]{1,31}:[^\s<>]*)>/g
+  while ((m = autolinkRe.exec(line)) !== null) {
+    const found = hit(m, m[1])
+    if (found) return found
+  }
   const urlRe = /https?:\/\/[^\s)>\]]+/g
   while ((m = urlRe.exec(line)) !== null) {
     const found = hit(m, m[0])
@@ -255,6 +264,16 @@ export function markdownLinkAt(
   while ((m = re.exec(line)) !== null) {
     if (col >= m.index && col < m.index + m[0].length) {
       return { href: unwrapMdUrl(m[1]), from: lineStart + m.index, to: lineStart + m.index + m[0].length }
+    }
+  }
+  // CommonMark's bare autolink — `<scheme:...>` — with no `[label]` in front.
+  // Live preview hides the `<>` the same way it hides `(url)` for a normal
+  // link, so a plain click here follows the same "outside it, so its syntax
+  // is hidden" rule as the patterns above.
+  const autolinkRe = /<([a-zA-Z][a-zA-Z\d+.-]{1,31}:[^\s<>]*)>/g
+  while ((m = autolinkRe.exec(line)) !== null) {
+    if (col >= m.index && col < m.index + m[0].length) {
+      return { href: m[1], from: lineStart + m.index, to: lineStart + m.index + m[0].length }
     }
   }
   return null

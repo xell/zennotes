@@ -223,6 +223,30 @@ describe('linkRangeAtCursor', () => {
   it('returns null when the offset is outside any link', () => {
     expect(linkRangeAtCursor('just text', 3)).toBeNull()
   })
+
+  it('recognizes a CommonMark bare autolink, any scheme', () => {
+    for (const [doc, target] of [
+      ['see <https://x.test/a> here', 'https://x.test/a'],
+      ['open <day-planner://open/dp1:r:ZnUNtOixMGplfOtr> now', 'day-planner://open/dp1:r:ZnUNtOixMGplfOtr'],
+      ['<mailto:a@b.com>', 'mailto:a@b.com']
+    ] as const) {
+      expect(linkRangeAtCursor(doc, doc.indexOf(target) + 1), doc).toEqual({
+        target,
+        from: doc.indexOf(`<${target}>`),
+        to: doc.indexOf(`<${target}>`) + `<${target}>`.length
+      })
+    }
+  })
+
+  it('does not treat a bracketed link\'s angle-bracket href as a separate autolink', () => {
+    // The `[text](<url>)` pattern above already claims this span, even
+    // though its href also matches the bare-autolink shape (has a scheme and
+    // a colon); the autolink pattern must not double-match the `<url>`
+    // portion inside it and return the wrong `from`/`to`.
+    const doc = '[a page](<https://x.test/a>)'
+    const at = linkRangeAtCursor(doc, doc.indexOf('x.test'))
+    expect(at).toEqual({ target: 'https://x.test/a', from: 0, to: doc.length })
+  })
 })
 
 describe('externalLinkUrl', () => {
@@ -261,5 +285,15 @@ describe('markdownLinkAt', () => {
 
   it('returns null when the cursor is outside any link', () => {
     expect(markdownLinkAt('a [test](google.com) b', 0)).toBeNull()
+  })
+
+  it('recognizes a CommonMark bare autolink for plain-click follow, any scheme', () => {
+    const doc = 'open <day-planner://open/dp1:r:ZnUNtOixMGplfOtr> now'
+    const at = markdownLinkAt(doc, doc.indexOf('open/dp1'))
+    expect(at).toEqual({
+      href: 'day-planner://open/dp1:r:ZnUNtOixMGplfOtr',
+      from: doc.indexOf('<'),
+      to: doc.indexOf('>') + 1
+    })
   })
 })
