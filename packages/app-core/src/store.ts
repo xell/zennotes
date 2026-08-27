@@ -561,19 +561,18 @@ function clampPdfSepiaTone(value: unknown): number {
 
 const DEFAULT_PLANNER_URL = 'http://localhost:5173/'
 
+// No longer restricted to a localhost/127.0.0.1 http: URL: Leo develops
+// against a dev port today but plans to deploy Planner behind a real domain
+// (or even a custom `planner://` scheme) later. Host and scheme portability
+// live in plannerLinkUrl's /open/<ref> matching (see internal-links.ts), not
+// here — this only needs to reject something that isn't a URL at all, plus
+// embedded credentials, which have no legitimate reason to be in this field.
 function normalizePlannerUrl(value: unknown): string {
   if (typeof value !== 'string') return DEFAULT_PLANNER_URL
   const trimmed = value.trim()
   try {
     const url = new URL(trimmed)
-    if (
-      url.protocol !== 'http:' ||
-      (url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') ||
-      url.username ||
-      url.password
-    ) {
-      return DEFAULT_PLANNER_URL
-    }
+    if (url.username || url.password) return DEFAULT_PLANNER_URL
     return url.toString()
   } catch {
     return DEFAULT_PLANNER_URL

@@ -3173,7 +3173,7 @@ export function SettingsModal(): JSX.Element {
           </Section>
           <Section
             title="Planner"
-            description="Configure the locally served Planner app shown in the right pane. Use a localhost or 127.0.0.1 HTTP URL."
+            description="Configure the Planner app shown in the right pane. Any URL works, including a dev port, a real domain once it's deployed, or a custom URL scheme."
           >
             <TextInputRow
               label="Planner URL"
