@@ -1,28 +1,36 @@
 import { useStore } from '../store'
 import { offerCreateNoteFromLink } from './create-note-from-link'
 import { externalFileLink, openExternalFileLink } from './external-file-link'
-import { externalLinkUrl, resolveInternalNoteHref } from './internal-links'
+import { externalLinkUrl, plannerLinkUrl, resolveInternalNoteHref } from './internal-links'
 import { resolveWikilinkTarget, wikilinkHeadingAnchor } from './wikilinks'
 import { openDatabaseFromWikilink, openWikilinkHeading } from './wikilink-navigation'
 
 /**
  * Follow a link target from the active note. The `target` is either a
  * `[[wikilink]]` name (e.g. `Doc` or `Doc#Heading`) or a Markdown/URL href
- * (e.g. `Note.md`, `https://…`, `~/file.txt`). Routes, in order, to an external
- * URL, a relative Markdown link, a wikilink, a `.base` database, a file outside
- * the vault, or (for a dead link) an offer to create the note.
+ * (e.g. `Note.md`, `https://…`, `~/file.txt`). Routes, in order, to a
+ * configured Planner `/open/<ref>` link, an external URL, a relative Markdown
+ * link, a wikilink, a `.base` database, a file outside the vault, or (for a
+ * dead link) an offer to create the note.
  *
  * Shared so links follow the same way wherever they're rendered — the main
  * editor's click / Cmd-click handlers and the WYSIWYG table cell both call this
  * (#445). Returns true when it handled the target.
  */
 export function followLinkTarget(target: string): boolean {
+  const state = useStore.getState()
+  // Checked first: externalLinkUrl below would otherwise also match a Planner
+  // http(s) link and hand it to the OS browser instead of the Planner panel.
+  const planner = plannerLinkUrl(target, state.plannerUrl)
+  if (planner) {
+    state.openPlannerUrl(planner)
+    return true
+  }
   const external = externalLinkUrl(target)
   if (external) {
     window.open(external, '_blank')
     return true
   }
-  const state = useStore.getState()
   const focusSoon = (): void => {
     state.setFocusedPanel('editor')
     requestAnimationFrame(() => useStore.getState().editorViewRef?.focus())

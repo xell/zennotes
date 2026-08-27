@@ -114,21 +114,12 @@ import {
   type DiagramTheme
 } from '../lib/use-diagram-theme-mode'
 import { mathBlockArrowKeymap } from '../lib/cm-math-nav'
-import { offerCreateNoteFromLink } from '../lib/create-note-from-link'
 import { slashCommandSource, slashCommandRender } from '../lib/cm-slash-commands'
 import { calloutTypeSource } from '../lib/cm-callouts'
 import { dateShortcutSource } from '../lib/cm-date-shortcuts'
 import { latexCommandSource } from '../lib/cm-latex-completions'
 import { wikilinkSource, wikilinkHeadingSource, atNoteSource } from '../lib/cm-wikilinks'
-import { resolveWikilinkTarget, wikilinkHeadingAnchor } from '../lib/wikilinks'
-import { openDatabaseFromWikilink, openWikilinkHeading } from '../lib/wikilink-navigation'
-import {
-  externalLinkUrl,
-  linkRangeAtCursor,
-  markdownLinkAt,
-  plannerLinkUrl,
-  resolveInternalNoteHref
-} from '../lib/internal-links'
+import { linkRangeAtCursor, markdownLinkAt } from '../lib/internal-links'
 import { setBlockType, toggleWrap, wrapLink } from '../lib/cm-format'
 import { EditorSelectionToolbar } from './EditorSelectionToolbar'
 import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
@@ -769,51 +760,6 @@ function getEditorContextMenuPosition(view: EditorView): { x: number; y: number 
     x: clampViewport((coords?.right ?? coords?.left ?? editorRect.left + 28) + 8, 8, window.innerWidth - 12),
     y: clampViewport((coords?.bottom ?? editorRect.top + 32) + 6, 8, window.innerHeight - 12)
   }
-}
-
-/**
- * Follow a link target extracted from the editor (Cmd/Ctrl-click): an external
- * URL opens in the browser; a Markdown link to another note or a `[[wikilink]]`
- * navigates, scrolling to its `#heading` when present. Returns false when the
- * target resolves to nothing (so the click falls through to normal behavior). (#201)
- */
-function followEditorLink(target: string): boolean {
-  const state = useStore.getState()
-  const planner = plannerLinkUrl(target, state.plannerUrl)
-  if (planner) {
-    state.openPlannerUrl(planner)
-    return true
-  }
-  const external = externalLinkUrl(target)
-  if (external) {
-    window.open(external, '_blank')
-    return true
-  }
-  const focusSoon = (): void => {
-    state.setFocusedPanel('editor')
-    requestAnimationFrame(() => useStore.getState().editorViewRef?.focus())
-  }
-  const internal = resolveInternalNoteHref(state.selectedPath, target, state.notes)
-  if (internal) {
-    if (internal.heading) void openWikilinkHeading(internal.path, internal.heading).then(focusSoon)
-    else void state.selectNote(internal.path).then(focusSoon)
-    return true
-  }
-  const wikilink = resolveWikilinkTarget(state.notes, target)
-  if (wikilink) {
-    const heading = wikilinkHeadingAnchor(target)
-    if (heading) void openWikilinkHeading(wikilink.path, heading).then(focusSoon)
-    else void state.selectNote(wikilink.path).then(focusSoon)
-    return true
-  }
-  if (openDatabaseFromWikilink(target)) {
-    focusSoon()
-    return true
-  }
-  // Dead link — don't leave it a silent dead end. Offer to create the note (with
-  // a confirmation), matching the `gd` follow-link path. (Discord: dead links)
-  void offerCreateNoteFromLink(target)
-  return true
 }
 
 const EMPTY_PANE_MODES: PaneModesByPath = {}
