@@ -17,6 +17,7 @@ export type KeymapId =
   | "global.openFile"
   | "global.toggleSidebar"
   | "global.focusSidebar"
+  | "global.focusEditor"
   | "global.filterSidebar"
   | "global.toggleConnections"
   | "global.toggleOutlinePanel"
@@ -234,6 +235,16 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Focus sidebar",
     description:
       "Move keyboard focus to the sidebar from anywhere, opening it first if it's closed. Pure focus — never closes the sidebar and runs no other action, unlike Toggle sidebar. Unbound by default; pick a binding here.",
+    defaultBinding: "",
+  },
+  {
+    id: "global.focusEditor",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "Focus editor",
+    description:
+      "Move keyboard focus to the editor of the active pane from anywhere (sidebar, panels, palettes). Pure focus — doesn't change view mode, unlike Editor mode (⌘4). Unbound by default; pick a binding here. Can't reach through the Planner panel's embedded page — that needs its own hardcoded shortcut, since it runs in a separate frame the app can't intercept keys inside.",
     defaultBinding: "",
   },
   {

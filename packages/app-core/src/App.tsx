@@ -1048,6 +1048,13 @@ function App(): JSX.Element {
         }
         return
       }
+      // Pure focus, no other side effect — unlike ⌘4 (Editor mode), which also
+      // changes the pane's view mode. Unbound by default.
+      if (matchesShortcut(e, overrides, 'global.focusEditor')) {
+        e.preventDefault()
+        focusEditorNormalMode()
+        return
+      }
       // ⌥⌘M — comment the current selection (or line) without the mouse
       if (matchesShortcut(e, overrides, 'global.addComment')) {
         e.preventDefault()
