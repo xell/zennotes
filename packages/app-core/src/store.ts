@@ -3352,6 +3352,10 @@ interface Store {
   plannerUrl: string
   /** Current transient Planner route opened from a note link, if any. */
   plannerTargetUrl: string | null
+  /** Bumped on every `openPlannerUrl`/`goPlannerHome` call so the panel remounts
+   *  even when the target is identical to what's already loaded — e.g.
+   *  re-clicking the same note link to reopen its item panel. */
+  plannerNonce: number
   /** True once the user has finished or skipped the first-run onboarding. */
   hasCompletedOnboarding: boolean
   terminalLightTheme: string
@@ -5245,6 +5249,7 @@ export const useStore = create<Store>((set, get) => {
   kanbanStatuses: loadPrefs().kanbanStatuses,
   plannerUrl: loadPrefs().plannerUrl,
   plannerTargetUrl: null,
+  plannerNonce: 0,
   hasCompletedOnboarding: loadPrefs().hasCompletedOnboarding,
   terminalLightTheme: loadPrefs().terminalLightTheme,
   terminalDarkTheme: loadPrefs().terminalDarkTheme,
@@ -6507,10 +6512,23 @@ export const useStore = create<Store>((set, get) => {
   openPlannerUrl: (url) => {
     const target = url.trim()
     if (!target) return
-    set({ plannerTargetUrl: target, rightPaneTab: 'planner', pinnedRefVisible: true })
+    // Bump plannerNonce unconditionally: re-clicking the same note link while
+    // that item is already open must still force the panel to reload, not
+    // silently no-op because plannerTargetUrl didn't change.
+    set((s) => ({
+      plannerTargetUrl: target,
+      rightPaneTab: 'planner',
+      pinnedRefVisible: true,
+      plannerNonce: s.plannerNonce + 1
+    }))
   },
   goPlannerHome: () => {
-    set({ plannerTargetUrl: null, rightPaneTab: 'planner', pinnedRefVisible: true })
+    set((s) => ({
+      plannerTargetUrl: null,
+      rightPaneTab: 'planner',
+      pinnedRefVisible: true,
+      plannerNonce: s.plannerNonce + 1
+    }))
   },
   setTasksCalendarSelectedDate: (iso) => set({ tasksCalendarSelectedDate: iso }),
   setTasksCalendarMonthAnchor: (iso) => set({ tasksCalendarMonthAnchor: iso }),

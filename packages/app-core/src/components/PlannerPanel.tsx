@@ -36,6 +36,10 @@ interface Props {
 export function PlannerPanel({ visible }: Props): JSX.Element | null {
   const plannerUrl = useStore((s) => s.plannerUrl)
   const plannerTargetUrl = useStore((s) => s.plannerTargetUrl)
+  // Bumped by openPlannerUrl/goPlannerHome so re-opening the same link (or
+  // hitting Home while already home) still forces the panel to reload,
+  // instead of a same-value state set silently doing nothing.
+  const plannerNonce = useStore((s) => s.plannerNonce)
   const goPlannerHome = useStore((s) => s.goPlannerHome)
   const plannerSrc = plannerTargetUrl ?? plannerUrl
   // Bumped to force a reload without leaving the tab — handy when the dev
@@ -47,7 +51,7 @@ export function PlannerPanel({ visible }: Props): JSX.Element | null {
   return (
     <div className="zen-planner-panel flex min-h-0 min-w-0 flex-1 flex-col">
       <iframe
-        key={reloadKey}
+        key={`${plannerNonce}:${reloadKey}`}
         src={plannerSrc}
         title="Planner"
         // `allow-same-origin` — unlike the vault's HTML asset viewer, which
