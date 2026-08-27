@@ -171,6 +171,23 @@ describe('plannerLinkUrl', () => {
       expect(plannerLinkUrl(href, base), href).toBeNull()
     }
   })
+
+  it('recognizes an /open/<ref> link even across a scheme change, not just a host change', () => {
+    // For a non-special scheme written with `//` (a custom `planner://` URL,
+    // unlike `http(s)://`), the WHATWG URL parser treats "open" as the host,
+    // not a path segment — `new URL('planner://open/dp1:r:x').pathname` is
+    // just `/dp1:r:x`. Matching only has to find the reference at the end of
+    // the path, not require a literal "open" segment right before it, so
+    // this keeps working if Planner ever moves off http(s) entirely.
+    expect(plannerLinkUrl('planner://open/dp1:r:mbpPr-eY5m5NM-Xq', base)).toBe(
+      'http://localhost:5173/open/dp1:r:mbpPr-eY5m5NM-Xq'
+    )
+    // The opaque-path form (single slash, no authority) puts "open" back in
+    // the path, and matches the same way.
+    expect(plannerLinkUrl('planner:open/dp1:r:mbpPr-eY5m5NM-Xq', base)).toBe(
+      'http://localhost:5173/open/dp1:r:mbpPr-eY5m5NM-Xq'
+    )
+  })
 })
 
 describe('linkRangeAtCursor', () => {

@@ -134,13 +134,22 @@ export function plannerLinkUrl(href: string, plannerBaseUrl: string): string | n
     const basePath = baseUrl.pathname.replace(/\/+$/, '') || '/'
 
     // `/open/<ref>` links carry a portable item reference rather than a
-    // location. The URL text in a note is whatever host Planner happened to
-    // be running on when the link was written (a dev port, an old domain),
-    // so match on the reference shape alone and rebuild the link against the
-    // *current* Planner URL instead of requiring the origin to still match.
-    const segments = target.pathname.split('/')
-    const ref = segments.at(-1) ?? ''
-    if (segments.at(-2) === 'open' && PLANNER_ITEM_REF_RE.test(ref)) {
+    // location. The URL text in a note is whatever host (or even scheme)
+    // Planner happened to use when the link was written (a dev port, an old
+    // domain, `http:` swapped for a future `planner:` scheme), so match on
+    // the reference shape alone and rebuild the link against the *current*
+    // Planner URL instead of requiring the origin to still match.
+    //
+    // Deliberately not requiring the segment right before the reference to
+    // literally be "open": for a non-special scheme written with `//`
+    // (`planner://open/dp1:r:…`), the URL parser treats "open" as the host,
+    // not a path segment — `target.pathname` is just `/dp1:r:…` — so pinning
+    // this to a specific preceding segment would silently stop matching on a
+    // scheme change alone. The reference token itself (versioned, fixed
+    // charset, 8+ chars) is specific enough that matching on it anywhere at
+    // the end of the path carries effectively no extra collision risk.
+    const ref = target.pathname.split('/').at(-1) ?? ''
+    if (PLANNER_ITEM_REF_RE.test(ref)) {
       const openBase = basePath === '/' ? '' : basePath
       return `${baseUrl.origin}${openBase}/open/${ref}${target.search}${target.hash}`
     }
