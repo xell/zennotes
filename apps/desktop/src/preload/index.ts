@@ -101,7 +101,8 @@ const DESKTOP_CAPABILITIES: ZenCapabilities = {
   // ~/.local/bin symlinks. Windows uses a different model (PATH munging)
   // and is gated to a follow-up.
   supportsCliInstall: process.platform === 'darwin' || process.platform === 'linux',
-  supportsCustomTemplates: true
+  supportsCustomTemplates: true,
+  supportsWorkflows: true
 }
 
 const DESKTOP_APP_INFO: ZenAppInfo = {
@@ -246,6 +247,7 @@ const api: ZenBridge = {
   createAndLinkCloudVault: (name: string): Promise<CloudVaultLink> =>
     ipcRenderer.invoke(IPC.CLOUD_VAULT_LINK_CREATE, name),
   unlinkCloudVault: (): Promise<void> => ipcRenderer.invoke(IPC.CLOUD_VAULT_LINK_DELETE),
+  deleteCloudVault: (): Promise<void> => ipcRenderer.invoke(IPC.CLOUD_VAULT_DELETE),
   syncCloudVault: (): Promise<CloudSyncRunSummary> => ipcRenderer.invoke(IPC.CLOUD_VAULT_SYNC),
   getCloudSettingsConflict: (): Promise<CloudSyncSettingsConflict | null> =>
     ipcRenderer.invoke(IPC.CLOUD_VAULT_SETTINGS_CONFLICT_GET),
@@ -587,6 +589,11 @@ const api: ZenBridge = {
     const listener = (_: unknown, relPath: string): void => cb(relPath)
     ipcRenderer.on(IPC.APP_OPEN_NOTE_REQUESTED, listener)
     return () => ipcRenderer.removeListener(IPC.APP_OPEN_NOTE_REQUESTED, listener)
+  },
+  onFrameEscape: (cb: () => void): (() => void) => {
+    const listener = (): void => cb()
+    ipcRenderer.on(IPC.APP_FRAME_ESCAPE, listener)
+    return () => ipcRenderer.removeListener(IPC.APP_FRAME_ESCAPE, listener)
   },
   notifyRendererReady: (): void => ipcRenderer.send(IPC.APP_RENDERER_READY),
   onAppUpdateState: (cb: (state: AppUpdateState) => void): (() => void) => {

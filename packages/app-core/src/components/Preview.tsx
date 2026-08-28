@@ -13,13 +13,16 @@ import { selectTypstPreambleFor } from "../lib/typst-preamble-select";
 import { useStore } from "../store";
 import { useDiagramTheme } from "../lib/use-diagram-theme-mode";
 import {
+  isSameFileBlockLink,
   isSameFileHeadingLink,
   resolveWikilinkTarget,
-  wikilinkHeadingAnchor,
 } from "../lib/wikilinks";
-import { openWikilinkHeading } from "../lib/wikilink-navigation";
+import {
+  openWikilinkTarget,
+} from "../lib/wikilink-navigation";
 import { listDatabaseLinkTargets, resolveDatabaseWikilink } from "../lib/database-links";
 import { externalLinkUrl, plannerLinkUrl, resolveInternalNoteHref } from "../lib/internal-links";
+import { copyableLink, linkMenuItems, type CopyableLink } from "../lib/link-copy";
 import { toggleTaskAtIndex } from "../lib/tasklists";
 import {
   enhanceLocalAssetNodes,
@@ -63,7 +66,7 @@ import { NoteHoverPreview } from "./NoteHoverPreview";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { ArrowUpRightIcon, MaximizeIcon, MinimizeIcon } from "./icons";
 import { promptApp } from "../lib/prompt-requests";
-import { buildMermaidTheme, loadMermaid } from "../lib/mermaid-render";
+import { peekMermaidSvg, renderMermaidSvg } from "../lib/mermaid-render";
 import { confirmApp } from "../lib/confirm-requests";
 
 // Mermaid's lazy loader and theme live in `lib/mermaid-render`, shared with
@@ -118,34 +121,35 @@ function prepareMermaidShell(el: HTMLElement, source: string): HTMLDivElement {
   return surface;
 }
 
+// Every preview rebuild hands over fresh DOM, so the diagrams went back
+// through mermaid's parse-and-layout on each keystroke in split view, which
+// is what made typing next to a diagram feel laggy (#184). The rendered SVG
+// only depends on the source and the theme, so it comes from the cache the
+// editor's live widget already keeps in `mermaid-render`; a rebuild costs an
+// innerHTML assignment, and the two surfaces share one render per diagram.
 async function renderMermaidBlocks(
   root: HTMLElement,
   mode: "light" | "dark",
-  opts: { expanded?: boolean } = {},
+  opts: { expanded?: boolean; themeKey?: string } = {},
 ): Promise<void> {
   const blocks = Array.from(root.querySelectorAll<HTMLElement>(".mermaid"));
   if (blocks.length === 0) return;
-  const mermaid = await loadMermaid();
-  const cfg = buildMermaidTheme(mode);
+  const themeKey = opts.themeKey ?? mode;
+  const needsRender = blocks.some((el) => {
+    const source = el.getAttribute("data-mermaid-source") ?? el.textContent ?? "";
+    return source.trim() !== "" && peekMermaidSvg(source, mode, themeKey) === null;
+  });
   // Mermaid measures text in a temporary element. If the active font is
   // still loading, metrics are taken against a fallback and the rendered
   // labels end up clipped once the real font applies. Wait for fonts first
-  // so the measured widths match the final painted text.
-  if (typeof document !== "undefined" && document.fonts) {
+  // so the measured widths match the final painted text. A cached diagram
+  // was measured already and skips the wait.
+  if (needsRender && typeof document !== "undefined" && document.fonts) {
     try {
       await document.fonts.ready;
     } catch {
       /* ignore font-api failures and render anyway */
     }
-  }
-  try {
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: "strict",
-      ...cfg,
-    });
-  } catch {
-    /* initialize is tolerant across versions — ignore */
   }
 
   for (let i = 0; i < blocks.length; i++) {
@@ -157,17 +161,16 @@ async function renderMermaidBlocks(
     if (!source.trim()) continue;
     el.setAttribute("data-mermaid-source", source);
     const surface = prepareMermaidShell(el, source);
-    const id = `zen-mermaid-${Date.now()}-${i}-${opts.expanded ? "expanded" : "inline"}`;
-    try {
-      const { svg } = await mermaid.render(id, source);
-      surface.innerHTML = svg;
+    // The preview renders into a detached stage and commits afterwards, so
+    // the block is not in the document yet: always paint it.
+    const result = await renderMermaidSvg(source, mode, themeKey, "zen-mermaid-preview");
+    if (result.ok) {
+      surface.innerHTML = result.svg;
       // Inline pan/zoom (Cmd/Ctrl+wheel, drag, dblclick reset). The
       // expanded modal has its own React pan/zoom frame.
       if (!opts.expanded) attachInlineDiagramPanZoom(surface);
-    } catch (err) {
-      surface.innerHTML = `<pre class="whitespace-pre-wrap text-xs text-[color:rgb(var(--z-red))]">Mermaid error: ${
-        (err as Error).message
-      }</pre>`;
+    } else {
+      surface.innerHTML = `<pre class="whitespace-pre-wrap text-xs text-[color:rgb(var(--z-red))]">Mermaid error: ${result.error}</pre>`;
     }
   }
 }
@@ -245,6 +248,11 @@ export const Preview = memo(function Preview({
     url: string;
     vaultRel: string | null;
     href: string;
+  } | null>(null);
+  const [linkMenu, setLinkMenu] = useState<{
+    x: number;
+    y: number;
+    link: CopyableLink;
   } | null>(null);
   const [expandedDiagram, setExpandedDiagram] =
     useState<ExpandedDiagram | null>(null);
@@ -409,6 +417,31 @@ export const Preview = memo(function Preview({
     if (!root) return;
     const onClick = (e: MouseEvent): void => {
       const target = e.target as HTMLElement;
+      // A `[/]` task has no checkbox input, but its half-filled marker is
+      // still a checkbox shape making a checkbox promise: clicking checks the
+      // task off, matching the editor widget and the Tasks list. The
+      // forwarded/cancelled markers stay inert records. (#599)
+      const inProgressMarker = target.closest<HTMLElement>(
+        ".zen-task-state-in-progress[data-task-index]",
+      );
+      if (inProgressMarker) {
+        e.preventDefault();
+        e.stopPropagation();
+        const taskIndex = Number.parseInt(
+          inProgressMarker.dataset.taskIndex ?? "-1",
+          10,
+        );
+        if (!Number.isFinite(taskIndex) || taskIndex < 0) return;
+        const nextMarkdown = toggleTaskAtIndex(
+          markdownRef.current,
+          taskIndex,
+          true,
+        );
+        if (nextMarkdown === markdownRef.current) return;
+        updateActiveBodyRef.current(nextMarkdown);
+        void persistActiveRef.current();
+        return;
+      }
       const copyButton = target.closest<HTMLButtonElement>(
         CODE_COPY_BUTTON_SELECTOR,
       );
@@ -449,10 +482,9 @@ export const Preview = memo(function Preview({
         e.preventDefault();
         const path = anchor.dataset.resolvedPath;
         if (path) {
-          // Scroll to the #heading when the link carries one. (#196)
-          const headingAnchor = wikilinkHeadingAnchor(anchor.dataset.wikilink ?? "");
-          if (headingAnchor) void openWikilinkHeading(path, headingAnchor);
-          else void selectNoteRef.current(path);
+          // Scroll to the #heading or the ^block when the link carries one.
+          // (#196, #601)
+          void openWikilinkTarget(path, anchor.dataset.wikilink ?? "");
         } else if (anchor.dataset.databaseCsv) {
           void useStore.getState().openDatabase(anchor.dataset.databaseCsv);
         }
@@ -478,8 +510,10 @@ export const Preview = memo(function Preview({
       );
       if (internalNote) {
         e.preventDefault();
-        if (internalNote.heading)
-          void openWikilinkHeading(internalNote.path, internalNote.heading);
+        // `#<anchor>` lets openWikilinkTarget decide heading vs block, so the
+        // Obsidian form `Note.md#^id` reaches the block here too. (#601)
+        if (internalNote.anchor)
+          void openWikilinkTarget(internalNote.path, `#${internalNote.anchor}`);
         else void selectNoteRef.current(internalNote.path);
         return;
       }
@@ -608,6 +642,31 @@ export const Preview = memo(function Preview({
     };
     const onContextMenu = (e: MouseEvent): void => {
       const target = e.target as HTMLElement;
+      // A web link or an email address gets open / copy. Resolved the way the
+      // click handler resolves it, so a bare `google.com` copies as the URL
+      // that would have opened; note links, wikilinks and local assets fall
+      // through to their own handling.
+      const anchor = target.closest("a") as HTMLAnchorElement | null;
+      if (
+        anchor &&
+        !anchor.classList.contains("wikilink") &&
+        !anchor.classList.contains("hashtag")
+      ) {
+        const linkHref =
+          anchor.dataset.localAssetHref || anchor.getAttribute("href") || "";
+        const link = resolveInternalNoteHref(
+          notePathRef.current,
+          linkHref,
+          notesRef.current,
+        )
+          ? null
+          : copyableLink(linkHref);
+        if (link) {
+          e.preventDefault();
+          setLinkMenu({ x: e.clientX, y: e.clientY, link });
+          return;
+        }
+      }
       // Find the closest embedded-asset host (figure/anchor) that we
       // tagged in `enhanceLocalAssetNodes` or the CM PDF widget.
       const host = target.closest<HTMLElement>(
@@ -665,9 +724,10 @@ export const Preview = memo(function Preview({
         delete a.dataset.databaseCsv;
         return;
       }
-      // `[[#heading]]` (no note part) links to a heading in THIS note — resolve
-      // it to the note being previewed so the click scrolls in place. (#291)
-      if (isSameFileHeadingLink(target)) {
+      // `[[#heading]]` / `[[^block]]` (no note part) point inside THIS note:
+      // resolve them to the note being previewed so the click scrolls in
+      // place. (#291, #601)
+      if (isSameFileHeadingLink(target) || isSameFileBlockLink(target)) {
         a.classList.remove("broken");
         a.dataset.resolvedPath = notePath;
         delete a.dataset.databaseCsv;
@@ -725,6 +785,21 @@ export const Preview = memo(function Preview({
         input.setAttribute("role", "checkbox");
         input.classList.add("cursor-pointer");
         li.classList.toggle("task-self-done", input.checked);
+      } else {
+        // `[/]` renders a marker span instead of an input; make it a real
+        // control that checks the task off (see onClick). `[-]`/`[>]` keep
+        // their inert record markers. (#599)
+        const marker = li.querySelector<HTMLElement>(
+          ":scope > .zen-task-state-in-progress, :scope > p > .zen-task-state-in-progress",
+        );
+        if (marker) {
+          marker.dataset.taskIndex = String(idx);
+          marker.setAttribute("role", "checkbox");
+          marker.setAttribute("aria-checked", "mixed");
+          marker.setAttribute("aria-label", "Mark task done");
+          marker.title = "In progress. Click to mark done.";
+          marker.classList.add("cursor-pointer");
+        }
       }
       // An item is still open unless its own checkbox is checked; the `[/]` and
       // `[>]` states have no checkbox and are open by definition, `[-]` is not.
@@ -767,7 +842,7 @@ export const Preview = memo(function Preview({
 
     const applyRenderedDom = async (): Promise<void> => {
       try {
-        await renderMermaidBlocks(stage, diagramTheme.mode);
+        await renderMermaidBlocks(stage, diagramTheme.mode, { themeKey: diagramTheme.key });
       } catch {
         /* render errors are surfaced inline per block */
       }
@@ -1089,6 +1164,14 @@ export const Preview = memo(function Preview({
           onClose={closeAssetMenu}
         />
       )}
+      {linkMenu && (
+        <ContextMenu
+          x={linkMenu.x}
+          y={linkMenu.y}
+          items={linkMenuItems(linkMenu.link)}
+          onClose={() => setLinkMenu(null)}
+        />
+      )}
       {expandedDiagram && (
         <ExpandedDiagramModal
           diagram={expandedDiagram}
@@ -1301,7 +1384,7 @@ function DiagramPanZoomFrame({
 
     const render = async (): Promise<void> => {
       if (diagram.kind === "mermaid") {
-        await renderMermaidBlocks(host, diagramMode, { expanded: true });
+        await renderMermaidBlocks(host, diagramMode, { expanded: true, themeKey });
       } else {
         await renderDiagrams(host, { themeKey, expanded: true });
       }

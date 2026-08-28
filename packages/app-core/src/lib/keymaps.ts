@@ -13,6 +13,7 @@ export type KeymapId =
   | "global.searchNotesNonVim"
   | "global.commandPalette"
   | "global.newQuickNote"
+  | "global.newNoteHere"
   | "global.openSettings"
   | "global.openFile"
   | "global.toggleSidebar"
@@ -56,6 +57,7 @@ export type KeymapId =
   | "vim.leaderPrefix"
   | "vim.leaderOpenBuffers"
   | "vim.leaderWorkflows"
+  | "vim.leaderAtlas"
   | "vim.leaderSearchNotes"
   | "vim.leaderSearchGroup"
   | "vim.leaderSearchVaultText"
@@ -138,7 +140,8 @@ export type KeymapId =
   | "editor.hopMarkerBackward"
   | "editor.foldHeading"
   | "editor.unfoldHeading"
-  | "editor.toggleCheckbox";
+  | "editor.toggleCheckbox"
+  | "editor.reflowParagraph";
 
 export type KeymapOverrides = Partial<Record<KeymapId, string>>;
 
@@ -198,6 +201,16 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "New quick note",
     description: "Create a quick capture note and focus its title.",
     defaultBinding: "Shift+Mod+N",
+  },
+  {
+    id: "global.newNoteHere",
+    kind: "shortcut",
+    scope: "app",
+    group: "global",
+    title: "New note in current folder",
+    description:
+      "Create a note in the active note's folder (or the browsed folder when no note is open) and focus its title.",
+    defaultBinding: "Mod+N",
   },
   {
     id: "global.openSettings",
@@ -618,6 +631,17 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     title: "Leader: open buffers",
     description: "Open the buffer switcher.",
     defaultBinding: "o",
+    vimOnly: true,
+    maxTokens: 1,
+  },
+  {
+    id: "vim.leaderAtlas",
+    kind: "sequence",
+    scope: "leader",
+    group: "vim",
+    title: "Leader: open atlas",
+    description: "Open the Atlas map of the vault.",
+    defaultBinding: "g",
     vimOnly: true,
     maxTokens: 1,
   },
@@ -1384,7 +1408,7 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     group: "view-actions",
     title: "Hop past next marker",
     description:
-      "Move the cursor to the far side of the next inline marker on the line — `**bold|**` becomes `**bold**|`, so finishing a formatted word never needs the arrow keys. Crosses `**`, `*`, `~~`, `==`, backticks, `$` and the bracket pairs. Works with Vim mode on or off.",
+      "Move the cursor to the far side of the next inline marker on the line: `**bold|**` becomes `**bold**|`, so finishing a formatted word never needs the arrow keys. Crosses `**`, `*`, `~~`, `==`, backticks, `$` and the bracket pairs, plus straight quotes wherever they auto-pair (the Auto-pair quotes setting, or inside code), so `\"quoted|\"` becomes `\"quoted\"|` too; an apostrophe inside a word is never a stop. Works with Vim mode on or off.",
     defaultBinding: "Alt+]",
     defaultBindingMac: "Ctrl+.",
   },
@@ -1456,6 +1480,17 @@ const KEYMAP_DEFINITIONS: KeymapDefinition[] = [
     description:
       "Turn the current line (or selected lines) into a checkbox, and toggle it between unchecked and checked on repeat. Plain text becomes `- [ ]`, keeping any list marker or blockquote prefix. Works with Vim mode on or off.",
     defaultBinding: "Mod+L",
+  },
+  {
+    id: "editor.reflowParagraph",
+    kind: "shortcut",
+    scope: "vim-editor",
+    group: "view-actions",
+    title: "Reflow paragraph",
+    description:
+      "Join the hard-wrapped lines of the paragraph under the cursor (or of every paragraph in the selection) into one line, so the editor wraps it to the pane the way the preview does. Headings, list markers, tables, code, and explicit line breaks are left alone. Works with Vim mode on or off; Vim mode also has it as the `gq` operator (`gqip`, `gqj`, `gw` to keep the cursor).",
+    defaultBinding: "Alt+Q",
+    defaultBindingMac: "Ctrl+Q",
   },
   {
     id: "nav.localEx",

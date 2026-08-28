@@ -33,6 +33,7 @@ import type {
   WorkflowUndoResult,
   WriteWorkflowInput
 } from '@zennotes/bridge-contract/workflows'
+import { prepareWorkflowRun } from '@shared/workflows/prepare-run'
 import type {
   AppUpdateState,
   AssetMeta,
@@ -90,7 +91,8 @@ const WEB_CAPABILITIES: ZenCapabilities = {
   supportsRemoteWorkspace: false,
   supportsCloudSync: false,
   supportsCliInstall: false,
-  supportsCustomTemplates: false
+  supportsCustomTemplates: false,
+  supportsWorkflows: false
 }
 
 const WEB_APP_INFO: ZenAppInfo = {
@@ -762,49 +764,67 @@ function removeDemoTour(): Promise<VaultDemoTourResult> {
   return jsonRequest<VaultDemoTourResult>('/demo/remove', { method: 'POST' })
 }
 
-// Workflows are authored as files under `.zennotes/workflows`, which the web
-// app cannot reach, so it simply has none. The canvas still renders, it is
-// just empty, which is friendlier than an error the user cannot act on.
-function listWorkflows(): Promise<WorkflowFile[]> {
-  return Promise.resolve([])
+async function serverSupportsWorkflows(): Promise<boolean> {
+  const capabilities = lastServerCapabilities ?? (await getServerCapabilities())
+  return capabilities?.supportsWorkflows === true
 }
 
-// Authoring is a different matter from listing: rejecting is the only honest
-// answer, because resolving would leave the editor showing a saved workflow
-// that exists nowhere.
-function writeWorkflow(_input: WriteWorkflowInput): Promise<WorkflowFile> {
-  return Promise.reject(new Error('Editing workflows is unavailable on the web'))
+async function requireServerWorkflowSupport(): Promise<void> {
+  if (await serverSupportsWorkflows()) return
+  throw new Error('This ZenNotes server does not support workflows yet. Update the server and reload.')
 }
 
-function deleteWorkflow(_sourcePath: string): Promise<void> {
-  return Promise.reject(new Error('Editing workflows is unavailable on the web'))
+async function listWorkflows(): Promise<WorkflowFile[]> {
+  if (!(await serverSupportsWorkflows())) return []
+  return jsonRequest<WorkflowFile[]>('/workflows')
 }
 
-// Applying, undoing and the run history all need the local filesystem: the
-// journal that makes a run undoable is a file in the vault, and without it
-// there is no honest way to promise an undo. Rejecting is the only answer that
-// does not overstate what the web app can do, and it means a run can never land
-// somewhere its undo could not reach.
-function applyWorkflow(_input: ApplyWorkflowInput): Promise<WorkflowRunReceipt> {
-  return Promise.reject(new Error('Running workflows is unavailable on the web'))
+async function writeWorkflow(input: WriteWorkflowInput): Promise<WorkflowFile> {
+  await requireServerWorkflowSupport()
+  return jsonRequest<WorkflowFile>('/workflows/write', {
+    method: 'POST',
+    body: input as unknown as Record<string, unknown>
+  })
 }
 
-function undoWorkflowRun(_runId: string): Promise<WorkflowUndoResult> {
-  return Promise.reject(new Error('Running workflows is unavailable on the web'))
+async function deleteWorkflow(sourcePath: string): Promise<void> {
+  await requireServerWorkflowSupport()
+  await jsonRequest('/workflows/delete', { method: 'POST', body: { sourcePath } })
 }
 
-// A read, not a run: a vault the web app cannot run workflows in simply has no
-// recorded runs, the same answer `listWorkflows` gives for the files. A future
-// history panel then shows an empty list here instead of tripping on a
-// rejection where the workflow list quietly showed nothing.
-function listWorkflowRuns(): Promise<WorkflowRunSummary[]> {
-  return Promise.resolve([])
+async function applyWorkflow(input: ApplyWorkflowInput): Promise<WorkflowRunReceipt> {
+  // Independent requests; no reason to stack their round trips in front of an
+  // already read-heavy prepare phase.
+  const [, settings] = await Promise.all([requireServerWorkflowSupport(), getVaultSettings()])
+  const prepared = await prepareWorkflowRun(input, {
+    read: readFileTextOrNull,
+    systemFolderDirs: settings.systemFolderPaths ?? {}
+  })
+  return jsonRequest<WorkflowRunReceipt>('/workflows/apply', {
+    method: 'POST',
+    body: prepared as unknown as Record<string, unknown>
+  })
 }
 
-// Nothing can have recorded a run here (see above), so there is never anything
-// to delete: zero, not a rejection, for the same reason the list is empty.
-function deleteWorkflowRuns(_workflowId: string): Promise<number> {
-  return Promise.resolve(0)
+async function undoWorkflowRun(runId: string): Promise<WorkflowUndoResult> {
+  await requireServerWorkflowSupport()
+  return jsonRequest<WorkflowUndoResult>('/workflows/undo', {
+    method: 'POST',
+    body: { runId }
+  })
+}
+
+async function listWorkflowRuns(): Promise<WorkflowRunSummary[]> {
+  if (!(await serverSupportsWorkflows())) return []
+  return jsonRequest<WorkflowRunSummary[]>('/workflows/runs')
+}
+
+async function deleteWorkflowRuns(workflowId: string): Promise<number> {
+  await requireServerWorkflowSupport()
+  return jsonRequest<number>('/workflows/runs/delete', {
+    method: 'POST',
+    body: { workflowId }
+  })
 }
 
 // Custom templates require local-filesystem CRUD, which the web app does not
@@ -1275,13 +1295,18 @@ async function renderTikz(_source: string): Promise<TikzRenderResponse> {
 // MCP (web build cannot install into local clients — return disabled)
 // --------------------------------------------------------------------
 
+// A well-formed runtime with nothing to run: the settings page reads
+// `args`/`entryPath` unconditionally, and the previous ad-hoc shape blanked
+// the whole app the moment the MCP tab opened (#672).
 async function mcpGetRuntime(): Promise<McpServerRuntime> {
   return {
-    nodePath: null,
-    scriptPath: null,
-    available: false,
-    reason: 'MCP client installation is only available in the desktop build.'
-  } as unknown as McpServerRuntime
+    command: '',
+    args: [],
+    env: {},
+    entryPath: null,
+    unavailableReason:
+      'MCP clients connect to the server bundled with the ZenNotes desktop app, which reads a vault folder on that machine. Install the desktop app and open this vault (or a synced copy of it) there to set up Claude, Codex, and friends.'
+  }
 }
 
 async function mcpGetStatuses(): Promise<McpClientStatus[]> {
@@ -1297,7 +1322,7 @@ async function mcpUninstall(_id: McpClientId): Promise<McpClientStatus> {
 }
 
 async function mcpGetInstructions(): Promise<McpInstructionsPayload> {
-  return { custom: null, effective: '', defaults: '' } as unknown as McpInstructionsPayload
+  return { defaultValue: '', current: '', isCustom: false, filePath: '' }
 }
 
 async function mcpSetInstructions(
@@ -1388,7 +1413,22 @@ function clipboardReadText(): string {
 // --------------------------------------------------------------------
 
 export const httpBridge: ZenBridge = {
-  getCapabilities: (): ZenCapabilities => WEB_CAPABILITIES,
+  // The Planner panel is a desktop-only surface: its Cmd+T escape hatch works
+  // by having main intercept `before-input-event` beneath the panel's iframe,
+  // which has no equivalent in a browser. Stubbed so the web client satisfies
+  // the shared ZenBridge contract; nothing on the web calls these.
+  planner: {
+    setFocused: () => undefined,
+    onFocusEditor: () => () => undefined
+  },
+  // Workflows are the one capability the SERVER decides; derive it from the
+  // cached /capabilities response instead of mutating the const in place, so
+  // the UI gate (this) and the request gate (serverSupportsWorkflows) can
+  // never disagree about the same fact.
+  getCapabilities: (): ZenCapabilities => ({
+    ...WEB_CAPABILITIES,
+    supportsWorkflows: lastServerCapabilities?.supportsWorkflows === true
+  }),
   getAppInfo: (): ZenAppInfo => WEB_APP_INFO,
   platform,
   platformSync,
@@ -1418,6 +1458,7 @@ export const httpBridge: ZenBridge = {
   linkCloudVault: async () => notImplemented('linkCloudVault'),
   createAndLinkCloudVault: async () => notImplemented('createAndLinkCloudVault'),
   unlinkCloudVault: async () => notImplemented('unlinkCloudVault'),
+  deleteCloudVault: async () => notImplemented('deleteCloudVault'),
   syncCloudVault: async () => notImplemented('syncCloudVault'),
   getCloudSettingsConflict: async () => null,
   resolveCloudSettingsConflict: async () => notImplemented('resolveCloudSettingsConflict'),

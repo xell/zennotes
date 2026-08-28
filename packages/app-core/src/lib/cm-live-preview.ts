@@ -1,5 +1,5 @@
 import { syntaxTree } from '@codemirror/language'
-import { RangeSetBuilder, StateEffect } from '@codemirror/state'
+import { RangeSetBuilder, StateEffect, type EditorState } from '@codemirror/state'
 import {
   Decoration,
   DecorationSet,
@@ -17,8 +17,10 @@ import {
   resolveLocalAssetUrl
 } from './local-assets'
 import { parseImageEmbedLabel } from './embed-size'
+import { parseBlockAnchors } from './block-anchors'
 import { setImageBlockDragPayload } from './image-block-dnd'
 import { imageCacheKey, rememberImageOnLoad, takeCachedImage } from './image-element-cache'
+import { attachImageResizeHandle, setImageWidthOnLine } from './image-resize'
 import { assetTabPath } from './asset-tabs'
 import { openVaultAssetExternally } from './external-file-link'
 import {
@@ -69,11 +71,29 @@ const taskCancelledMark = Decoration.mark({ class: 'cm-task-cancelled' })
 // Stamped on an image line only while its raw source is hidden, so the host
 // line stops reserving a blank text row above/below the block figure (#261).
 const imageEmbedLine = Decoration.line({ class: 'cm-image-embed-line' })
-const STANDALONE_IMAGE_RE = /^\s*!\[([^\]]*)\]\((?:<([^>]+)>|([^)]+))\)\s*$/
+// A markdown destination may carry a title: `![alt](path "title")`. Zettlr
+// writes one on every image it inserts, and reading the title into the href
+// turned such pictures into attachment chips in edit mode while the preview
+// (remark) drew them fine (#199). The bare form stays lazy so a path with a
+// space (`![](my image.png)`) still parses when no title follows.
+const MD_LINK_TITLE = String.raw`(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?`
+const STANDALONE_IMAGE_RE = new RegExp(
+  String.raw`^\s*!\[([^\]]*)\]\((?:<([^>]+)>|([^)]+?))` + MD_LINK_TITLE + String.raw`\s*\)\s*$`
+)
 const STANDALONE_OBSIDIAN_EMBED_RE = /^\s*!\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]\s*$/
 // Anchor-style standalone PDF link: `[Label](file.pdf)` or `[Label](<file with spaces.pdf>)`.
 // Same shape as the image regex but without the leading `!`.
-const STANDALONE_PDF_RE = /^\s*\[([^\]]*)\]\((?:<([^>]+)>|([^)]+))\)\s*$/
+const STANDALONE_PDF_RE = new RegExp(
+  String.raw`^\s*\[([^\]]*)\]\((?:<([^>]+)>|([^)]+?))` + MD_LINK_TITLE + String.raw`\s*\)\s*$`
+)
+
+/** The `alt` and `href` of a standalone markdown image line, title dropped;
+ *  null when the line is not one. Exported for tests. */
+export function parseStandaloneImageLine(lineText: string): { alt: string; href: string } | null {
+  const m = lineText.match(STANDALONE_IMAGE_RE)
+  if (!m) return null
+  return { alt: m[1] ?? '', href: (m[2] ?? m[3] ?? '').trim() }
+}
 
 type ParsedImage = {
   alt: string
@@ -167,6 +187,34 @@ function enclosingLinkRange(ref: SyntaxNodeRefLike): { from: number; to: number 
  * CommonMark's balanced-paren destinations, so a URL like
  * `https://en.wikipedia.org/wiki/Foo_(bar` still counts as unterminated.
  */
+/**
+ * The end offset of a balanced `(target)` sitting immediately after a `Link`
+ * node, or null when there is none. This is the parser-rejected-destination
+ * case (#617): CommonMark refuses an unescaped space in `[text](My Note.md)`,
+ * so the `Link` node ends at `]` and the target trails as plain text. The
+ * click/gd path (`markdownLinkAt`) accepts those targets, so rendering must
+ * treat the whole span as one link too.
+ */
+function terminatedLinkTailEnd(state: EditorView['state'], linkTo: number): number | null {
+  if (state.doc.sliceString(linkTo, linkTo + 1) !== '(') return null
+  const line = state.doc.lineAt(linkTo)
+  const rest = state.doc.sliceString(linkTo, line.to)
+  let depth = 0
+  for (let i = 0; i < rest.length; i++) {
+    const ch = rest[i]
+    if (ch === '\\') {
+      i += 1
+      continue
+    }
+    if (ch === '(') depth += 1
+    else if (ch === ')') {
+      depth -= 1
+      if (depth === 0) return i > 1 ? linkTo + i + 1 : null
+    }
+  }
+  return null
+}
+
 function hasUnterminatedLinkTarget(state: EditorView['state'], linkTo: number): boolean {
   if (state.doc.sliceString(linkTo, linkTo + 1) !== '(') return false
   const line = state.doc.lineAt(linkTo)
@@ -437,6 +485,28 @@ class LocalImageWidget extends WidgetType {
     if (this.height) image.style.maxHeight = `${this.height}px`
     else image.style.removeProperty('max-height')
 
+    // Logseq-style resize (#684). The picture sits in a sizer that hugs it,
+    // so the handle on the sizer's right edge is the picture's edge whatever
+    // the frame's width (the frame keeps its full width, as before, so
+    // existing notes lay out unchanged). Live width changes stay on the
+    // element; the note gets the `|width` hint once, on release.
+    const sizer = document.createElement('div')
+    sizer.className = 'local-image-embed-sizer'
+    const resizeHandle = document.createElement('div')
+    resizeHandle.className = 'local-image-embed-resize'
+    resizeHandle.title = 'Drag to resize'
+    const sizeBadge = document.createElement('span')
+    sizeBadge.className = 'local-image-embed-size'
+    sizer.append(image, resizeHandle, sizeBadge)
+    attachImageResizeHandle({
+      handle: resizeHandle,
+      image,
+      figure,
+      badge: sizeBadge,
+      maxWidth: () => frame.clientWidth,
+      onCommit: (width) => this.commitWidth(figure, width)
+    })
+
     const topControls = document.createElement('div')
     topControls.className = 'local-image-embed-controls local-image-embed-controls-top'
     const editButton = document.createElement('button')
@@ -498,7 +568,7 @@ class LocalImageWidget extends WidgetType {
     })
     bottomControls.append(openButton)
 
-    frame.append(image, topControls, bottomControls)
+    frame.append(sizer, topControls, bottomControls)
 
     const caption = document.createElement('figcaption')
     caption.className = 'local-image-embed-caption'
@@ -506,6 +576,23 @@ class LocalImageWidget extends WidgetType {
 
     figure.append(frame, caption)
     return figure
+  }
+
+  /** Write a dragged width into the note as the size hint. The line is
+   *  looked up under the figure at release time rather than trusted from
+   *  this widget's own render, and left alone if its text has moved on. */
+  private commitWidth(figure: HTMLElement, width: number): void {
+    const editor = figure.closest<HTMLElement>('.cm-editor')
+    const view = (editor && EditorView.findFromDOM(editor)) ?? useStore.getState().editorViewRef
+    if (!view) return
+    let lineNumber: number
+    try {
+      lineNumber = view.state.doc.lineAt(view.posAtDOM(figure)).number
+    } catch {
+      return
+    }
+    if (view.state.doc.line(lineNumber).text !== this.lineText) return
+    setImageWidthOnLine(view, lineNumber, width)
   }
 
   ignoreEvent(): boolean {
@@ -981,19 +1068,70 @@ class CancelledMarkerWidget extends WidgetType {
 /** Renders a `- [/]` in-progress marker as a half-filled box (#512). Like the
  *  `[>]`/`[-]` markers this replaces a broken-link node, not a TaskMarker, so
  *  it draws its own glyph rather than reusing the checkbox input. The text is
- *  left alone: in-progress work still reads as live, not struck out. */
+ *  left alone: in-progress work still reads as live, not struck out.
+ *
+ *  Unlike those two, the half-filled box is still a checkbox shape making a
+ *  checkbox promise, so clicking it checks the task off — the same `[/]` → `[x]`
+ *  the toggle command performs. A dead click here read as a bug (#599).
+ *  Forwarded and cancelled markers stay inert on purpose: they are records of
+ *  a decision, not live work. */
 class InProgressMarkerWidget extends WidgetType {
-  eq(): boolean {
-    return true
+  constructor(
+    /** Absolute doc offset of the opening `[`; the state char is at `from + 1`. */
+    private readonly from: number
+  ) {
+    super()
   }
 
-  toDOM(): HTMLElement {
+  eq(other: InProgressMarkerWidget): boolean {
+    return other.from === this.from
+  }
+
+  toDOM(view: EditorView): HTMLElement {
     const span = document.createElement('span')
     span.className = 'cm-task-in-progress-marker'
-    span.title = 'In progress'
+    span.title = 'In progress. Click to mark done.'
     span.setAttribute('contenteditable', 'false')
+    span.setAttribute('role', 'checkbox')
+    span.setAttribute('aria-checked', 'mixed')
+    span.setAttribute('aria-label', 'Mark task done')
+
+    // Same pointer handling as TaskCheckboxWidget: keep the selection and
+    // focus where they were, then rewrite the single state char in place.
+    span.addEventListener('mousedown', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+    })
+    span.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const stateFrom = this.from + 1
+      view.dispatch({ changes: { from: stateFrom, to: stateFrom + 1, insert: 'x' } })
+    })
     return span
   }
+
+  // `false` lets DOM events reach the handlers above (see TaskCheckboxWidget).
+  ignoreEvent(): boolean {
+    return false
+  }
+}
+
+// Block-anchor markers by 1-based line number, memoized per document. The
+// parser's grammar (fence and frontmatter aware) decides what hides, and the
+// scan runs once per doc version rather than on every cursor move, since
+// computeDecorations also fires on selection changes.
+const blockAnchorCache = new WeakMap<object, Map<number, { from: number; to: number }>>()
+
+function blockAnchorMarkersFor(state: EditorState): Map<number, { from: number; to: number }> {
+  const cached = blockAnchorCache.get(state.doc)
+  if (cached) return cached
+  const markers = new Map<number, { from: number; to: number }>()
+  for (const anchor of parseBlockAnchors(state.doc.toString())) {
+    markers.set(anchor.markerLine, { from: anchor.markerFrom, to: anchor.markerTo })
+  }
+  blockAnchorCache.set(state.doc, markers)
+  return markers
 }
 
 function computeDecorations(view: EditorView): DecorationSet {
@@ -1180,6 +1318,23 @@ function computeDecorations(view: EditorView): DecorationSet {
           deco: imageEmbedLine
         })
       }
+
+      // #601: a trailing `^block-id` names the line so `[[Note^id]]` can point
+      // at it. That is addressing, not prose, so hide it the way other markers
+      // are hidden and reveal it when the cursor is on the line to edit. Only
+      // markers the parser accepts are hidden: a per-line regex here blanked
+      // literal `^word` tails inside code fences and frontmatter that are not
+      // anchors at all, so code samples looked corrupted in the editor.
+      if (!lineActive && !replacedLines.has(lineNo)) {
+        const blockId = blockAnchorMarkersFor(state).get(lineNo)
+        if (blockId) {
+          pending.push({
+            from: blockId.from,
+            to: blockId.to,
+            deco: hide
+          })
+        }
+      }
     }
   }
 
@@ -1243,7 +1398,7 @@ function computeDecorations(view: EditorView): DecorationSet {
               pending.push({
                 from: node.from,
                 to: node.to,
-                deco: Decoration.replace({ widget: new InProgressMarkerWidget() })
+                deco: Decoration.replace({ widget: new InProgressMarkerWidget(node.from) })
               })
             }
             return false
@@ -1316,11 +1471,25 @@ function computeDecorations(view: EditorView): DecorationSet {
         if (replacedLines.has(line)) return
         if (isLinkSyntax) {
           const linkRange = enclosingLinkRange(node)
-          if (linkRange && selectionTouchesRange(state, linkRange.from, linkRange.to)) return
+          // A spaced destination (`[text](My Note.md)`) is rejected by the
+          // parser, so the `(target)` trails outside the Link node as plain
+          // text. Treat the full `[label](target)` as the link: reveal it as
+          // one unit and hide the trailing target with the brackets. (#617)
+          const tailEnd = linkRange ? terminatedLinkTailEnd(state, linkRange.to) : null
+          if (linkRange && selectionTouchesRange(state, linkRange.from, tailEnd ?? linkRange.to))
+            return
           // `[label](` with no closing `)` yet isn't a link, so keep its
           // brackets visible: the label reads as source while the target is
           // typed or pasted, and collapses once the syntax is complete. (#471)
           if (linkRange && hasUnterminatedLinkTarget(state, linkRange.to)) return
+          if (
+            linkRange &&
+            tailEnd !== null &&
+            node.to === linkRange.to &&
+            state.doc.sliceString(node.to - 1, node.to) === ']'
+          ) {
+            pending.push({ from: linkRange.to, to: tailEnd, deco: hide })
+          }
         } else if (activeLines.has(line)) {
           // Reveal every marker on the active line, headings included: the
           // cursor anywhere in a heading shows its `##` prefix, matching the

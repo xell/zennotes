@@ -39,6 +39,8 @@ import { applyVimKeymap } from '../lib/vim-keymap'
 import { DEFAULT_VIM_KEYMAP } from '../lib/vim-keymap-defaults'
 import { registerDisplayLineMotion } from '../lib/cm-vim-display-line'
 import { registerHeadingMotion } from '../lib/cm-vim-heading-motion'
+import { registerReflowOperator } from '../lib/cm-vim-reflow'
+import { isTouchPrimaryDevice, vimImeGuard } from '../lib/cm-vim-ime-guard'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
 import {
   orderedListRenumber,
@@ -56,6 +58,7 @@ import { dateShortcutSource } from '../lib/cm-date-shortcuts'
 import { wikilinkSource, wikilinkHeadingSource } from '../lib/cm-wikilinks'
 import { completionNavKeymap } from '../lib/cm-completion-nav'
 import type { NoteContent, VaultChangeEvent } from '@shared/ipc'
+import type { VimWrappedLineMotionMode } from '@shared/app-config'
 import type { LineNumberMode } from '../store'
 import { wysiwygExtensions } from '../lib/cm-wysiwyg-compose'
 import { documentDiagramTheme } from '../lib/use-diagram-theme-mode'
@@ -119,6 +122,8 @@ export interface FloatingPrefs {
   vimMode: boolean
   vimInsertEscape: string
   vimKeymap: string
+  vimWrappedLineMotions: VimWrappedLineMotionMode
+  vimBlockImeInNormalMode: boolean
   livePreview: boolean
   themeId: string
   themeFamily: ThemeFamily
@@ -140,6 +145,8 @@ export function loadFloatingPrefs(): FloatingPrefs {
     vimMode: true,
     vimInsertEscape: '',
     vimKeymap: DEFAULT_VIM_KEYMAP,
+    vimWrappedLineMotions: 'display',
+    vimBlockImeInNormalMode: true,
     livePreview: true,
     themeId: DEFAULT_THEME_ID,
     themeFamily: 'gruvbox',
@@ -168,6 +175,9 @@ export function loadFloatingPrefs(): FloatingPrefs {
     return {
       ...fallback,
       ...parsed,
+      vimWrappedLineMotions:
+        parsed.vimWrappedLineMotions === 'logical' ? 'logical' : 'display',
+      vimBlockImeInNormalMode: parsed.vimBlockImeInNormalMode !== false,
       themeFamily: (parsed.themeFamily as ThemeFamily) ?? fallback.themeFamily,
       themeMode: (parsed.themeMode as ThemeMode) ?? fallback.themeMode,
       lineNumberMode,
@@ -637,10 +647,10 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
     floatingHandlers.close = (): void => {
       window.zen.windowClose()
     }
-    registerFloatingVimCommands()
+    registerFloatingVimCommands(() => prefs.vimWrappedLineMotions)
     applyVimInsertEscape(prefs.vimInsertEscape)
     applyVimKeymap(prefs.vimKeymap)
-  }, [persist, prefs.vimInsertEscape, prefs.vimKeymap])
+  }, [persist, prefs.vimInsertEscape, prefs.vimKeymap, prefs.vimWrappedLineMotions])
 
   const title = useMemo(() => {
     if (content?.title) return content.title
@@ -785,12 +795,15 @@ function deferredClose(): void {
   setTimeout(() => floatingHandlers.close?.(), 0)
 }
 
-function registerFloatingVimCommands(): void {
+function registerFloatingVimCommands(
+  getWrappedLineMotionMode: () => VimWrappedLineMotionMode
+): void {
+  registerDisplayLineMotion(getWrappedLineMotionMode)
   if (floatingVimRegistered) return
   floatingVimRegistered = true
 
-  registerDisplayLineMotion()
   registerHeadingMotion()
+  registerReflowOperator()
 
   Vim.defineEx('write', 'w', () => {
     void floatingHandlers.persist?.()

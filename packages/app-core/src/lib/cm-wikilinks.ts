@@ -1,7 +1,9 @@
 import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete'
+import type { EditorState, TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { useStore } from '../store'
 import { resolveWikilinkTarget } from './wikilinks'
+import { parseBlockAnchors } from './block-anchors'
 import { parseOutline } from './outline'
 import { linkCandidates, type LinkCandidate } from './link-candidates'
 
@@ -12,6 +14,54 @@ import { linkCandidates, type LinkCandidate } from './link-candidates'
 function normalize(value: string): string {
   return value.trim().toLowerCase()
 }
+
+/**
+ * The rest of the wikilink the caret sits in, when that link is already closed
+ * on this line: the text between the caret and its `]]`. Null while the link is
+ * still being typed (no `]]` ahead, or another `[[` opens before it), which is
+ * the case the completion has to close itself.
+ */
+function closedLinkTail(state: EditorState, pos: number): string | null {
+  const line = state.doc.lineAt(pos)
+  const after = state.doc.sliceString(pos, line.to)
+  const close = after.indexOf(']]')
+  if (close < 0) return null
+  const tail = after.slice(0, close)
+  return tail.includes('[[') ? null : tail
+}
+
+/**
+ * The edit a picker makes: replace the segment under the caret with `text`,
+ * keeping whatever the link already carries after it. Picking a note inside
+ * `[[old note#section|alias]]` used to replace only the text up to the caret
+ * and append its own `]]`, leaving `[[new note]]#section|alias]]` (#686). The
+ * segment ends at the first of `stops` in the closed link's tail (the note
+ * segment stops at `#`, `^` or `|`; a heading at `|` or a nested `#`), so the
+ * old name is replaced whole even when the caret sat in the middle of it, and
+ * the section and alias survive untouched. A link still being typed gets the
+ * closing brackets, as before, and never eats text after the caret.
+ */
+function linkSegmentEdit(
+  state: EditorState,
+  from: number,
+  to: number,
+  text: string,
+  stops: string
+): TransactionSpec {
+  const tail = closedLinkTail(state, to)
+  if (tail === null) {
+    const insert = `${text}]]`
+    return { changes: { from, to, insert }, selection: { anchor: from + insert.length } }
+  }
+  let end = tail.length
+  for (const stop of stops) {
+    const at = tail.indexOf(stop)
+    if (at >= 0 && at < end) end = at
+  }
+  return { changes: { from, to: to + end, insert: text }, selection: { anchor: from + text.length } }
+}
+
+const NOTE_SEGMENT_STOPS = '#^|'
 
 function wikilinkMatch(context: CompletionContext): {
   openFrom: number
@@ -71,19 +121,14 @@ export function wikilinkSource(context: CompletionContext): CompletionResult | n
         _target: target,
         _subtitle: subtitle,
         apply: (view: EditorView, _completion: Completion, from: number, to: number) => {
-          const existingClose = view.state.doc.sliceString(to, to + 2) === ']]'
-          const insert = `${target}${existingClose ? '' : ']]'}`
+          const edit = linkSegmentEdit(view.state, from, to, target, NOTE_SEGMENT_STOPS)
           const addBangPrefix = !match.hasBangPrefix
+          const anchor = (edit.selection as { anchor: number }).anchor + (addBangPrefix ? 1 : 0)
           view.dispatch({
             changes: addBangPrefix
-              ? [
-                  { from: match.openFrom, to: match.openFrom, insert: '!' },
-                  { from, to, insert }
-                ]
-              : { from, to, insert },
-            selection: {
-              anchor: from + target.length + (existingClose ? 0 : 2) + (addBangPrefix ? 1 : 0)
-            }
+              ? [{ from: match.openFrom, to: match.openFrom, insert: '!' }, edit.changes!]
+              : edit.changes,
+            selection: { anchor }
           })
         }
       } as WikilinkCompletion
@@ -97,12 +142,7 @@ export function wikilinkSource(context: CompletionContext): CompletionResult | n
       _target: target,
       _subtitle: subtitle,
       apply: (view: EditorView, _completion: Completion, from: number, to: number) => {
-        const existingClose = view.state.doc.sliceString(to, to + 2) === ']]'
-        const insert = `${target}${existingClose ? '' : ']]'}`
-        view.dispatch({
-          changes: { from, to, insert },
-          selection: { anchor: from + target.length + (existingClose ? 0 : 2) }
-        })
+        view.dispatch(linkSegmentEdit(view.state, from, to, target, NOTE_SEGMENT_STOPS))
       }
     } as WikilinkCompletion
   })
@@ -178,7 +218,10 @@ export function atNoteSource(context: CompletionContext): CompletionResult | nul
  * The note is everything before the first `#`; the heading query is whatever
  * follows the last `#` (so nested `#a#b` still completes the deepest part).
  */
-function wikilinkHeadingMatch(context: CompletionContext): {
+function wikilinkAnchorMatch(
+  context: CompletionContext,
+  marker: '#' | '^'
+): {
   from: number
   notePart: string
   query: string
@@ -191,50 +234,127 @@ function wikilinkHeadingMatch(context: CompletionContext): {
 
   const inside = before.slice(openIndex + 2)
   if (inside.includes(']]') || inside.includes('|')) return null
-  const firstHash = inside.indexOf('#')
-  if (firstHash < 0) return null // no heading anchor — `wikilinkSource` owns this
-  const lastHash = inside.lastIndexOf('#')
+  const first = inside.indexOf(marker)
+  if (first < 0) return null // no anchor of this kind; `wikilinkSource` owns this
+  // Whichever marker opens the anchor owns everything after it, the same rule
+  // wikilinkHeadingAnchor / wikilinkBlockAnchor follow, with the same Obsidian
+  // exception: in `[[Note#^` the hash immediately followed by the caret is the
+  // canonical block form, so the caret owns the anchor and the heading source
+  // stands down. (#601)
+  const other = inside.indexOf(marker === '#' ? '^' : '#')
+  let noteEnd = first
+  if (marker === '#') {
+    if (other >= 0 && other < first) return null
+    if (inside.slice(first + 1).startsWith('^')) return null
+  } else if (other >= 0 && other < first) {
+    if (inside.slice(other + 1, first).trim() !== '') return null
+    noteEnd = other
+  }
+  const last = inside.lastIndexOf(marker)
 
   return {
-    from: line.from + openIndex + 2 + lastHash + 1,
-    notePart: inside.slice(0, firstHash).trim(),
-    query: inside.slice(lastHash + 1)
+    from: line.from + openIndex + 2 + last + 1,
+    notePart: inside.slice(0, noteEnd).trim(),
+    query: inside.slice(last + 1)
   }
 }
 
-// Bodies fetched for heading completion are cached so typing the heading query
-// doesn't re-read the file on every keystroke (`validFor` keeps the option list
-// while the query stays anchor-shaped, so this mostly matters across notes).
-const headingBodyCache = new Map<string, string>()
+// Bodies fetched for anchor completion are cached so typing the query doesn't
+// re-read the file on every keystroke. An entry is only trusted while the
+// note's `updatedAt` still matches: block ids are typically created seconds
+// before being linked, so a session-long snapshot made block completion a
+// first-use failure (new ids never appeared until restart), and a vault switch
+// could even serve another vault's ids for a same-relative-path note.
+const anchorBodyCache = new Map<string, { updatedAt: number; body: string }>()
+const ANCHOR_BODY_CACHE_LIMIT = 32
 
 /**
- * Autocomplete headings inside a wikilink: typing `[[Note#` (or `[[#` for the
- * current note) suggests that note's headings. (#196)
+ * The body used for `[[Note#…]]` / `[[Note^…]]` completion. An open buffer
+ * always wins (it holds unsaved ids); otherwise a read validated against the
+ * note's `updatedAt`.
  */
+async function anchorNoteBody(notePart: string): Promise<string | null> {
+  const state = useStore.getState()
+  const note = notePart ? resolveWikilinkTarget(state.notes, notePart) : state.activeNote
+  if (!note) return null
+
+  const open = state.noteContents[note.path]?.body
+  if (open != null) return open
+  const inline = (note as { body?: string }).body // activeNote ([[#…]]) carries its body
+  if (inline != null) return inline
+
+  const updatedAt = (note as { updatedAt?: number }).updatedAt ?? 0
+  const cached = anchorBodyCache.get(note.path)
+  if (cached && cached.updatedAt === updatedAt) return cached.body
+
+  try {
+    const read = (await window.zen.readNote(note.path)).body
+    if (anchorBodyCache.size >= ANCHOR_BODY_CACHE_LIMIT) anchorBodyCache.clear()
+    anchorBodyCache.set(note.path, { updatedAt, body: read })
+    return read
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Insert `text` as the anchor under the caret, closing the wikilink when the
+ * link is still being typed and otherwise keeping the `|alias` (and, for a
+ * heading, a nested `#part`) that already follows (#686).
+ */
+function applyAnchorCompletion(text: string, stops: string) {
+  return (view: EditorView, _completion: Completion, from: number, to: number): void => {
+    view.dispatch(linkSegmentEdit(view.state, from, to, text, stops))
+  }
+}
+
+/**
+ * Autocomplete block ids inside a wikilink: typing `[[Note^` (or `[[^` for the
+ * current note) suggests that note's block ids, with the block's own text as
+ * the hint so you can tell them apart. (#601)
+ */
+export async function wikilinkBlockSource(
+  context: CompletionContext
+): Promise<CompletionResult | null> {
+  const match = wikilinkAnchorMatch(context, '^')
+  if (!match) return null
+
+  const body = await anchorNoteBody(match.notePart)
+  if (body == null) return null
+
+  const lines = body.split('\n')
+  const seen = new Set<string>()
+  const options: Completion[] = []
+  for (const anchor of parseBlockAnchors(body)) {
+    const key = normalize(anchor.id)
+    if (seen.has(key)) continue
+    seen.add(key)
+    // Show what the id actually marks; an id on its own line describes the
+    // block above it, so fall back to that.
+    const markerLine = lines[anchor.markerLine - 1] ?? ''
+    const own = markerLine.slice(0, anchor.markerFrom - anchor.markerLineFrom).trim()
+    const detail = own || (lines[anchor.line - 1] ?? '').trim()
+    options.push({
+      label: anchor.id,
+      detail: detail.slice(0, 60) || undefined,
+      type: 'text',
+      apply: applyAnchorCompletion(anchor.id, '|')
+    })
+    if (options.length >= 100) break
+  }
+  if (options.length === 0) return null
+
+  return { from: match.from, options, validFor: /^[^\]|]*$/ }
+}
+
 export async function wikilinkHeadingSource(
   context: CompletionContext
 ): Promise<CompletionResult | null> {
-  const match = wikilinkHeadingMatch(context)
+  const match = wikilinkAnchorMatch(context, '#')
   if (!match) return null
 
-  const state = useStore.getState()
-  const note = match.notePart
-    ? resolveWikilinkTarget(state.notes, match.notePart)
-    : state.activeNote
-  if (!note) return null
-
-  let body =
-    state.noteContents[note.path]?.body ??
-    (note as { body?: string }).body ?? // activeNote ([[#…]]) already carries its body
-    headingBodyCache.get(note.path)
-  if (body == null) {
-    try {
-      body = (await window.zen.readNote(note.path)).body
-      headingBodyCache.set(note.path, body)
-    } catch {
-      return null
-    }
-  }
+  const body = await anchorNoteBody(match.notePart)
+  if (body == null) return null
 
   const seen = new Set<string>()
   const options: Completion[] = []
@@ -247,14 +367,7 @@ export async function wikilinkHeadingSource(
       label: text,
       detail: `H${heading.level}`,
       type: 'text',
-      apply: (view: EditorView, _completion: Completion, from: number, to: number) => {
-        const existingClose = view.state.doc.sliceString(to, to + 2) === ']]'
-        const insert = `${text}${existingClose ? '' : ']]'}`
-        view.dispatch({
-          changes: { from, to, insert },
-          selection: { anchor: from + text.length + (existingClose ? 0 : 2) }
-        })
-      }
+      apply: applyAnchorCompletion(text, '#|')
     })
     if (options.length >= 100) break
   }

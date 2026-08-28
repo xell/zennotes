@@ -1,5 +1,9 @@
 import { create } from 'zustand'
 import type { EditorView } from '@codemirror/view'
+import {
+  editorCursorPosition,
+  type EditorCursorPosition
+} from './lib/editor-cursor-position'
 import { DEFAULT_VAULT_SETTINGS } from '@shared/ipc'
 import { resolveFolderPath } from '@shared/system-folder-paths'
 import { normalizeTasksExcludedFolder } from '@shared/tasks-excluded-folders'
@@ -76,6 +80,7 @@ import {
 } from './lib/manual-order'
 import { TAGS_TAB_PATH, isTagsTabPath } from '@shared/tags'
 import { WORKFLOWS_TAB_PATH, isWorkflowsTabPath } from '@shared/workflows-view'
+import { ATLAS_TAB_PATH, isAtlasTabPath } from '@shared/atlas-view'
 import { HELP_TAB_PATH, isHelpTabPath } from '@shared/help'
 import { ARCHIVE_TAB_PATH, isArchiveTabPath } from '@shared/archive'
 import { TRASH_TAB_PATH, isTrashTabPath } from '@shared/trash'
@@ -95,13 +100,13 @@ import {
   FENCE_RE,
   TASK_LINE_RE,
   extractOpenTaskBlocks,
+  forwardTaskSubtreeAtIndex,
   insertTasksUnderTasksHeading,
   moveTaskLine,
   removeTaskAtIndex,
   takeTaskLineAtIndex,
   setTaskCheckedAtIndex,
   setTaskDueAtIndex,
-  setTaskForwardedAtIndex,
   setTaskCancelledAtIndex,
   setTaskInProgressAtIndex,
   setTaskPriorityAtIndex,
@@ -122,6 +127,8 @@ import { confirmMoveToTrash } from './lib/confirm-trash'
 import { confirmApp, confirmAppChoice } from './lib/confirm-requests'
 import { getPdfBuffer } from './lib/pdf-buffers'
 import { clearPendingPdfEdit } from './lib/pdf-pending-edits'
+import { humanIpcError } from './lib/ipc-error'
+import { moveNoteToTrash } from './lib/trash-note'
 import { pickServerDirectoryApp } from './lib/server-directory-picker-requests'
 import { promptApp } from './lib/prompt-requests'
 import {
@@ -138,7 +145,8 @@ import {
   type AppConfigPortable,
   type CompletedTaskStyle,
   type MathRenderer,
-  type TimeFormat
+  type TimeFormat,
+  type VimWrappedLineMotionMode
 } from '@shared/app-config'
 import {
   type LabelKey,
@@ -592,6 +600,12 @@ interface Prefs {
   /** When true, Vim yank/delete/change also copy to the system clipboard and
    *  `p` / `P` paste from it (like `set clipboard=unnamed`). */
   vimYankToClipboard: boolean
+  /** Make the editor non-editable outside Vim insert mode so a CJK input
+   *  method cannot compose over normal-mode keys (#84, #464). */
+  vimBlockImeInNormalMode: boolean
+  /** Whether unprefixed Vim line-boundary motions follow visible display rows
+   *  or the complete logical line when word wrap is enabled. */
+  vimWrappedLineMotions: VimWrappedLineMotionMode
   keymapOverrides: KeymapOverrides
   /** Enabled CSS overrides, keyed by filename (e.g. `"focus.css": "on"`). Persisted. */
   enabledOverrides: Record<string, string>
@@ -671,6 +685,7 @@ interface Prefs {
   themeFamily: ThemeFamily
   themeMode: ThemeMode
   editorFontSize: number    // px — affects editor + preview
+  mathFontScale: number     // percent — inline + block math, both renderers (#623)
   editorLineHeight: number  // unitless multiplier
   editorTabSize: number     // columns used to render and indent a tab
   editorScrollOff: number   // vim scrolloff — lines kept above/below the cursor (0 = off)
@@ -782,6 +797,7 @@ interface Prefs {
    *  closes any tab already showing it. OFF by default, deliberately: it can
    *  rewrite notes in bulk, so it is a one-time opt-in under Settings. */
   workflowsEnabled: boolean
+  atlasEnabled: boolean
   /** Built-in workflow recipes hidden from the gallery, by preset id. Unknown
    *  ids are kept rather than pruned, so hiding a preset survives the preset
    *  itself being renamed away and back across versions. */
@@ -842,6 +858,7 @@ export type TagMatchMode = 'all' | 'any'
 export type TaskMutation =
   | { kind: 'set-checked'; checked: boolean }
   | { kind: 'set-waiting'; waiting: boolean }
+  | { kind: 'set-in-progress'; inProgress: boolean }
   | { kind: 'set-priority'; priority: TaskLinePriority | null }
   | { kind: 'set-due'; due: string | null }
   | { kind: 'set-field'; key: string; value: string | null }
@@ -1106,6 +1123,8 @@ export const DEFAULT_PREFS: Prefs = {
   vimKeymap: DEFAULT_VIM_KEYMAP,
   vimJsScriptsEnabled: false,
   vimYankToClipboard: false,
+  vimBlockImeInNormalMode: true,
+  vimWrappedLineMotions: 'display',
   keymapOverrides: {},
   whichKeyHints: true,
   whichKeyHintMode: 'timed',
@@ -1142,6 +1161,7 @@ export const DEFAULT_PREFS: Prefs = {
   enabledOverrides: {},
   themeTweaks: {},
   editorFontSize: 16,
+  mathFontScale: 100,
   editorLineHeight: 1.7,
   editorTabSize: 4,
   editorScrollOff: 0,
@@ -1197,6 +1217,7 @@ export const DEFAULT_PREFS: Prefs = {
   // graph editor asks more of a new user than any other view. The feature is
   // opted into once in Settings -> Workflows, not stumbled into.
   workflowsEnabled: false,
+  atlasEnabled: true,
   hiddenWorkflowPresets: [],
   collapsedTagNodes: [],
   autoCalendarPanel: true,
@@ -1248,6 +1269,14 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
       typeof p.vimYankToClipboard === 'boolean'
         ? p.vimYankToClipboard
         : DEFAULT_PREFS.vimYankToClipboard,
+    vimBlockImeInNormalMode:
+      typeof p.vimBlockImeInNormalMode === 'boolean'
+        ? p.vimBlockImeInNormalMode
+        : DEFAULT_PREFS.vimBlockImeInNormalMode,
+    vimWrappedLineMotions:
+      p.vimWrappedLineMotions === 'logical' || p.vimWrappedLineMotions === 'display'
+        ? p.vimWrappedLineMotions
+        : DEFAULT_PREFS.vimWrappedLineMotions,
     keymapOverrides: normalizeKeymapOverrides(p.keymapOverrides),
     enabledOverrides: normalizeEnabledOverrides(p.enabledOverrides),
     themeTweaks: normalizeThemeTweaks(p.themeTweaks),
@@ -1369,6 +1398,10 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
       typeof p.editorFontSize === 'number'
         ? p.editorFontSize
         : DEFAULT_PREFS.editorFontSize,
+    mathFontScale:
+      typeof p.mathFontScale === 'number' && Number.isFinite(p.mathFontScale)
+        ? Math.min(200, Math.max(50, Math.round(p.mathFontScale)))
+        : DEFAULT_PREFS.mathFontScale,
     editorLineHeight:
       typeof p.editorLineHeight === 'number'
         ? p.editorLineHeight
@@ -1538,6 +1571,8 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
       typeof p.workflowsEnabled === 'boolean'
         ? p.workflowsEnabled
         : DEFAULT_PREFS.workflowsEnabled,
+    atlasEnabled:
+      typeof p.atlasEnabled === 'boolean' ? p.atlasEnabled : DEFAULT_PREFS.atlasEnabled,
     hiddenWorkflowPresets: normalizeHiddenWorkflowPresets(p.hiddenWorkflowPresets),
     collapsedTagNodes: Array.isArray(p.collapsedTagNodes)
       ? p.collapsedTagNodes.filter((k): k is string => typeof k === 'string')
@@ -1829,12 +1864,15 @@ function isDatabaseSurfaceTabPath(path: string | null | undefined): path is stri
 
 /**
  * Tabs worth recording in the note jump history (Ctrl+O / Ctrl+I): real notes,
- * plus database surfaces — so opening a row's record page and pressing Ctrl+O
- * jumps back to the grid. Other virtual tabs (tasks, tags, plain assets…) stay
- * excluded.
+ * database surfaces — so opening a row's record page and pressing Ctrl+O jumps
+ * back to the grid — and the Tasks and Tags views, which are destinations the
+ * user navigates to on purpose and expects the jumplist to return to (#633).
+ * Other virtual tabs (plain assets, help, trash…) stay excluded.
  */
 function isJumpHistoryTabPath(path: string | null | undefined): path is string {
-  return !!path && (!isWorkspaceVirtualTabPath(path) || isDatabaseSurfaceTabPath(path))
+  if (!path) return false
+  if (!isWorkspaceVirtualTabPath(path)) return true
+  return isDatabaseSurfaceTabPath(path) || isTasksTabPath(path) || isTagsTabPath(path)
 }
 
 function captureNoteJumpLocation(state: {
@@ -1842,6 +1880,20 @@ function captureNoteJumpLocation(state: {
   editorViewRef: EditorView | null
 }): NoteJumpLocation | null {
   if (!isJumpHistoryTabPath(state.selectedPath)) return null
+  // Panel surfaces (Tasks, Tags, a database grid) render no editor, so a
+  // lingering editorViewRef belongs to some other note; capturing its scroll
+  // would smuggle meaningless numbers into the entry and defeat the
+  // consecutive-duplicate dedup. Only the place itself is worth recording.
+  if (isWorkspaceVirtualTabPath(state.selectedPath)) {
+    return {
+      path: state.selectedPath,
+      editorSelectionAnchor: 0,
+      editorSelectionHead: 0,
+      editorScrollTop: 0,
+      previewScrollTop: 0,
+      editorScrollMode: 'preserve'
+    }
+  }
   const selection = state.editorViewRef?.state.selection.main
   return {
     path: state.selectedPath,
@@ -2016,6 +2068,25 @@ function scheduleManualOrderReload(): void {
 // Which vault root the in-memory manual order was loaded for; reloaded on switch.
 let manualOrderLoadedForRoot: string | null = null
 
+/** Roughly 8 MB of image per picture; larger ones fall back to alt text so a
+ *  paste never stalls a mail client. */
+const EMAIL_IMAGE_MAX_BASE64 = 11_000_000
+const EMAIL_IMAGE_MIME: Record<string, string> = {
+  png: 'image/png',
+  apng: 'image/apng',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  svg: 'image/svg+xml',
+  avif: 'image/avif'
+}
+function emailImageMime(relPath: string): string {
+  const ext = relPath.slice(relPath.lastIndexOf('.') + 1).toLowerCase()
+  return EMAIL_IMAGE_MIME[ext] ?? 'application/octet-stream'
+}
+
 type InlineTaskMarker = 'open' | 'done' | 'forwarded' | 'cancelled' | 'in-progress'
 
 /** A checkbox line has exactly one state character. Mirror that exclusivity in
@@ -2069,6 +2140,14 @@ function applyTaskMutationsToTask(task: VaultTask, mutations: TaskMutation[]): V
               : { ...next, waiting: m.waiting }
         }
         break
+      case 'set-in-progress':
+        if (next.inProgress !== m.inProgress) {
+          next =
+            next.kind === 'file'
+              ? withFileTaskStatus(next, m.inProgress ? 'in-progress' : 'open')
+              : withInlineTaskMarker(next, m.inProgress ? 'in-progress' : 'open')
+        }
+        break
       case 'set-priority': {
         const priority = m.priority ?? undefined
         if (next.priority !== priority) next = { ...next, priority }
@@ -2114,6 +2193,9 @@ function fileTaskMutationUpdates(
         break
       case 'set-waiting':
         updates.status = m.waiting ? 'waiting' : 'open'
+        break
+      case 'set-in-progress':
+        updates.status = m.inProgress ? 'in-progress' : 'open'
         break
       case 'set-priority':
         updates.priority = taskFilePriorityValue(m.priority)
@@ -2511,6 +2593,8 @@ function collectPrefs(s: {
   vimKeymap: string
   vimJsScriptsEnabled: boolean
   vimYankToClipboard: boolean
+  vimBlockImeInNormalMode: boolean
+  vimWrappedLineMotions: VimWrappedLineMotionMode
   keymapOverrides: KeymapOverrides
   enabledOverrides: Record<string, string>
   themeTweaks: Record<string, string>
@@ -2547,6 +2631,7 @@ function collectPrefs(s: {
   themeFamily: ThemeFamily
   themeMode: ThemeMode
   editorFontSize: number
+  mathFontScale: number
   editorLineHeight: number
   editorTabSize: number
   editorScrollOff: number
@@ -2597,6 +2682,7 @@ function collectPrefs(s: {
   tagsCollapsed: boolean
   nestedTags: boolean
   workflowsEnabled: boolean
+  atlasEnabled: boolean
   hiddenWorkflowPresets: string[]
   collapsedTagNodes: string[]
   autoCalendarPanel: boolean
@@ -2623,6 +2709,8 @@ function collectPrefs(s: {
     vimKeymap: s.vimKeymap,
     vimJsScriptsEnabled: s.vimJsScriptsEnabled,
     vimYankToClipboard: s.vimYankToClipboard,
+    vimBlockImeInNormalMode: s.vimBlockImeInNormalMode,
+    vimWrappedLineMotions: s.vimWrappedLineMotions,
     keymapOverrides: s.keymapOverrides,
     enabledOverrides: s.enabledOverrides,
     themeTweaks: s.themeTweaks,
@@ -2659,6 +2747,7 @@ function collectPrefs(s: {
     themeFamily: s.themeFamily,
     themeMode: s.themeMode,
     editorFontSize: s.editorFontSize,
+    mathFontScale: s.mathFontScale,
     editorLineHeight: s.editorLineHeight,
     editorTabSize: s.editorTabSize,
     editorScrollOff: s.editorScrollOff,
@@ -2708,6 +2797,7 @@ function collectPrefs(s: {
     tagsCollapsed: s.tagsCollapsed,
     nestedTags: s.nestedTags,
     workflowsEnabled: s.workflowsEnabled,
+    atlasEnabled: s.atlasEnabled,
     hiddenWorkflowPresets: s.hiddenWorkflowPresets,
     collapsedTagNodes: s.collapsedTagNodes,
     autoCalendarPanel: s.autoCalendarPanel,
@@ -2982,6 +3072,16 @@ export function isWorkflowsViewActive(state: {
   return leaf?.activeTab === WORKFLOWS_TAB_PATH
 }
 
+/** True when the active pane is showing the Atlas map. Mirrors
+ *  `isTasksViewActive`; the sidebar row uses it for its selected state. */
+export function isAtlasViewActive(state: {
+  paneLayout: PaneLayout
+  activePaneId: string
+}): boolean {
+  const leaf = findLeaf(state.paneLayout, state.activePaneId)
+  return leaf?.activeTab === ATLAS_TAB_PATH
+}
+
 function hasTasksViewOpen(state: { paneLayout: PaneLayout }): boolean {
   return allLeaves(state.paneLayout).some((leaf) => leaf.tabs.includes(TASKS_TAB_PATH))
 }
@@ -3125,6 +3225,9 @@ interface Store {
   vimJsScriptsEnabled: boolean
   /** When true, Vim yank/delete/change also copy to the system clipboard. Persisted. */
   vimYankToClipboard: boolean
+  vimBlockImeInNormalMode: boolean
+  /** Display-row or logical-line semantics for $, I, A and dependent operators. */
+  vimWrappedLineMotions: VimWrappedLineMotionMode
   keymapOverrides: KeymapOverrides
   /** Enabled CSS overrides, keyed by filename. Persisted to config [overrides]. */
   enabledOverrides: Record<string, string>
@@ -3192,6 +3295,7 @@ interface Store {
   themeMode: ThemeMode
   editorFontSize: number
   editorZoomDelta: number
+  mathFontScale: number
   editorLineHeight: number
   editorTabSize: number
   editorScrollOff: number
@@ -3298,6 +3402,7 @@ interface Store {
    *  row, the `view.workflows` command, and the leader binding, so the canvas
    *  has no way in at all. */
   workflowsEnabled: boolean
+  atlasEnabled: boolean
   /** Built-in recipes hidden from the New-workflow gallery, by preset id.
    *  Persisted (portable). Hiding is per taste, not per vault. */
   hiddenWorkflowPresets: string[]
@@ -3455,6 +3560,7 @@ interface Store {
   outlineCursorIndex: number
   connectionPreview: ConnectionPreviewState | null
   editorViewRef: EditorView | null
+  editorCursorPosition: EditorCursorPosition | null
   pendingTitleFocusPath: string | null
 
   /**
@@ -3530,6 +3636,8 @@ interface Store {
   openTagView: (tag?: string) => Promise<void>
   /** Open the Workflows canvas as a tab in the active pane. */
   openWorkflowsView: () => Promise<void>
+  /** Open the Atlas map as a tab in the active pane. */
+  openAtlasView: () => Promise<void>
   /** Close the Tags tab in every pane and clear the selection. */
   closeTagView: () => void
   /** Open the built-in Help tab in the active pane. */
@@ -3724,6 +3832,7 @@ interface Store {
    * — unlike the right-click menus — carry no implied location.
    */
   createNoteInChosenFolder: (opts?: { initialPath?: string }) => Promise<void>
+  createNoteInCurrentFolder: () => Promise<void>
   /**
    * Web counterpart of the desktop drag-to-open feature: for each
    * drag-and-dropped markdown File, read its contents, create a note from
@@ -3739,6 +3848,9 @@ interface Store {
   closeWindowWithConfirm: () => Promise<void>
   reopenLastClosedTab: () => Promise<void>
   trashActive: () => Promise<void>
+  /** Move any note to the Trash the way trashing the active note does (confirm,
+   *  move, drop its tabs and buffers). Resolves true when the note moved. */
+  trashNote: (path: string) => Promise<boolean>
   restoreActive: () => Promise<void>
   archiveActive: () => Promise<void>
   unarchiveActive: () => Promise<void>
@@ -3760,6 +3872,8 @@ interface Store {
   setVimKeymap: (text: string) => void
   setVimJsScriptsEnabled: (on: boolean) => void
   setVimYankToClipboard: (on: boolean) => void
+  setVimBlockImeInNormalMode: (on: boolean) => void
+  setVimWrappedLineMotions: (mode: VimWrappedLineMotionMode) => void
   setKeymapBinding: (id: KeymapId, binding: string | null) => void
   resetAllKeymaps: () => void
   setWhichKeyHints: (on: boolean) => void
@@ -3792,6 +3906,7 @@ interface Store {
   /** Turn the whole Workflows feature on or off. Switching it off also closes
    *  any pane still showing the canvas. */
   setWorkflowsEnabled: (on: boolean) => void
+  setAtlasEnabled: (on: boolean) => void
   hideWorkflowPreset: (id: string) => void
   restoreWorkflowPreset: (id: string) => void
   /** Wholesale replacement, for Settings' Hide all / Restore all. The preset
@@ -3809,6 +3924,7 @@ interface Store {
   setTheme: (next: { id: string; family: ThemeFamily; mode: ThemeMode }) => void
   setEditorFontSize: (px: number) => void
   setEditorZoomDelta: (delta: number) => void
+  setMathFontScale: (percent: number) => void
   setEditorLineHeight: (mult: number) => void
   setEditorTabSize: (size: number) => void
   setEditorScrollOff: (lines: number) => void
@@ -4014,6 +4130,7 @@ interface Store {
   setOutlineCursorIndex: (idx: number) => void
   setConnectionPreview: (preview: ConnectionPreviewState | null) => void
   setEditorViewRef: (view: EditorView | null) => void
+  setEditorCursorPosition: (position: EditorCursorPosition | null) => void
 
   /* ---- Pane tree actions ---- */
   /** Focus the given pane and sync active-note plumbing to its activeTab. */
@@ -4141,15 +4258,6 @@ const PATH_SAVE_DEBOUNCE_MS = 350
 const lastWrittenByPath = new Map<string, string>()
 
 // --- CSV database debounced persistence + echo suppression ---
-/** A user-showable message from a rejected bridge call. Electron wraps main
- *  process rejections as "Error invoking remote method 'x': Error: <real>";
- *  a toast should carry only the real sentence. */
-function humanIpcError(err: unknown, fallback: string): string {
-  const raw = err instanceof Error ? err.message : ''
-  const message = raw.replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, '').trim()
-  return message || fallback
-}
-
 const DATABASE_SAVE_DEBOUNCE_MS = 400
 const databaseSaveTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /** A pending write that touched the schema must persist the sidecar too. */
@@ -4861,17 +4969,14 @@ export const useStore = create<Store>((set, get) => {
     set({ loadingNote: true })
     while (source.length > 0) {
       const target = source.pop() ?? null
-      if (
-        !target ||
-        target.path === get().selectedPath ||
-        (isWorkspaceVirtualTabPath(target.path) && !isDatabaseSurfaceTabPath(target.path))
-      ) {
+      if (!target || target.path === get().selectedPath || !isJumpHistoryTabPath(target.path)) {
         continue
       }
-      // A database surface in the history — e.g. the grid a record page was
-      // opened from. Reopen the tab instead of loading note content, and record
-      // the current location on the opposite stack so the jump stays reversible.
-      if (isDatabaseSurfaceTabPath(target.path)) {
+      // A virtual surface in the history — a database grid a record page was
+      // opened from, or the Tasks/Tags view (#633). Reopen the tab instead of
+      // loading note content, and record the current location on the opposite
+      // stack so the jump stays reversible.
+      if (isWorkspaceVirtualTabPath(target.path)) {
         const latest = get()
         const opposite =
           direction === 'back' ? latest.noteForwardstack : latest.noteBackstack
@@ -4882,7 +4987,14 @@ export const useStore = create<Store>((set, get) => {
           noteBackstack: direction === 'back' ? source : nextOpposite,
           noteForwardstack: direction === 'back' ? nextOpposite : source
         })
-        await selectNoteImpl(target.path, 'preserve')
+        // Tasks/Tags go through focusTabInPane, which carries each panel's
+        // reopen semantics (focus claim, task refresh) and records no history
+        // of its own; database surfaces keep their selectNote path.
+        if (isDatabaseSurfaceTabPath(target.path)) {
+          await selectNoteImpl(target.path, 'preserve')
+        } else {
+          await get().focusTabInPane(latest.activePaneId, target.path)
+        }
         return
       }
       try {
@@ -4963,6 +5075,9 @@ export const useStore = create<Store>((set, get) => {
     // feature off.
     if (!get().workflowsEnabled) {
       layout = rewritePathsInTree(layout, (path) => (isWorkflowsTabPath(path) ? null : path))
+    }
+    if (!get().atlasEnabled) {
+      layout = rewritePathsInTree(layout, (path) => (isAtlasTabPath(path) ? null : path))
     }
     const unreadable = new Set<string>()
     const contents: Record<string, NoteContent> = {}
@@ -5142,6 +5257,8 @@ export const useStore = create<Store>((set, get) => {
   vimKeymap: loadPrefs().vimKeymap,
   vimJsScriptsEnabled: loadPrefs().vimJsScriptsEnabled,
   vimYankToClipboard: loadPrefs().vimYankToClipboard,
+  vimBlockImeInNormalMode: loadPrefs().vimBlockImeInNormalMode,
+  vimWrappedLineMotions: loadPrefs().vimWrappedLineMotions,
   keymapOverrides: loadPrefs().keymapOverrides,
   enabledOverrides: loadPrefs().enabledOverrides,
   themeTweaks: loadPrefs().themeTweaks,
@@ -5183,6 +5300,7 @@ export const useStore = create<Store>((set, get) => {
   themeMode: loadPrefs().themeMode,
   editorFontSize: loadPrefs().editorFontSize,
   editorZoomDelta: 0,
+  mathFontScale: loadPrefs().mathFontScale,
   editorLineHeight: loadPrefs().editorLineHeight,
   editorTabSize: loadPrefs().editorTabSize,
   editorScrollOff: loadPrefs().editorScrollOff,
@@ -5234,6 +5352,7 @@ export const useStore = create<Store>((set, get) => {
   tagsCollapsed: loadPrefs().tagsCollapsed,
   nestedTags: loadPrefs().nestedTags,
   workflowsEnabled: loadPrefs().workflowsEnabled,
+  atlasEnabled: loadPrefs().atlasEnabled,
   hiddenWorkflowPresets: loadPrefs().hiddenWorkflowPresets,
   collapsedTagNodes: loadPrefs().collapsedTagNodes,
   autoCalendarPanel: loadPrefs().autoCalendarPanel,
@@ -5286,6 +5405,7 @@ export const useStore = create<Store>((set, get) => {
   outlineCursorIndex: 0,
   connectionPreview: null,
   editorViewRef: null,
+  editorCursorPosition: null,
   pendingTitleFocusPath: null,
   paneLayout: initialPane,
   activePaneId: initialPane.id,
@@ -5419,8 +5539,11 @@ export const useStore = create<Store>((set, get) => {
   openTasksView: async () => {
     const state = get()
     // Reset the panel's session state every time we open it — stale cursor/
-    // filter from a prior visit would feel weird.
-    set({ tasksFilter: '', taskCursorIndex: 0 })
+    // filter from a prior visit would feel weird. Opening the panel is also a
+    // jump worth undoing: record where the user came from so Ctrl+O returns
+    // there, and the panel itself joins the trail (#633). `openNoteInPane`
+    // below is the raw tab primitive and keeps no history of its own.
+    set({ tasksFilter: '', taskCursorIndex: 0, ...noteHistoryAfterJump(state, TASKS_TAB_PATH) })
     // Add (or focus) the virtual Tasks tab in the currently active pane.
     await get().openNoteInPane(state.activePaneId, TASKS_TAB_PATH)
     // Hand keyboard focus to the Tasks panel so vim-style navigation works
@@ -5483,6 +5606,9 @@ export const useStore = create<Store>((set, get) => {
       }
     }
 
+    // Same as openTasksView: opening the panel is a jump, record the origin
+    // so Ctrl+O returns to it and the panel joins the trail (#633).
+    set(noteHistoryAfterJump(get(), TAGS_TAB_PATH))
     await get().openNoteInPane(state.activePaneId, TAGS_TAB_PATH)
     ;(document.activeElement as HTMLElement | null)?.blur?.()
     set({ focusedPanel: 'tags' })
@@ -5752,11 +5878,7 @@ export const useStore = create<Store>((set, get) => {
 
     if (trashNotes) {
       for (const pagePath of prunedPaths) {
-        try {
-          await window.zen.moveToTrash(pagePath)
-        } catch (err) {
-          console.error('trash record page failed', err)
-        }
+        await moveNoteToTrash(pagePath, { temporarySession: get().vault?.temporary === true })
       }
     }
   },
@@ -6162,6 +6284,9 @@ export const useStore = create<Store>((set, get) => {
               case 'set-waiting':
                 nextBody = setTaskWaitingAtIndex(nextBody, task.taskIndex, m.waiting)
                 break
+              case 'set-in-progress':
+                nextBody = setTaskInProgressAtIndex(nextBody, task.taskIndex, m.inProgress)
+                break
               case 'set-priority':
                 nextBody = setTaskPriorityAtIndex(nextBody, task.taskIndex, m.priority)
                 break
@@ -6228,13 +6353,10 @@ export const useStore = create<Store>((set, get) => {
     if (task.kind === 'file') {
       if (!(await confirmMoveToTrash(task.noteTitle))) return
       set((s) => ({ vaultTasks: s.vaultTasks.filter((t) => t.sourcePath !== path) }))
-      try {
-        await window.zen.moveToTrash(path)
+      if (await moveNoteToTrash(path, { temporarySession: get().vault?.temporary === true })) {
         await get().refreshNotes()
-      } catch (err) {
-        console.error('deleteTaskFromList moveToTrash failed', err)
-        void get().refreshTasks()
       }
+      else void get().refreshTasks()
       return
     }
     const openBuffer = get().noteContents[path]
@@ -6375,14 +6497,22 @@ export const useStore = create<Store>((set, get) => {
     const backLink = `[[${task.noteTitle}]]`
     const forwardLink = `[[${targetMeta.title}]]`
 
-    // Original: flip to `[>]` and record where it went.
-    const nextSrc = setTaskForwardedAtIndex(srcBody, task.taskIndex, forwardLink)
+    // Original: flip to `[>]` and record where it went. The task's indented
+    // subtree is part of the record: open subtasks flip to `[>]` with the
+    // parent, done and cancelled subtasks keep their state (#611).
+    const { body: nextSrc, childLines } = forwardTaskSubtreeAtIndex(
+      srcBody,
+      task.taskIndex,
+      forwardLink
+    )
     if (nextSrc === srcBody) return
 
-    // Copy: a fresh open task in the target, backlinked to the origin. Slot it
-    // under the target's `## Tasks` heading when it has one, else append (#452).
+    // Copy: a fresh open task in the target, backlinked to the origin, with the
+    // subtree beneath it verbatim so the destination holds a faithful copy of
+    // the task's current state (#611). Slot it under the target's `## Tasks`
+    // heading when it has one, else append (#452).
     const copyLine = `- [ ] ${task.content} ${backLink}`.replace(/\s+$/u, '')
-    const nextTgt = insertTasksUnderTasksHeading(tgtBody, [copyLine])
+    const nextTgt = insertTasksUnderTasksHeading(tgtBody, [copyLine, ...childLines])
 
     if (srcBuffer) get().updateNoteBody(task.sourcePath, nextSrc)
     else {
@@ -7419,6 +7549,13 @@ export const useStore = create<Store>((set, get) => {
   renameNote: async (oldPath, nextTitle) => {
     if (!oldPath) return
     try {
+      // Renaming rewrites every inbound wikilink on disk. Flush open buffers
+      // first so that rewrite cannot race a pending save and get overwritten
+      // by stale editor contents immediately afterwards.
+      await get().flushDirtyNotes()
+      if (Object.values(get().noteDirty).some(Boolean)) {
+        throw new Error('Could not rename while notes still have unsaved changes')
+      }
       const meta = await window.zen.renameNote(oldPath, nextTitle)
       set((s) => renameNoteState(s, oldPath, meta))
       await get().applyFavorites(
@@ -7515,6 +7652,24 @@ export const useStore = create<Store>((set, get) => {
     }
   },
 
+  createNoteInCurrentFolder: async () => {
+    const s = get()
+    if (isTrashViewActive(s)) return
+    // "Current folder" is the folder of the active note (the one you're
+    // editing), not the sidebar's browse view; those drift apart when notes
+    // from different folders are open. (#403) Fall back to the browsed folder
+    // only when no note is open. (#614)
+    const active = s.activeNote
+    if (active && active.folder !== 'trash') {
+      await get().createAndOpen(active.folder, noteFolderSubpath(active, s.vaultSettings), {
+        focusTitle: true
+      })
+      return
+    }
+    const v = s.view
+    if (v.kind !== 'folder' || v.folder === 'trash') return
+    await get().createAndOpen(v.folder, v.subpath, { focusTitle: true })
+  },
   createNoteInChosenFolder: async (opts) => {
     const state = get()
     const entered = await promptApp(
@@ -7599,13 +7754,19 @@ export const useStore = create<Store>((set, get) => {
   },
 
   trashActive: async () => {
-    const state = get()
-    const path = state.selectedPath
+    const path = get().selectedPath
     if (!path) return
+    await get().trashNote(path)
+  },
+
+  trashNote: async (path) => {
+    const state = get()
     const title = state.notes.find((note) => note.path === path)?.title
-    if (!(await confirmMoveToTrash(title))) return
-    try {
-      await window.zen.moveToTrash(path)
+    if (!(await confirmMoveToTrash(title))) return false
+    if (!(await moveNoteToTrash(path, { temporarySession: state.vault?.temporary === true }))) {
+      return false
+    }
+    {
       set((s) => {
         const nextLayout = rewritePathsInTree(s.paneLayout, (p) => (p === path ? null : p))
         const ensured = ensureActivePane(nextLayout, s.activePaneId)
@@ -7624,9 +7785,8 @@ export const useStore = create<Store>((set, get) => {
         }
       })
       await get().refreshNotes()
-    } catch (err) {
-      console.error('moveToTrash failed', err)
     }
+    return true
   },
 
   restoreActive: async () => {
@@ -7832,8 +7992,24 @@ export const useStore = create<Store>((set, get) => {
     try {
       // Lazy: the renderer chain rides the markdown vendor chunk, which has
       // no business on the boot path for a clipboard command.
-      const { renderNoteEmailHtml } = await import('./lib/note-email-html')
-      const { html } = renderNoteEmailHtml(body, active.title)
+      const { renderNoteEmailHtml, collectEmailImageRefs } = await import('./lib/note-email-html')
+      const { resolveAssetVaultRelativePath } = await import('./lib/local-assets')
+      // Every local image rides along as a data: URI (#628). Anything the
+      // vault cannot serve, or that is too big for a mail body, keeps the
+      // alt-text fallback.
+      const images = new Map<string, string>()
+      for (const ref of collectEmailImageRefs(body)) {
+        const rel = resolveAssetVaultRelativePath(s.vault?.root, active.path, ref)
+        if (!rel) continue
+        try {
+          const base64 = await window.zen.readVaultAssetBase64(rel)
+          if (base64.length > EMAIL_IMAGE_MAX_BASE64) continue
+          images.set(ref, `data:${emailImageMime(rel)};base64,${base64}`)
+        } catch {
+          /* unreadable: the alt text stands in */
+        }
+      }
+      const { html } = renderNoteEmailHtml(body, active.title, { images })
       // Both flavors: rich for mail clients, the markdown itself for editors.
       await navigator.clipboard.write([
         new ClipboardItem({
@@ -7923,6 +8099,14 @@ export const useStore = create<Store>((set, get) => {
   },
   setVimYankToClipboard: (on) => {
     set({ vimYankToClipboard: on })
+    savePrefs(collectPrefs(get()))
+  },
+  setVimBlockImeInNormalMode: (on) => {
+    set({ vimBlockImeInNormalMode: on })
+    savePrefs(collectPrefs(get()))
+  },
+  setVimWrappedLineMotions: (mode) => {
+    set({ vimWrappedLineMotions: mode })
     savePrefs(collectPrefs(get()))
   },
   setKeymapBinding: (id, binding) => {
@@ -8071,10 +8255,32 @@ export const useStore = create<Store>((set, get) => {
     set({ hideBuiltinTemplates: hidden })
     savePrefs(collectPrefs(get()))
   },
+
+  openAtlasView: async () => {
+    const state = get()
+    // Single funnel for every entry point (sidebar row, command, leader key),
+    // so the feature switch holds even if a caller forgets to check it.
+    if (!state.atlasEnabled) return
+    await get().openNoteInPane(state.activePaneId, ATLAS_TAB_PATH)
+    // Hand the keyboard over on EVERY open, not just the first: clicking the
+    // sidebar row leaves focus (and focusedPanel) on the sidebar, and the
+    // row click is also how people re-enter an already-open Atlas tab. The
+    // map takes DOM focus itself once it owns the panel, so only strip focus
+    // from something else; blurring the map root here put focus back on
+    // <body> and the global Vim layer ate `[`/`]` as buffer prefixes (#670).
+    const active = document.activeElement as HTMLElement | null
+    if (active && !active.closest('[data-atlas-view]')) active.blur?.()
+    set({ focusedPanel: 'atlas' })
+  },
   setWorkflowsEnabled: (on) => {
     set({ workflowsEnabled: on })
     savePrefs(collectPrefs(get()))
     if (!on) closeWorkflowsTabsEverywhere()
+  },
+  setAtlasEnabled: (on) => {
+    set({ atlasEnabled: on })
+    savePrefs(collectPrefs(get()))
+    if (!on) closeAtlasTabsEverywhere()
   },
   hideWorkflowPreset: (id) => {
     set((s) => ({
@@ -8152,6 +8358,11 @@ export const useStore = create<Store>((set, get) => {
   },
   setEditorZoomDelta: (delta) => {
     set({ editorZoomDelta: delta })
+    savePrefs(collectPrefs(get()))
+  },
+  setMathFontScale: (percent) => {
+    set({ mathFontScale: Math.min(200, Math.max(50, Math.round(percent))) })
+    savePrefs(collectPrefs(get()))
   },
   setEditorLineHeight: (mult) => {
     set({ editorLineHeight: mult })
@@ -9213,7 +9424,12 @@ export const useStore = create<Store>((set, get) => {
   setConnectionsCursorIndex: (idx) => set({ connectionsCursorIndex: idx }),
   setOutlineCursorIndex: (idx) => set({ outlineCursorIndex: idx }),
   setConnectionPreview: (preview) => set({ connectionPreview: preview }),
-  setEditorViewRef: (view) => set({ editorViewRef: view }),
+  setEditorViewRef: (view) =>
+    set({
+      editorViewRef: view,
+      editorCursorPosition: view ? editorCursorPosition(view.state) : null
+    }),
+  setEditorCursorPosition: (position) => set({ editorCursorPosition: position }),
   setActivePane: (paneId) => {
     const s = get()
     if (s.activePaneId === paneId) return
@@ -9424,6 +9640,7 @@ export const useStore = create<Store>((set, get) => {
     // canvas that can write to the vault may never come back past a switch that
     // turned it off.
     if (isWorkflowsTabPath(path) && !s.workflowsEnabled) return
+    if (isAtlasTabPath(path) && !s.atlasEnabled) return
     // Tasks / Tags / Help / Trash tabs are virtual — add them without touching disk.
     if (isWorkspaceVirtualTabPath(path)) {
       set((cur) => {
@@ -10925,6 +11142,20 @@ function closeWorkflowsTabsEverywhere(): void {
   }))
 }
 
+/** Drop the virtual Atlas tab from every pane, mirroring
+ *  `closeWorkflowsTabsEverywhere`, whenever the feature is switched off. */
+function closeAtlasTabsEverywhere(): void {
+  const state = useStore.getState()
+  for (const leaf of allLeaves(state.paneLayout)) {
+    if (leaf.tabs.includes(ATLAS_TAB_PATH)) {
+      void state.closeTabInPane(leaf.id, ATLAS_TAB_PATH)
+    }
+  }
+  useStore.setState((s) => ({
+    closedTabStack: s.closedTabStack.filter((entry) => !isAtlasTabPath(entry.path))
+  }))
+}
+
 // --- Portable config file sync (desktop) ------------------------------------
 
 /** Apply an externally-changed portable config (synced dotfile / hand-edit)
@@ -10949,6 +11180,7 @@ function applyPortableConfig(next: AppConfigPortable): void {
   // setState bypasses the setters on purpose (no write-back to the file), so
   // the tab cleanup that setWorkflowsEnabled does has to be repeated here.
   if (!merged.workflowsEnabled) closeWorkflowsTabsEverywhere()
+  if (!merged.atlasEnabled) closeAtlasTabsEverywhere()
 }
 
 let configSyncInitialized = false

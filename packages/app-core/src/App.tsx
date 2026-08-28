@@ -27,6 +27,7 @@ import { ExcalidrawEmbedMenuHost } from './components/ExcalidrawEmbedMenuHost'
 import { resolveQuickNoteTitle } from './lib/quick-note-title'
 import { isMacPlatform, matchesShortcut, matchesSequenceToken } from './lib/keymaps'
 import { confirmApp, confirmAppChoice } from './lib/confirm-requests'
+import { escapeEmbedFrame } from './lib/embed-renderers'
 import {
   anyPdfBufferDirty,
   discardAllDirtyPdfBuffers,
@@ -373,6 +374,7 @@ function App(): JSX.Element {
   const themeTweaks = useStore((s) => s.themeTweaks)
   const editorFontSize = useStore((s) => s.editorFontSize)
   const editorZoomDelta = useStore((s) => s.editorZoomDelta)
+  const mathFontScale = useStore((s) => s.mathFontScale)
   const editorLineHeight = useStore((s) => s.editorLineHeight)
   const previewMaxWidth = useStore((s) => s.previewMaxWidth)
   const editorMaxWidth = useStore((s) => s.editorMaxWidth)
@@ -489,6 +491,14 @@ function App(): JSX.Element {
         return
       }
       pendingOpenNoteRequestsRef.current.push(relPath)
+    })
+  }, [])
+
+  // Escape inside an embedded video player never reaches the page; desktop
+  // main relays it so the note gets its keyboard back.
+  useEffect(() => {
+    return window.zen.onFrameEscape?.(() => {
+      escapeEmbedFrame()
     })
   }, [])
 
@@ -659,6 +669,7 @@ function App(): JSX.Element {
     const html = document.documentElement
     const effectiveFontSize = Math.min(32, Math.max(12, editorFontSize + editorZoomDelta))
     html.style.setProperty('--z-editor-font-size', `${effectiveFontSize}px`)
+    html.style.setProperty('--z-math-scale', String(mathFontScale / 100))
     html.style.setProperty('--z-editor-line-height', String(editorLineHeight))
     html.style.setProperty('--z-preview-max-width', `${previewMaxWidth}px`)
     html.style.setProperty('--z-editor-max-width', `${editorMaxWidth}px`)
@@ -686,7 +697,7 @@ function App(): JSX.Element {
       monoFont,
       '"SF Mono", "SFMono-Regular", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace'
     )
-  }, [editorFontSize, editorZoomDelta, editorLineHeight, previewMaxWidth, editorMaxWidth, contentAlign, completedTaskStyle, mathRenderer, lineNumberPosition, interfaceFont, textFont, monoFont])
+  }, [editorFontSize, editorZoomDelta, mathFontScale, editorLineHeight, previewMaxWidth, editorMaxWidth, contentAlign, completedTaskStyle, mathRenderer, lineNumberPosition, interfaceFont, textFont, monoFont])
 
   // Keep the markdown/preview pipeline pointed at the active math engine, even
   // on surfaces that render markdown without the Preview component mounted
@@ -757,6 +768,12 @@ function App(): JSX.Element {
           state.quickNoteTitlePrefix ?? undefined
         )
         void state.createAndOpen('quick', '', { title, focusTitle: true })
+        return
+      }
+      if (matchesShortcut(e, overrides, 'global.newNoteHere')) {
+        // ⌘N — new note in the current folder (#614)
+        e.preventDefault()
+        void state.createNoteInCurrentFolder()
         return
       }
       if (matchesShortcut(e, overrides, 'global.toggleWordWrap')) {

@@ -3,6 +3,7 @@ import { useStore } from '../store'
 import { IsolateIcon } from './icons'
 import { isTasksTabPath } from '@shared/tasks'
 import { isWorkflowsTabPath } from '@shared/workflows-view'
+import { isAtlasTabPath } from '@shared/atlas-view'
 import { isTagsTabPath } from '@shared/tags'
 import { isHelpTabPath } from '@shared/help'
 import { isArchiveTabPath } from '@shared/archive'
@@ -50,6 +51,8 @@ export function TitleBar(): JSX.Element {
         ? labels.quick
         : isTasksTabPath(selectedPath)
           ? labels.tasks
+          : isAtlasTabPath(selectedPath)
+            ? 'Atlas'
           : isWorkflowsTabPath(selectedPath)
             ? 'Workflows'
           : isTagsTabPath(selectedPath)

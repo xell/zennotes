@@ -265,6 +265,11 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
       'Press `⌘L` (`Ctrl+L` on Windows/Linux) in the editor to turn the current line into a checkbox and toggle it on repeat: plain text becomes `- [ ] text`, an existing bullet or numbered item keeps its marker (`* note` becomes `* [ ] note`), and pressing again flips `[ ]` to `[x]` and back. An in-progress `[/]` checks off to `[x]`; forwarded `[>]` and cancelled `[-]` lines are left alone, since those states have their own commands. It applies to every line of a multi-line selection, works with Vim mode on or off, is remappable as `editor.toggleCheckbox` under `[keymaps]` in `config.toml`, and is also in the command palette as “Toggle Checkbox”.'
   },
   {
+    title: 'Reflow a hard-wrapped paragraph',
+    body:
+      'Text pasted from a terminal, an email, or a model reply often arrives hard-wrapped at 80 columns, and in the editor every one of those source lines spills a word or two onto a second row. The preview already reflows such prose; press **Alt+Q** (macOS: **Ctrl+Q**) in the editor to join the lines of the paragraph under the cursor into one line, so the editor wraps it to the pane too. With a selection it reflows every paragraph the selection touches. Headings, list and quote markers, tables, code blocks, `$$` math, and explicit line breaks (two trailing spaces, a backslash, `<br>`) are left alone, and the change is a normal edit, one undo away. It works with Vim mode on or off, is remappable as `editor.reflowParagraph` under `[keymaps]` in `config.toml`, and is in the command palette as “Reflow Paragraph”. In Vim mode it is also the `gq` operator: `gqip` reflows the paragraph, `gqj` two lines, `Vgq` a selection, and `gw` does the same while keeping the cursor in place.'
+  },
+  {
     title: 'A whole note can be a task (task files)',
     body:
       'Besides inline `- [ ]` checkboxes, a whole note can itself be a task: give its frontmatter a `task` tag (`tags: [task]`) and its metadata lives in frontmatter — `status` (open / in-progress / done…), `priority` (high / normal / low), `due` and `scheduled` (`YYYY-MM-DD`), plus any `tags`, while the note body holds free-form detail or sub-checkboxes. These "task files" show up in the Tasks views right alongside inline tasks, so both styles live in one vault. This is the TaskNotes convention, so a vault stays interoperable with TaskForge and Obsidian. Quick-add one from the command palette (**New Task**, or **New Task in Folder…** to choose where it lands), the "+ New task" button in the Tasks header, the `a` key (Vim mode), or the `:newtask` / `:task` ex command — and `:newtask Projects/Website` drops it straight into a folder so multiple projects stay organized. New task files default to your configured tasks location (Settings → New Drawings, Databases & Tasks; the inbox by default), and the folder-picking options override that per task. Checking a task file off rewrites its frontmatter (`status: done` and a `completedDate`) rather than a checkbox character, and rescheduling from the calendar or changing its column on the Kanban board updates the matching frontmatter field. Delete on a task file trashes the whole note (after a confirm).'
@@ -277,12 +282,17 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
   {
     title: 'The Tasks Kanban board, custom statuses, and any field',
     body:
-      'Switch Tasks to Kanban (button or `3`) for a column board. "Group by" offers Status (Today / Upcoming / Waiting / Done, derived from due dates and `@waiting`), Priority, Folder, Custom status, and one entry per inline `@field` you use. Any task field works: tag tasks with `@key:value` tokens like `@status:review`, `@sprint:24`, or `@area:backend`, and each key becomes its own board with a column per value (auto-discovered, so it appears the moment you use it). For the status field, define the columns under Settings → Tasks → Kanban statuses, or list them in order in `config.toml` under `[view]`, e.g. `kanban_statuses = ["backlog", "in_progress", "review", "done"]`; other fields sort their columns automatically. A note-level `status:` in frontmatter sets a default for that note’s tasks. Everything is keyboard-first: `h`/`l` move between columns, `j`/`k` between cards, `g` cycles the group-by, `Shift+H` / `Shift+L` send the focused card to the previous/next column (rewriting its `@field` token), `<` / `>` reorder the columns themselves (saved per board), and `Space`/`Enter` toggle/open. Drag does the same with the mouse — including dragging a column header to reorder, and dragging a card to a new spot inside its column to hand-prioritize it (that arrangement is saved per column and restored when you come back to the board). Renaming a column (click its title, or `[kanban_column_titles]` in `config.toml`) sets a display label only: the column still shows its underlying `@field:value` beneath the name, and moving a card in writes that value, not the label.'
+      'Switch Tasks to Kanban (button or `3`) for a column board. "Group by" offers Status (Today / Upcoming / In progress / Waiting / Done, derived from due dates, `[/]` and `@waiting`), Priority, Folder, Custom status, and one entry per inline `@field` you use. On the Status board a started task (`[/]`) sits in its own In progress column between Upcoming and Waiting: drop a card there (or send it with `Shift+L`) to mark it `[/]`, drop it back on Today or Upcoming to reopen it with that date, and a `@waiting` card keeps its `[/]` underneath so clearing the wait returns it to In progress. Any task field works: tag tasks with `@key:value` tokens like `@status:review`, `@sprint:24`, or `@area:backend`, and each key becomes its own board with a column per value (auto-discovered, so it appears the moment you use it). For the status field, define the columns under Settings → Tasks → Kanban statuses, or list them in order in `config.toml` under `[view]`, e.g. `kanban_statuses = ["backlog", "in_progress", "review", "done"]`; other fields sort their columns automatically. A note-level `status:` in frontmatter sets a default for that note’s tasks. A note tagged `task` is a card of its own: its frontmatter `status:` is its custom status, and without one it sits in the trailing No status column until you move it. Everything is keyboard-first: `h`/`l` move between columns, `j`/`k` between cards, `g` cycles the group-by, `Shift+H` / `Shift+L` send the focused card to the previous/next column (rewriting its `@field` token), `<` / `>` reorder the columns themselves (saved per board), and `Space`/`Enter` toggle/open. Drag does the same with the mouse — including dragging a column header to reorder, and dragging a card to a new spot inside its column to hand-prioritize it (that arrangement is saved per column and restored when you come back to the board). Renaming a column (click its title, or `[kanban_column_titles]` in `config.toml`) sets a display label only: the column still shows its underlying `@field:value` beneath the name, and moving a card in writes that value, not the label.'
+  },
+  {
+    title: 'Filter the Tasks views to one project',
+    body:
+      'The filter box in the Tasks header narrows all three sub-views: the list, the calendar, and the Kanban board (where cards filter out but the columns stay put, so the board keeps its shape while you type). Press `/` to focus it (Vim mode), type in it directly, or run `:filter <text>` from the ex line; `Esc` or a bare `:filter` clears it, and the query survives switching views, so a filtered list stays filtered when you jump to the board. Matching is a simple substring check across the task text, the note title, tags (with the `#`, so `#project-beta` narrows to that tag), `!high`-style priorities, and `@key:value` fields. The fields are the project trick: tag tasks with `@project:alpha`, then filter `@project:alpha` while the board is grouped by status, and you have a one-project board; the header shows how many tasks match. A filtered board is still fully live: drag or `Shift+H`/`L` still move cards, and hand-arranged card order is preserved for the cards the filter is hiding.'
   },
   {
     title: 'Forward a task to another note',
     body:
-      'Forwarding moves a task to a different note while leaving a record behind — the bullet-journal “migrate” gesture. Type `>` inside a task’s checkbox (turning `- [ ]` into `- [>]`) to open a note picker, run “Forward Task to Note…” from the command palette with the cursor on a task, or press `>` on a task in the Tasks list. The original stays as `- [>] … [[Target]]` (a forwarded marker linking to where it went), and a fresh `- [ ] … [[Source]]` copy is added to the note you pick, backlinked home. Forwarded tasks collect under their own “Forwarded” group in the Tasks list, kept out of Today and Done.'
+      'Forwarding moves a task to a different note while leaving a record behind (the bullet-journal “migrate” gesture). Type `>` inside a task’s checkbox (turning `- [ ]` into `- [>]`) to open a note picker, run “Forward Task to Note…” from the command palette with the cursor on a task, or press `>` on a task in the Tasks list. The picker filters as you type and preselects the first match, so typing part of a note’s name and pressing Enter forwards straight there; ↑↓, Ctrl+J / Ctrl+K, and Ctrl+N / Ctrl+P step between the matches. The original stays as `- [>] … [[Target]]` (a forwarded marker linking to where it went), and a fresh `- [ ] … [[Source]]` copy is added to the note you pick, backlinked home. A task’s indented subtasks travel with it: the copy carries the whole block, done and cancelled children included, so the destination reflects the task’s current state, while open subtasks in the source flip to `[>]` alongside the parent (done and cancelled ones keep their state as history). Forwarded tasks collect under their own “Forwarded” group in the Tasks list, kept out of Today and Done.'
   },
   {
     title: 'Cancel a task',
@@ -297,7 +307,7 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
   {
     title: 'Mark a task in progress',
     body:
-      'A task you have started but not finished can say so: `- [/]`. Write it directly, run “Mark Task In Progress” from the command palette with the cursor on a task, or press `i` on a task in the Tasks list (press `i` again to set it back to open). It renders as a half-filled box in the editor and the reading view. Unlike forwarded or cancelled, an in-progress task is still live work: it keeps its place in Today, stays on the calendar and the Kanban board, and rolls forward with your unfinished tasks when you roll over a daily note, `/` and all. A whole-note task file uses `status: in-progress` in its frontmatter (`doing`, `started` and `wip` are read the same way).'
+      'A task you have started but not finished can say so: `- [/]`. Write it directly, run “Mark Task In Progress” from the command palette with the cursor on a task, or press `i` on a task in the Tasks list (press `i` again to set it back to open). It renders as a half-filled box in the editor and the reading view, and that box is clickable on both surfaces: a click checks the task off, the same `[/]` to `[x]` the toggle command performs (the forwarded and cancelled markers stay unclickable records). Moving an in-progress card between live Kanban columns keeps the `/` too. Unlike forwarded or cancelled, an in-progress task is still live work: it keeps its place in Today, stays on the calendar and the Kanban board, and rolls forward with your unfinished tasks when you roll over a daily note, `/` and all. A whole-note task file uses `status: in-progress` in its frontmatter (`doing`, `started` and `wip` are read the same way).'
   },
   {
     title: 'Subtask progress on the parent',
@@ -377,7 +387,17 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
   {
     title: 'Links are actionable',
     body:
-      'Use [[wikilinks]] or markdown links. Following a link — click it, Cmd/Ctrl-click it, or use the follow-link motion (`gd`) in normal mode — opens the note under the cursor and pins PDFs into the reference pane. If the note does not exist yet, following the link offers to create it (after you confirm) rather than leaving a dead link. Prefix a wikilink with `!` to embed rather than link: `![[Note]]` inlines the target note content in the reading view and PDF export — recursively, with cycle protection — so a master note can pull in sub-notes and export to PDF as one document. `![[image.png]]` embeds an image and `![[drawing.excalidraw]]` embeds an Excalidraw drawing as a PNG preview; both take optional `|width` or `|WxH` size hints (`![[image.png|300]]`, `![[image.png|600x400]]`), and the markdown form carries the same hint after the alt text (`![caption|300](image.png)`).'
+      'Use [[wikilinks]] or markdown links. Following a link — click it, Cmd/Ctrl-click it, or use the follow-link motion (`gd`) in normal mode — opens the note under the cursor and pins PDFs into the reference pane. If the note does not exist yet, following the link offers to create it (after you confirm) rather than leaving a dead link. Prefix a wikilink with `!` to embed rather than link: `![[Note]]` inlines the target note content in the reading view and PDF export — recursively, with cycle protection — so a master note can pull in sub-notes and export to PDF as one document. `![[image.png]]` embeds an image and `![[drawing.excalidraw]]` embeds an Excalidraw drawing as a PNG preview; both take optional `|width` or `|WxH` size hints (`![[image.png|300]]`, `![[image.png|600x400]]`), and the markdown form carries the same hint after the alt text (`![caption|300](image.png)`). In the editor, drag the handle on a picture\'s right edge to resize it; the width is written back as that hint, so the reading view, exports and Obsidian all show the same size. Resize Image… in the command palette (or `:imgwidth 480` in Vim mode, `:imgw auto` to reset) sets it by number for the image under the cursor. Right-click a web link or an email address, in the editor or the reading view, to open it or copy it (the address itself, without `mailto:`); `gy` in normal mode, or Copy Link Under Cursor in the palette, copies the one under the caret.'
+  },
+  {
+    title: 'Point at one block, not a whole note',
+    body:
+      'End any line with a `^block-id` marker (letters, digits and hyphens, e.g. `- Ship the picker ^ship-it`) to name that block, then link at it with `[[Note^ship-it]]`. Following the link opens the note scrolled to that exact block, the way `[[Note#Heading]]` reaches a section. Put the marker on its own line to tag the paragraph above it without touching its text. Typing `^` inside a wikilink lists the target note\'s ids with the block text beside each one, so you can pick without leaving the keyboard, and `[[^id]]` points at a block in the note you are already in. Embedding follows the same rule: `![[Note^ship-it]]` inlines just that block rather than the whole note, bringing a bullet\'s children along with it. Obsidian\'s spellings work as-is, so a vault you share with Obsidian keeps its block links: `[[Note#^id]]`, `[[#^id]]`, and markdown-style `[text](Note.md#^id)` all reach the block. The marker itself is addressing, not prose, so it stays hidden in the reading view and in the editor until your cursor is on the line to edit it. The Connections panel says which block a note reached for instead of only that it linked here.'
+  },
+  {
+    title: 'Embed videos and link cards',
+    body:
+      'Paste a YouTube or Vimeo link on an empty line (Cmd/Ctrl+V, or `p` in normal mode) and a small "Paste as" menu offers Embed, Bookmark, or plain URL; `j`/`k`, the arrows, and Enter drive it, Esc dismisses it. An embed is an `embed` code fence holding the URL. It renders as the video poster with a play badge, in the editor and in the reading view alike, and no player exists until you click play, so the cursor walks straight over it and nothing can take the keyboard away from the note. Once a video is running, clicking inside it hands the keyboard to the player (its own shortcuts apply); press Esc (desktop) to hand it back to the note. A bookmark is a `bookmark` fence rendered as a rich link card built from the page metadata; clicking the card opens the link externally. In the editor, hover an embed or card for its Edit pill, or step into it with `j`/`k`, to reveal and edit the source.'
   },
   {
     title: 'Files stay local',
@@ -397,7 +417,7 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
   {
     title: 'The CLI is the bridge to launchers',
     body:
-      'The `zn` command-line tool can list, read, search, capture, edit, archive, trash, inspect tasks, work with databases (`zn base list / rows / get / add / set / create` — add rows with record pages, set fields with the grid’s exact semantics, locally or against a self-hosted server), and start the MCP server without the app running. Raycast uses it for search, then uses `zennotes://open` and `zennotes://open-window` links to bring the selected note back into ZenNotes. On macOS, Settings → CLI can install the bundled Raycast extension locally so users do not need to wait for the Raycast Store version.'
+      'The `zn` command-line tool can list, read, search, capture, edit, archive, trash, inspect tasks, work with databases (`zn base list / rows / get / add / set / create` — add rows with record pages, set fields with the grid’s exact semantics, locally or against a self-hosted server; renaming a record page with `zn rename` keeps its row pointing at it), and start the MCP server without the app running. With no `--vault` or `--server` flag, `zn` works on the vault the app has open, a connected server included (give it the token as `ZENNOTES_REMOTE_TOKEN` or `--token`). Raycast uses it for search, then uses `zennotes://open` and `zennotes://open-window` links to bring the selected note back into ZenNotes. On macOS, Settings → CLI can install the bundled Raycast extension locally so users do not need to wait for the Raycast Store version.'
   },
   {
     title: 'Excalidraw drawings are first-class files',
@@ -407,7 +427,7 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
   {
     title: 'Math, diagrams, and plots render from plain fences',
     body:
-      'Inline `$…$` and display `$$…$$` math render via KaTeX by default. Settings ▸ Editor ▸ Math renderer switches the typesetter to Typst, which reads the same `$…$` / `$$…$$` blocks as Typst markup instead of LaTeX (a note’s math is written for whichever engine you pick). Beyond math, four fenced block languages turn into live diagrams in preview and split mode: `mermaid` for flow, sequence, state, gantt, and graph diagrams (and `mermaid` alone also draws inline in the editor, with live preview on: the diagram stands in for the fence until your cursor enters it, which brings the source back for editing); `tikz` for LaTeX-native coordinate systems, commutative diagrams, and figure-quality plots (the TeX engine runs on-device so no network is required); `jsxgraph` for interactive geometry and function plots driven by a small JSON config; and `function-plot` for compact Cartesian function plotting. Each block is ordinary markdown on disk, so the source remains portable and diffable.'
+      'Inline `$…$` and display `$$…$$` math render via KaTeX by default. Settings ▸ Editor ▸ Math renderer switches the typesetter to Typst, which reads the same `$…$` / `$$…$$` blocks as Typst markup instead of LaTeX (a note’s math is written for whichever engine you pick). Both typesetters complete commands as you write math: type two letters inside a math region to get Greek letters, operators, arrows, sets, and functions with rendered previews, and argument-taking commands insert editable snippets such as `frac(a, b)`. Beyond math, four fenced block languages turn into live diagrams in preview and split mode: `mermaid` for flow, sequence, state, gantt, and graph diagrams (and `mermaid` alone also draws inline in the editor, with live preview on: the diagram stands in for the fence until your cursor enters it, which brings the source back for editing); `tikz` for LaTeX-native coordinate systems, commutative diagrams, and figure-quality plots (the TeX engine runs on-device so no network is required); `jsxgraph` for interactive geometry and function plots driven by a small JSON config; and `function-plot` for compact Cartesian function plotting. Each block is ordinary markdown on disk, so the source remains portable and diffable.'
   },
   {
     title: 'Equation environments number themselves',
@@ -432,7 +452,7 @@ export const HELP_CORE_CONCEPTS: HelpCard[] = [
   {
     title: 'Workflows plan first and write second',
     body:
-      'A workflow is a plain `.md` file under `.zennotes/workflows/`: frontmatter plus one pipeline per line, like `good = books | where rating >= 4`. Wires carry sets of notes, so every wire on the canvas shows the live count flowing through it, and the canvas and the text are lossless projections of the same file (layout is computed, so no coordinates ever land in your vault). The engine can only propose changes: running shows the full dry-run diff before anything is applied, applying journals every file\'s pre-run bytes so Undo restores them exactly, and a run that fails midway rolls the whole thing back on its own. There are no code steps, no shell, and no network, which is why a workflow you did not write is safe to read and run. In this release workflows run when you run them: an event or schedule `trigger:` in the frontmatter parses but does not fire yet, running is desktop-only, and the web client shows workflows read-only. The feature is off by default; enable it under Settings → Workflows.'
+      'A workflow is a plain `.md` file under `.zennotes/workflows/`: frontmatter plus one pipeline per line, like `good = books | where rating >= 4`. Wires carry sets of notes, so every wire on the canvas shows the live count flowing through it, and the canvas and the text are lossless projections of the same file (layout is computed, so no coordinates ever land in your vault). The engine can only propose changes: running shows the full dry-run diff before anything is applied, applying journals every file\'s pre-run bytes so Undo restores them exactly, and a run that fails midway rolls the whole thing back on its own. There are no code steps, no shell, and no network, which is why a workflow you did not write is safe to read and run. In this release workflows run when you run them: an event or schedule `trigger:` in the frontmatter parses but does not fire yet. Local desktop vaults, self-hosted web servers, and desktop remote workspaces can all author and run workflows; a remote workspace needs a server on 2.29 or newer, and against an older server workflows stay read-only. The feature is off by default; enable it under Settings → Workflows.'
   },
   {
     title: 'The workflow grammar in one card',
@@ -448,9 +468,11 @@ export const HELP_SHORTCUT_SECTIONS: HelpShortcutSection[] = [
     description: 'These work across the main app shell.',
     items: [
       { keys: 'Mod+P', action: 'Search notes', detail: 'Open the note search palette.' },
+      { keys: 'Ctrl+D (in Search notes)', action: 'Move the highlighted note to Trash', detail: 'Trash a note straight from the search results, with the usual confirmation; the palette stays open, so a clean-up pass is search, Ctrl+D, search, Ctrl+D.' },
       { keys: 'Mod+F', action: 'Search notes (non-Vim mode)', detail: 'Open the note search palette directly when Vim mode is off.' },
       { keys: 'Mod+F (in the editor)', action: 'Find and replace in the note', detail: 'In Edit and Split, open the editor’s find-and-replace bar: Tab moves between the Find and Replace fields, with match-case, whole-word, and regex toggles. Esc closes it.' },
       { keys: 'Shift+Mod+P', action: 'Open commands', detail: 'Open the command palette.' },
+      { keys: 'Mod+N', action: 'New note in current folder', detail: 'Create a note in the active note\u2019s folder (or the browsed folder when no note is open) and focus its title. Rebindable under Settings \u2192 Keymaps.' },
       { keys: 'Shift+Mod+N', action: 'New Quick Note', detail: 'Create a quick capture note in the main window and focus its title.' },
       { keys: 'Shift+Mod+Space', action: 'Open quick capture window', detail: 'Open the floating, always-on-top capture window. Bound system-wide (CommandOrControl+Shift+Space by default) so it works over any app; change it under Settings → Editor.' },
       { keys: 'Mod+,', action: 'Open Settings', detail: 'Open settings for appearance, editor behavior, fonts, vault controls, and app details.' },
@@ -467,6 +489,7 @@ export const HELP_SHORTCUT_SECTIONS: HelpShortcutSection[] = [
       { keys: 'Mod+O', action: 'Open file', detail: 'Desktop only: pick a Markdown file with the native dialog. A file inside a known vault opens against that vault; anything else opens in a standalone external-file window.' },
       { keys: 'Mod+4 / Mod+5 / Mod+6', action: 'Edit / Split / Preview mode', detail: 'Switch the active note between the raw editor, side-by-side split, and rendered preview.' },
       { keys: 'Mod+L', action: 'Toggle checkbox', detail: 'Turn the current line into a checkbox and toggle it on repeat. See the “Any line becomes a checkbox” card in Core concepts for the full state rules.' },
+      { keys: 'Alt+Q (macOS: Ctrl+Q)', action: 'Reflow paragraph', detail: 'Join the hard-wrapped lines of the paragraph under the cursor (or every paragraph in the selection) into one line, so the editor wraps it to the pane. Headings, lists, tables, code, and explicit line breaks are untouched. See the “Reflow a hard-wrapped paragraph” card. Remappable as editor.reflowParagraph.' },
       { keys: 'Shift+Mod+E', action: 'Export note as PDF', detail: 'Export the active note as a PDF file.' },
       { keys: 'Mod+=', action: 'Zoom in', detail: 'Scale the whole app up, including chrome, editor, and preview.' },
       { keys: 'Mod+-', action: 'Zoom out', detail: 'Scale the whole app down when the UI feels too large.' },
@@ -495,15 +518,17 @@ export const HELP_SHORTCUT_SECTIONS: HelpShortcutSection[] = [
       { keys: 'Ctrl-w h / j / k / l', action: 'Move focus', detail: 'Move between sidebar, note list, the active pane’s tab strip, editor, connections, or adjacent editor panes. From tabs, use h / l to switch tabs and j to return to the editor.' },
       { keys: 'Ctrl-w v', action: 'Split right', detail: 'Clone the current tab into a pane to the right.' },
       { keys: 'Ctrl-w s', action: 'Split down', detail: 'Clone the current tab into a pane below.' },
-      { keys: '[b / ]b', action: 'Previous / next buffer', detail: 'Move across open buffers, falling back to recent notes when only one buffer is open.' },
-      { keys: 'Space o', action: 'Open buffers', detail: 'Show a searchable list of every open buffer across every pane.' },
+      { keys: '[b / ]b', action: 'Previous / next buffer', detail: 'Move across open buffers, falling back to recent notes when only one buffer is open. Both take a count: `3]b` jumps three buffers forward, wrapping around the ring.' },
+      { keys: 'Space o', action: 'Open buffers', detail: 'Show a searchable list of every open buffer across every pane. Press Ctrl+D to close the highlighted buffer without leaving the list.' },
       { keys: 'Space f', action: 'Search notes', detail: 'Open the vault-wide note search palette.' },
       { keys: 'Space s t', action: 'Search vault text', detail: 'Fuzzy-search matching text lines across notes in Inbox, Quick Notes, and Archive.' },
       { keys: 'Space e', action: 'Toggle left sidebar', detail: 'Show or hide the folder/tag sidebar without touching the mouse.' },
       { keys: ']] / [[', action: 'Next / previous heading', detail: 'Jump the cursor to the next or previous markdown heading in the note, the way Vim’s section motions move between sections. It is a motion, so it composes: `d]]` deletes to the next heading, `v]]` selects to it, `3]]` skips three, and `Ctrl+O` jumps back. Headings inside code fences and frontmatter are skipped, matching the outline. With no heading left that way, the cursor goes to the end or start of the note.' },
+      { keys: 'gq{motion} / gw{motion}', action: 'Reflow paragraph', detail: 'Vim’s format operator, tuned for an editor that wraps to the pane: `gqip` joins the hard-wrapped lines of the paragraph into one line, `gqj` joins two lines, `Vgq` a visual selection. `gq` lands on the first formatted line like Vim; `gw` keeps the cursor where it was. Headings, list markers, tables, code, math, and explicit line breaks are left alone.' },
       { keys: 'Space p', action: 'Note outline', detail: 'Jump to any heading in the active note via a searchable overlay.' },
       { keys: 'Space v', action: 'Switch vault', detail: 'Open the command palette directly to the local vault switcher.' },
       { keys: 'Space a', action: 'Open workflows', detail: 'Open the Workflows view, where saved pipelines over your notes are built and run. Workflows are off by default; turn them on under Settings → Workflows first.' },
+      { keys: 'Space g', action: 'Open atlas', detail: 'Open the Atlas view: the whole vault drawn as a map of notes and links.' },
       { keys: 'Space q', action: 'Quick capture window', detail: 'Open the floating, always-on-top capture window, same as the global hotkey.' },
       { keys: 'Space i', action: 'Insert template into note', detail: 'Pick a template and insert it at the cursor of the active note, instead of creating a new note from it.' },
       { keys: 'Space c', action: 'Toggle calendar', detail: 'Show or hide the calendar panel for the active pane.' },
@@ -608,7 +633,7 @@ export const HELP_SHORTCUT_SECTIONS: HelpShortcutSection[] = [
       { keys: 'g g / G', action: 'Jump to top or bottom', detail: 'Move to the first or last visible result.' },
       { keys: 'Enter / o', action: 'Open current result', detail: 'Open the selected task source note, tagged note, or trashed note.' },
       { keys: 'x', action: 'Toggle task', detail: 'Tasks view only: check or uncheck the selected task. A checked task lingers in place for a couple of seconds before it drops into Done, so you can toggle it again to undo. Space also toggles unless Space is your Vim leader key, in which case it starts a leader sequence.' },
-      { keys: '>', action: 'Forward task', detail: 'Tasks list only: forward the selected task to another note. Opens a note picker; the original becomes a forwarded record (`[>]`) linking to the target, and a fresh copy is added there, backlinked home. Forwarded tasks live under a “Forwarded” group.' },
+      { keys: '>', action: 'Forward task', detail: 'Tasks list only: forward the selected task to another note. Opens a note picker that filters as you type and preselects the first match, so Enter forwards without reaching for an arrow key. The original becomes a forwarded record (`[>]`) linking to the target, and a fresh copy is added there, backlinked home, subtasks and all. Forwarded tasks live under a “Forwarded” group.' },
       { keys: 'i', action: 'Mark task in progress', detail: 'Tasks list only: mark the selected task as started (`- [/]`), or set it back to open. In-progress tasks stay in Today and on the calendar, so the row keeps its place.' },
       { keys: 'c', action: 'Cancel task', detail: 'Tasks list only: mark the selected task as intentionally abandoned (`- [-]`), or un-cancel it. Cancelled tasks live under a “Cancelled” group, out of Today and Done.' },
       { keys: 'K / J', action: 'Move task up / down', detail: 'Tasks list only: reorder the selected task within its group. Works with Vim mode on or off.' },
@@ -617,6 +642,23 @@ export const HELP_SHORTCUT_SECTIONS: HelpShortcutSection[] = [
       { keys: '/', action: 'Filter the view', detail: 'Focus the local filter box for tasks, tag matches, or trashed notes.' },
       { keys: ':', action: 'Open local ex prompt', detail: 'Run the view-specific command line inside Tasks or Tags.' },
       { keys: 'Esc', action: 'Clear the filter', detail: 'Clears an active filter. These views are tabs, so Esc no longer closes them — close with :q or the ✕ in the tab header.' }
+    ]
+  },
+  {
+    id: 'atlas-view',
+    title: 'Atlas view',
+    description:
+      'On by default; switch it off under Settings → Atlas. Single-letter keys are Vim-mode only; arrows, Enter, and Esc always work, and every action is also on the toolbar chips along the bottom.',
+    items: [
+      { keys: 'f', action: 'Hint jump', detail: 'Two-letter labels appear over visible notes; type one to fly there. The same hint mode as everywhere else in the app.' },
+      { keys: 'h j k l', action: 'Move the camera', detail: 'Pan the map in 2D; orbit and tilt the sky in 3D. Arrow keys do the same in either Vim mode.' },
+      { keys: '+ / -', action: 'Zoom', detail: 'Fly closer or further. The mouse wheel and pinch do the same.' },
+      { keys: 'v', action: 'Map or sky', detail: 'Toggle between the flat 2D map and the 3D sky. Both use the same frozen layout, so nothing ever shuffles.' },
+      { keys: '1 2 3 4', action: 'Lenses', detail: 'Structure, Heat (recent editing glows), Orphans (notes with no links), and Bridges (notes holding regions together).' },
+      { keys: '[ / ]', action: 'Previous / next region', detail: 'Fly between regions. Regions are your top-level folders.' },
+      { keys: 'c', action: 'Links quiet, all, off', detail: 'How much of the link web is drawn. Quiet keeps lines faint until a note is hovered or focused.' },
+      { keys: 'Enter', action: 'Open the focused note', detail: 'Click once to focus a note, twice (or Enter) to open it in the editor.' },
+      { keys: '/', action: 'Filter', detail: 'Dim every note not matching a title or tag search, live.' }
     ]
   },
   {
@@ -692,6 +734,11 @@ export const HELP_VIM_COMMANDS: HelpExCommand[] = [
     detail: 'Runs markdown formatting on the active note.'
   },
   {
+    command: ':imgwidth {px}',
+    summary: 'Resize the image on the cursor line',
+    detail: 'Writes the `|width` size hint into the image embed under the cursor, the same edit as dragging the handle on the picture. `:imgw auto` strips the hint; `:imgw` with no argument opens the Resize Image prompt.'
+  },
+  {
     command: ':tasks',
     summary: 'Open Tasks',
     detail: 'Open the vault-wide Tasks virtual tab.'
@@ -749,7 +796,7 @@ export const HELP_VIM_COMMANDS: HelpExCommand[] = [
   {
     command: ':bn / :bp',
     summary: 'Cycle tabs',
-    detail: 'Move to the next or previous tab, or the next most-recent note when only one tab is open. The default normal-mode keymaps are `]b` and `[b`, and both can be remapped in Settings.'
+    detail: 'Move to the next or previous tab, or the next most-recent note when only one tab is open. The default normal-mode keymaps are `]b` and `[b`, both remappable in Settings, and both accept a count: `3]b` jumps three tabs forward, wrapping around the ring.'
   },
   {
     command: ':buffers / :ls',
@@ -810,6 +857,11 @@ export const HELP_VIM_COMMANDS: HelpExCommand[] = [
     command: 'g]',
     summary: 'Jump to the next / previous link',
     detail: 'Move the cursor to the next (`g]`) or previous (`g[`) wikilink, Markdown link, or bare URL, wrapping around the ends of the note. Land on one and press `gx` to follow it.'
+  },
+  {
+    command: 'gy',
+    summary: 'Copy the link under the cursor',
+    detail: 'Copies a web link\'s URL, or the address behind a `mailto:` link, to the clipboard. The same as right-clicking the link and choosing Copy link.'
   },
   {
     command: 'o / O',
@@ -967,7 +1019,9 @@ export const HELP_SETTINGS: HelpSettingsSection[] = [
     title: 'Editor behavior',
     items: [
       { label: 'Vim mode', detail: 'Turn CodeMirror Vim bindings on or off for the editor and reference pane.' },
+      { label: 'Wrapped line motions', detail: 'Choose whether Vim $, I, A, and dependent operators such as v$, y$, d$, and c$ stop at the current visible display row or the full logical line when Word wrap is on. Explicit display-row motions g0, g^, and g$ stay display-row based in either mode.' },
       { label: 'Sync clipboard with Vim registers', detail: 'Mirror Vim and the system clipboard in both directions (like Vim\'s clipboard=unnamed): yank, delete, and change (y/d/c/x) copy to the clipboard, and p / P paste whatever is on the clipboard, so you can move text between ZenNotes and other apps without leaving normal mode. Only available when Vim mode is enabled.' },
+      { label: 'Keep the input method out of normal mode', detail: 'With a Korean, Chinese, or Japanese input method active, a normal-mode key used to be composed into a syllable instead of running as a motion, so `j` typed ㅓ and `i` inserted an i before entering insert mode (#84, #464). On by default: outside insert mode the editor accepts no text input, so h j k l stay motions and i / a start a clean composition; insert and replace mode work as before. Skipped on touch devices, where hiding the keyboard would strand you. `[vim] block_ime_in_normal_mode` in config.toml.' },
       { label: 'Leader key hints', detail: 'Show a which-key style guide after pressing the configured Leader key so available leader actions stay visible while you decide. This setting is only available when Vim mode is enabled.' },
       { label: 'Leader hint behavior', detail: 'Choose whether leader hints auto-hide after a timeout or stay open until you dismiss them with the Leader key or Esc. These controls only appear when Vim mode is enabled.' },
       { label: 'Leader hint duration', detail: 'When behavior is Timed, control how long the which-key overlay stays visible and how long the pending leader sequence remains active after pressing the Leader key. This setting is only available in Vim mode.' },
@@ -975,6 +1029,7 @@ export const HELP_SETTINGS: HelpSettingsSection[] = [
       { label: 'Smooth preview scroll', detail: 'Animate Ctrl+D / Ctrl+U half-page scrolling in the preview pane.' },
       { label: 'Vault text search backend and binary paths', detail: 'Choose Auto, the built-in searcher, ripgrep, or fzf for vault-wide text search. Auto prefers system tools when they are installed and falls back cleanly when they are not, you can provide explicit binary paths for ripgrep or fzf if they are not on your PATH, and Settings now shows the resolved runtime backend that will actually be used.' },
       { label: 'Live preview', detail: 'Hide markdown syntax on lines you are not actively editing. Also draws math, tables, and `mermaid` diagrams in place; each turns back into its source when the cursor enters it.' },
+      { label: 'Math size', detail: 'Scales inline `$…$` and block `$$…$$` math relative to the surrounding text, 50 to 200 percent, in the editor and the reading view, for both KaTeX and Typst; `math_font_scale` under `[editor]` in `config.toml`.' },
       { label: 'Render tables in live preview', detail: 'Show Markdown tables as interactive WYSIWYG widgets (edit cells, drag, right-click/`m` menu). Turn it off to keep tables as plain markdown text so you can edit them with the keyboard and Vim motions like any other line. When widgets are on, Arrow keys (and h/j/k/l) navigate cells; Shift+V then Shift+J/Shift+K move whole lines in the raw source.' },
       { label: 'Sync title heading on rename', detail: 'On by default. A new note is created as `# <title>`, and with this on a rename carries that heading along — rename `Untitled` to `Groceries` and line one becomes `# Groceries`, from the breadcrumb, the sidebar, or the note list alike. Only an existing top-level `#` heading is rewritten and one is never invented, so a note that opens with prose, a list, or a `##` heading is untouched; deleting the `#` line opts that note out permanently. The heading is found after any frontmatter, and the rest of the note is left byte for byte as it was.' },
       { label: 'Heading level labels', detail: 'Show H1 through H6 badges before headings. Heading fold arrows stay available whether labels are on or off.' },
@@ -1052,6 +1107,12 @@ export const HELP_SETTINGS: HelpSettingsSection[] = [
     ]
   },
   {
+    title: 'Atlas',
+    items: [
+      { label: 'Atlas', detail: 'On by default. The vault drawn as a map: every note a point sized by how linked it is, every wikilink a line, regions from your top-level folders, in 2D or 3D. Positions are computed once and cached so the map stays a place you know. Turning it off hides the sidebar row, the command, and the Space g binding. Theme authors can restyle it with the --z-atlas-bg and --z-atlas-region-1 through --z-atlas-region-8 variables.' }
+    ]
+  },
+  {
     title: 'Workflows',
     items: [
       { label: 'Workflows', detail: 'Off by default. Turn it on to add the Workflows view (sidebar row, palette commands, and the Space a leader binding in Vim mode): saved, repeatable pipelines over your notes, edited on a canvas and run behind a dry-run confirmation with whole-run undo. Turning it off hides all of that again and closes the view if it is open.' }
@@ -1123,6 +1184,6 @@ export const HELP_CLI: HelpCard[] = [
   {
     title: 'MCP for AI agents',
     body:
-      '`zn mcp` starts the ZenNotes MCP server in stdio mode — the same one Claude Code, Claude Desktop, and Codex use under the hood. Once `zn` is installed, Settings → MCP installs configure the clients to launch `zn mcp` directly, so the install path is one stable absolute path that survives app moves.'
+      '`zn mcp` starts the ZenNotes MCP server in stdio mode — the same one Claude Code, Claude Desktop, and Codex use under the hood. Once `zn` is installed, Settings → MCP installs configure the clients to launch `zn mcp` directly, so the install path is one stable absolute path that survives app moves. The server works on the vault the app has open: a folder on this machine, or a self-hosted ZenNotes server you connected from Settings → Vault. `vault_info` says which. A server that requires a token needs it in the MCP client\'s environment as `ZENNOTES_REMOTE_TOKEN` (the app keeps its own copy in the OS secret store, which `zn` cannot read); `ZENNOTES_SERVER` or `ZENNOTES_VAULT` in that environment point the MCP at another vault instead.'
   }
 ]

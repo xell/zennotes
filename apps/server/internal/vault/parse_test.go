@@ -193,6 +193,67 @@ func TestParseTaskFileInProgressStatus(t *testing.T) {
 	}
 }
 
+// #643: a server-backed board must receive the same custom-status fields as
+// the desktop parser. Otherwise the optimistic move sticks until the watcher
+// rescan replaces it with a task that appears to have no status.
+func TestParseTaskFileIncludesCustomStatusField(t *testing.T) {
+	body := "---\ntags: [task]\ntitle: Rewrite\nstatus: A\n---\n\nDetails.\n"
+	task, ok := parseTaskFile("inbox/x.md", "x", FolderInbox, body)
+	if !ok {
+		t.Fatal("expected a file task")
+	}
+	if task.Status != "a" {
+		t.Errorf("Status=%q, want %q", task.Status, "a")
+	}
+	if got := task.Fields["status"]; got != "a" {
+		t.Errorf("Fields[status]=%q, want %q", got, "a")
+	}
+}
+
+// #672: a file task whose frontmatter says nothing is effectively open but
+// has no custom status. Reporting one put it in an "Open" column with a
+// phantom @status:open chip, and a drop into "No status" (which clears the
+// key) was undone by the next rescan, so the card bounced between the two.
+func TestParseTaskFileWithoutStatusHasNoCustomStatusField(t *testing.T) {
+	body := "---\ntitle: Ship it\ntags: [ task ]\ndue: 2026-08-24\n---\n"
+	task, ok := parseTaskFile("inbox/x.md", "x", FolderInbox, body)
+	if !ok {
+		t.Fatal("expected a file task")
+	}
+	if task.Status != "open" || task.Checked || task.Cancelled {
+		t.Errorf("Status=%q Checked=%v Cancelled=%v, want open/false/false", task.Status, task.Checked, task.Cancelled)
+	}
+	if _, has := task.Fields["status"]; has {
+		t.Errorf("Fields=%#v, want no status key", task.Fields)
+	}
+	if task.Fields == nil {
+		t.Error("Fields must be an empty map, not nil, so the JSON stays {}")
+	}
+}
+
+func TestParseTasksIncludesCustomFields(t *testing.T) {
+	body := "---\nstatus: Backlog\n---\n- [ ] inherits\n- [ ] override @status:Review @sprint:24 @area:Backend\n"
+	tasks := ParseTasks("inbox/t.md", "t", FolderInbox, body)
+	if len(tasks) != 2 {
+		t.Fatalf("expected 2 tasks, got %d", len(tasks))
+	}
+	if tasks[0].Status != "backlog" || tasks[0].Fields["status"] != "backlog" {
+		t.Errorf("inherited task fields=%#v status=%q, want status=backlog", tasks[0].Fields, tasks[0].Status)
+	}
+	want := map[string]string{"status": "review", "sprint": "24", "area": "backend"}
+	for key, value := range want {
+		if got := tasks[1].Fields[key]; got != value {
+			t.Errorf("Fields[%s]=%q, want %q", key, got, value)
+		}
+	}
+	if tasks[1].Status != "review" {
+		t.Errorf("Status=%q, want review", tasks[1].Status)
+	}
+	if tasks[1].Content != "override" {
+		t.Errorf("Content=%q, want custom-field tokens stripped", tasks[1].Content)
+	}
+}
+
 // #458: the frontmatter `tasks:` key turns a note's checkboxes back into plain
 // checkboxes. The server mirrors noteTasksMode in shared-domain; the accepted
 // values must stay byte-identical across runtimes.

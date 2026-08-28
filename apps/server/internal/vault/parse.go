@@ -254,6 +254,7 @@ var (
 	inlineDueRe     = regexp.MustCompile(`(?i)(?:^|\s)due:\s*(\S+)`)
 	inlinePriority  = regexp.MustCompile(`(?i)(?:^|\s)!(high|med|medium|low|h|m|l)\b`)
 	inlineWaitingRe = regexp.MustCompile(`(?i)(?:^|\s)@waiting\b`)
+	inlineFieldRe   = regexp.MustCompile(`(?i)(?:^|\s)@([a-z][a-z0-9_-]*):([\p{L}\d][\p{L}\d/_-]*)`)
 	inlineTagRe     = regexp.MustCompile(`(?:^|\s)#([\p{L}\d][\p{L}\d/_\-]*)`)
 	isoDateRe       = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 )
@@ -480,9 +481,16 @@ func parseTaskFile(path, title string, folder NoteFolder, body string) (Task, bo
 		return Task{}, false
 	}
 
+	// "open" is the effective state of a note that says nothing, not a custom
+	// status the author chose: only an explicit status: reaches Fields, so the
+	// note sits in the board's "No status" column and a drop there (which
+	// clears the key) survives the next rescan. Mirrors parseTaskFile in
+	// packages/shared-domain/src/tasks.ts (#672).
 	status := "open"
+	fields := map[string]string{}
 	if s := firstScalar(fm["status"]); s != "" {
 		status = strings.ToLower(s)
+		fields["status"] = status
 	}
 	content := title
 	if t := strings.TrimSpace(firstScalar(fm["title"])); t != "" {
@@ -504,6 +512,8 @@ func parseTaskFile(path, title string, folder NoteFolder, body string) (Task, bo
 		Due:           normalizeDueDate(firstScalar(fm["due"])),
 		Priority:      normalizePriority(firstScalar(fm["priority"])),
 		Waiting:       status == "waiting",
+		Fields:        fields,
+		Status:        status,
 		Tags:          tags,
 		Kind:          "file",
 		Scheduled:     normalizeDueDate(firstScalar(fm["scheduled"])),
@@ -581,10 +591,12 @@ func ParseTasksWith(path, title string, folder NoteFolder, body string, opts Par
 		checked := checkedChar == "x" || checkedChar == "X"
 		cancelled := checkedChar == "-"
 		inProgress := checkedChar == "/"
+		forwarded := checkedChar == ">"
 
 		due := ""
 		priority := ""
 		waiting := false
+		fields := map[string]string{}
 		tags := []string{}
 		stripped := tail
 
@@ -601,6 +613,18 @@ func ParseTasksWith(path, title string, folder NoteFolder, body string, opts Par
 		if inlineWaitingRe.MatchString(stripped) {
 			waiting = true
 			stripped = inlineWaitingRe.ReplaceAllString(stripped, " ")
+		}
+		for _, fm := range inlineFieldRe.FindAllStringSubmatch(stripped, -1) {
+			if len(fm) < 3 {
+				continue
+			}
+			key := strings.ToLower(fm[1])
+			if _, exists := fields[key]; !exists {
+				fields[key] = strings.ToLower(fm[2])
+			}
+		}
+		if len(fields) > 0 {
+			stripped = inlineFieldRe.ReplaceAllString(stripped, " ")
 		}
 		for _, tm := range inlineTagRe.FindAllStringSubmatch(tail, -1) {
 			if len(tm) >= 2 {
@@ -629,6 +653,9 @@ func ParseTasksWith(path, title string, folder NoteFolder, body string, opts Par
 		if priority == "" {
 			priority = defaults.Priority
 		}
+		if _, hasStatus := fields["status"]; !hasStatus && defaults.Status != "" {
+			fields["status"] = defaults.Status
+		}
 
 		task := Task{
 			ID:         fmtTaskID(path, taskIndex),
@@ -642,9 +669,12 @@ func ParseTasksWith(path, title string, folder NoteFolder, body string, opts Par
 			Checked:    checked,
 			Cancelled:  cancelled,
 			InProgress: inProgress,
+			Forwarded:  forwarded,
 			Due:        due,
 			Priority:   priority,
 			Waiting:    waiting,
+			Fields:     fields,
+			Status:     fields["status"],
 			Tags:       tags,
 		}
 		out = append(out, task)

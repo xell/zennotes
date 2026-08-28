@@ -32,6 +32,9 @@ export type CompletedTaskStyle = 'none' | 'strikethrough' | 'gray' | 'gray-strik
  */
 export type MathRenderer = 'katex' | 'typst'
 
+/** How Vim's unprefixed line-boundary motions treat soft-wrapped lines. */
+export type VimWrappedLineMotionMode = 'display' | 'logical'
+
 /**
  * The host locale's 12/24-hour convention, used as the `timeFormat` default so a
  * fresh install matches the operating system out of the box. Reads only the
@@ -61,6 +64,8 @@ export const PORTABLE_PREF_KEYS = [
   'vimMode',
   'vimInsertEscape',
   'vimYankToClipboard',
+  'vimBlockImeInNormalMode',
+  'vimWrappedLineMotions',
   'whichKeyHints',
   'whichKeyHintMode',
   'whichKeyHintTimeoutMs',
@@ -94,6 +99,7 @@ export const PORTABLE_PREF_KEYS = [
   'tabsEnabled',
   'wrapTabs',
   'editorFontSize',
+  'mathFontScale',
   'editorLineHeight',
   'editorTabSize',
   'editorScrollOff',
@@ -130,6 +136,7 @@ export const PORTABLE_PREF_KEYS = [
   // features
   'workflowsEnabled',
   'hiddenWorkflowPresets',
+  'atlasEnabled',
   // view
   'systemFolderLabels',
   'noteSortOrder',
@@ -197,6 +204,8 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   vimMode: true,
   vimInsertEscape: '',
   vimYankToClipboard: false,
+  vimBlockImeInNormalMode: true,
+  vimWrappedLineMotions: 'display',
   whichKeyHints: true,
   whichKeyHintMode: 'timed',
   whichKeyHintTimeoutMs: 900,
@@ -234,6 +243,7 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   tabsEnabled: true,
   wrapTabs: false,
   editorFontSize: 16,
+  mathFontScale: 100,
   editorLineHeight: 1.7,
   editorTabSize: 4,
   editorScrollOff: 0,
@@ -267,6 +277,7 @@ export const PORTABLE_DEFAULTS: Record<PortablePrefKey, unknown> = {
   monoFont: null,
   workflowsEnabled: false,
   hiddenWorkflowPresets: [],
+  atlasEnabled: true,
   systemFolderLabels: {},
   noteSortOrder: 'none',
   assetSortOrder: 'name-asc',

@@ -7,7 +7,7 @@
  * mental model matches what they see on screen — sibling panes in a
  * deeply nested split still look like simple neighbors.
  */
-import { isTasksViewActive, useStore } from '../store'
+import { isAtlasViewActive, isTasksViewActive, useStore } from '../store'
 import { findLeaf } from './pane-layout'
 import { getVisiblePanelsNow, resolveNextPanel, type Panel } from './vim-nav'
 import {
@@ -106,7 +106,8 @@ function getVisiblePanelList(state: ReturnType<typeof useStore.getState>): Panel
     sidebarOpen: state.sidebarOpen,
     noteListOpen: state.noteListOpen,
     unifiedSidebar: state.unifiedSidebar,
-    tasksViewOpen: isTasksViewActive(state)
+    tasksViewOpen: isTasksViewActive(state),
+    atlasViewOpen: isAtlasViewActive(state)
   })
 }
 
@@ -247,6 +248,13 @@ export function focusPaneOrEdgePanel(direction: PaneDirection): boolean {
   const state = useStore.getState()
   const focused = state.focusedPanel
   const panels = getVisiblePanelList(state)
+
+  // From the tab strip, down is the note under it. `<C-w>j` already lands
+  // there; the Alt binding dead-ended because no pane sits below (#679).
+  if (focused === 'tabs' && direction === 'j') {
+    focusPanel('editor')
+    return true
+  }
 
   // When focus is already on a panel, move relative to THAT panel instead of
   // geometrically from activePaneId — otherwise `l` from the sidebar navigates

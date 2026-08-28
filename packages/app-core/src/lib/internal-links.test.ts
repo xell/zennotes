@@ -22,7 +22,7 @@ describe('resolveInternalNoteHref', () => {
   it('resolves a same-folder relative link', () => {
     expect(resolveInternalNoteHref(from, 'Another Note.md', NOTES)).toEqual({
       path: 'Work/Documentation/Another Note.md',
-      heading: null
+      anchor: null
     })
   })
 
@@ -45,7 +45,14 @@ describe('resolveInternalNoteHref', () => {
   it('carries a #heading anchor', () => {
     expect(resolveInternalNoteHref(from, 'Another%20Note.md#My%20Heading', NOTES)).toEqual({
       path: 'Work/Documentation/Another Note.md',
-      heading: 'My Heading'
+      anchor: 'My Heading'
+    })
+  })
+
+  it('carries an Obsidian #^block fragment raw, for the dispatcher to type (#601 review)', () => {
+    expect(resolveInternalNoteHref(from, 'Another%20Note.md#^note-two', NOTES)).toEqual({
+      path: 'Work/Documentation/Another Note.md',
+      anchor: '^note-two'
     })
   })
 
@@ -295,5 +302,14 @@ describe('markdownLinkAt', () => {
       from: doc.indexOf('<'),
       to: doc.indexOf('>') + 1
     })
+  })
+})
+
+// #199: a markdown title after the destination is not part of the path.
+describe('markdownLinkAt with a title', () => {
+  it('drops the title from the href', () => {
+    const doc = 'see ![chart](assets/chart.png "chart.png") here'
+    expect(markdownLinkAt(doc, 8)?.href).toBe('assets/chart.png')
+    expect(markdownLinkAt('[x](<a b.pdf> "t")', 2)?.href).toBe('a b.pdf')
   })
 })

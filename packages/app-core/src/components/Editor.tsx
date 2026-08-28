@@ -12,8 +12,9 @@ import type { EditorView } from '@codemirror/view'
 import { Vim, getCM } from '@replit/codemirror-vim'
 import { registerDisplayLineMotion } from '../lib/cm-vim-display-line'
 import { registerHeadingMotion } from '../lib/cm-vim-heading-motion'
+import { registerReflowOperator } from '../lib/cm-vim-reflow'
 import { moveLineDown, moveLineUp } from '@codemirror/commands'
-import { unfoldAll, foldCode, unfoldCode } from '@codemirror/language'
+import { foldAll, unfoldAll, foldCode, unfoldCode } from '@codemirror/language'
 import { foldAllHeadings } from '../lib/cm-heading-fold'
 import { isTagsViewActive, isTasksViewActive, useStore } from '../store'
 import { buildCommands, type Command } from '../lib/commands'
@@ -21,12 +22,8 @@ import { rankItems } from '../lib/fuzzy-score'
 import { BUILTIN_TEMPLATES } from '@shared/builtin-templates'
 import { mergeTemplates } from '@shared/template-files'
 import { findLeaf, type PaneLayout, type PaneSplit } from '../lib/pane-layout'
-import {
-  parseCreateNotePath,
-  resolveWikilinkTarget,
-  wikilinkHeadingAnchor
-} from '../lib/wikilinks'
-import { openDatabaseFromWikilink, openWikilinkHeading } from '../lib/wikilink-navigation'
+import { parseCreateNotePath, resolveWikilinkPath } from '../lib/wikilinks'
+import { openDatabaseFromWikilink, openWikilinkTarget } from '../lib/wikilink-navigation'
 import {
   classifyLocalAssetHref,
   hrefFragment,
@@ -74,6 +71,8 @@ import { moveCursorToLink } from '../lib/link-navigation'
 import { focusEditorNormalMode } from '../lib/editor-focus'
 import { toVimSequence } from '../lib/vim-key-sequence'
 import { registerNoteMoveExCommands } from '../lib/vim-ex-commands'
+import { promptImageWidth, setImageWidthFromInput } from '../lib/image-resize'
+import { copyLinkAtCursor } from '../lib/link-copy'
 
 let vimCommandsRegistered = false;
 let syncedVimBindings: Partial<Record<KeymapId, string[]>> = {};
@@ -394,6 +393,13 @@ function registerVimCommands(): void {
     {},
     { context: "visual" },
   );
+  // `gy` copies the link under the cursor (a web URL, or the address behind
+  // a mailto:), the keyboard twin of the right-click "Copy link".
+  Vim.defineAction("zenCopyLink", (cm: ReturnType<typeof getCM>) => {
+    const view = (cm as unknown as { cm6?: EditorView }).cm6;
+    if (view) copyLinkAtCursor(view);
+  });
+  Vim.mapCommand("gy", "action", "zenCopyLink", {}, { context: "normal" });
   Vim.mapCommand(
     "K",
     "action",
@@ -464,8 +470,11 @@ function registerVimCommands(): void {
 
   // #290/#312: make j/k move by display line through soft-wrapped content.
   // Shared with the Quick Note window (QuickCaptureApp) via the same helper.
-  registerDisplayLineMotion();
+  registerDisplayLineMotion(
+    () => useStore.getState().vimWrappedLineMotions,
+  );
   registerHeadingMotion();
+  registerReflowOperator();
 
   Vim.defineEx("write", "w", () => {
     void useStore.getState().persistActive();
@@ -482,6 +491,23 @@ function registerVimCommands(): void {
   Vim.defineEx("format", "format", () => {
     void useStore.getState().formatActiveNote();
   });
+  // `:imgwidth 480` (`:imgw`) writes the `|480` size hint into the image on
+  // the cursor line, the same edit as dragging the widget's handle; `auto`
+  // (or 0) strips it, and no argument opens the Resize Image prompt (#684).
+  Vim.defineEx(
+    "imgwidth",
+    "imgw",
+    (_cm: unknown, params: { argString?: string } | undefined) => {
+      const view = useStore.getState().editorViewRef;
+      if (!view) return;
+      const arg = (params?.argString ?? "").trim();
+      if (!arg) {
+        void promptImageWidth(view);
+        return;
+      }
+      setImageWidthFromInput(view, arg);
+    },
+  );
   Vim.defineEx("quit", "q", () => {
     const state = useStore.getState();
     if (isTasksViewActive(state)) {
@@ -684,20 +710,13 @@ function registerVimCommands(): void {
     }
 
     const notes = state.notes;
-    const resolved = resolveWikilinkTarget(notes, target);
-    if (resolved) {
+    const wikilinkPath = resolveWikilinkPath(notes, target, state.selectedPath);
+    if (wikilinkPath) {
       const focusEditorSoon = (): void => {
         state.setFocusedPanel("editor");
         requestAnimationFrame(() => useStore.getState().editorViewRef?.focus());
       };
-      const headingAnchor = wikilinkHeadingAnchor(target);
-      if (headingAnchor) {
-        void openWikilinkHeading(resolved.path, headingAnchor).then(
-          focusEditorSoon,
-        );
-      } else {
-        void state.selectNote(resolved.path).then(focusEditorSoon);
-      }
+      void openWikilinkTarget(wikilinkPath, target).then(focusEditorSoon);
       return;
     }
 
@@ -710,8 +729,8 @@ function registerVimCommands(): void {
         state.setFocusedPanel("editor");
         requestAnimationFrame(() => useStore.getState().editorViewRef?.focus());
       };
-      if (internal.heading) {
-        void openWikilinkHeading(internal.path, internal.heading).then(
+      if (internal.anchor) {
+        void openWikilinkTarget(internal.path, `#${internal.anchor}`).then(
           focusEditorSoon,
         );
       } else {
@@ -797,6 +816,21 @@ function registerVimCommands(): void {
         return;
       }
       navigateActiveBuffer(useStore.getState(), 1);
+    },
+  );
+  // ]b is RELATIVE with a count ({count}]b walks forward count tabs), unlike
+  // gt whose {count} is vim's absolute tab number. [b shares previousBuffer
+  // with gT and was already relative. (#622)
+  Vim.defineAction(
+    "nextBufferRelative",
+    (
+      _cm: unknown,
+      actionArgs?: { repeat?: number; repeatIsExplicit?: boolean },
+    ) => {
+      const repeat = actionArgs?.repeatIsExplicit
+        ? (actionArgs.repeat ?? 1)
+        : 1;
+      navigateActiveBuffer(useStore.getState(), repeat);
     },
   );
 

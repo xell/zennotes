@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TASKS_TAB_PATH, type VaultTask } from '@shared/tasks'
+import { TAGS_TAB_PATH } from '@shared/tags'
 import { WORKFLOWS_TAB_PATH } from '@shared/workflows-view'
 import { databaseTabPath, type DatabaseDoc } from '@shared/databases'
 import { assetTabPath } from './lib/asset-tabs'
@@ -1031,6 +1032,37 @@ describe('cancelTaskFromList (#450)', () => {
   })
 })
 
+describe('task forwarding carries the subtree (#611)', () => {
+  it('moves subtasks with the parent and leaves the whole block as the source record', async () => {
+    installZen()
+    const { useStore } = await loadStore()
+    const srcBody = ['- [ ] Main task', '    - [ ] sub a', '    - [x] sub b'].join('\n')
+    const task = makeTask('Main task', 0)
+    useStore.setState({
+      notes: [makeNote(srcBody, 'inbox/Note.md'), makeNote('# Work', 'inbox/Work.md')],
+      noteContents: {
+        'inbox/Note.md': makeNote(srcBody, 'inbox/Note.md'),
+        'inbox/Work.md': makeNote('# Work', 'inbox/Work.md')
+      },
+      vaultTasks: [task]
+    })
+
+    await useStore.getState().forwardTask(task, 'inbox/Work.md')
+
+    const state = useStore.getState()
+    expect(state.noteContents['inbox/Note.md'].body).toBe(
+      ['- [>] Main task [[Work]]', '    - [>] sub a', '    - [x] sub b'].join('\n')
+    )
+    expect(state.noteContents['inbox/Work.md'].body).toBe(
+      ['# Work', '- [ ] Main task [[Note]]', '    - [ ] sub a', '    - [x] sub b', ''].join('\n')
+    )
+    // The rebuilt index keeps the open work only in the destination; the
+    // source subtree is a forwarded record plus its done history.
+    const open = state.vaultTasks.filter((t) => !t.checked && !t.forwarded)
+    expect(open.map((t) => t.sourcePath)).toEqual(['inbox/Work.md', 'inbox/Work.md'])
+  })
+})
+
 describe('optimistic task state transitions (#512)', () => {
   it('starting a completed file task immediately clears every competing state', async () => {
     installZen()
@@ -1222,6 +1254,59 @@ describe('note jump history with database tabs', () => {
     // Ctrl+O → jump back to the grid.
     await useStore.getState().jumpToPreviousNote()
     expect(useStore.getState().selectedPath).toBe(dbTab)
+  })
+})
+
+describe('note jump history with the Tasks and Tags views (#633)', () => {
+  // The panels are destinations the user navigates to on purpose, so the
+  // jumplist must both return TO them and record the note they were opened
+  // FROM. Before #633 they were excluded on both sides: Ctrl+O skipped the
+  // panel, and the origin note never entered the backstack.
+  it('Ctrl+O returns to the Tasks view, then to the note it was opened from', async () => {
+    installZen({
+      readNote: vi
+        .fn()
+        .mockImplementation(async (path: string) => makeNote('body text', path))
+    })
+    const { useStore } = await loadStore()
+
+    await useStore.getState().selectNote('inbox/From.md')
+    await useStore.getState().openTasksView()
+    expect(useStore.getState().selectedPath).toBe(TASKS_TAB_PATH)
+    expect(useStore.getState().noteBackstack.map((l) => l.path)).toContain('inbox/From.md')
+
+    await useStore.getState().selectNote('inbox/Other.md')
+    expect(useStore.getState().noteBackstack.map((l) => l.path)).toContain(TASKS_TAB_PATH)
+
+    await useStore.getState().jumpToPreviousNote()
+    expect(useStore.getState().selectedPath).toBe(TASKS_TAB_PATH)
+    await useStore.getState().jumpToPreviousNote()
+    expect(useStore.getState().selectedPath).toBe('inbox/From.md')
+
+    // And Ctrl+I walks forward through the panel again.
+    await useStore.getState().jumpToNextNote()
+    expect(useStore.getState().selectedPath).toBe(TASKS_TAB_PATH)
+    await useStore.getState().jumpToNextNote()
+    expect(useStore.getState().selectedPath).toBe('inbox/Other.md')
+  })
+
+  it('the Tags view round-trips the same way', async () => {
+    installZen({
+      readNote: vi
+        .fn()
+        .mockImplementation(async (path: string) => makeNote('body text', path))
+    })
+    const { useStore } = await loadStore()
+
+    await useStore.getState().selectNote('inbox/From.md')
+    await useStore.getState().openTagView('demo')
+    expect(useStore.getState().selectedPath).toBe(TAGS_TAB_PATH)
+
+    await useStore.getState().selectNote('inbox/Other.md')
+    await useStore.getState().jumpToPreviousNote()
+    expect(useStore.getState().selectedPath).toBe(TAGS_TAB_PATH)
+    await useStore.getState().jumpToPreviousNote()
+    expect(useStore.getState().selectedPath).toBe('inbox/From.md')
   })
 })
 
@@ -1618,6 +1703,33 @@ describe('pdfExportUseTheme — theme in PDF export', () => {
   })
 })
 
+describe('vimWrappedLineMotions (#638)', () => {
+  it('defaults to display rows and round-trips the logical-line preference', async () => {
+    installZen()
+    const { useStore } = await loadStore()
+    expect(useStore.getState().vimWrappedLineMotions).toBe('display')
+
+    useStore.getState().setVimWrappedLineMotions('logical')
+    expect(useStore.getState().vimWrappedLineMotions).toBe('logical')
+    const saved = JSON.parse(localStorage.getItem('zen:prefs:v2') ?? '{}')
+    expect(saved.vimWrappedLineMotions).toBe('logical')
+
+    vi.resetModules()
+    const reloaded = await import('./store')
+    expect(reloaded.useStore.getState().vimWrappedLineMotions).toBe('logical')
+  })
+
+  it('normalizes an unknown stored value to display rows', async () => {
+    installZen()
+    localStorage.setItem(
+      'zen:prefs:v2',
+      JSON.stringify({ vimWrappedLineMotions: 'somewhere-else' })
+    )
+    const { useStore } = await loadStore()
+    expect(useStore.getState().vimWrappedLineMotions).toBe('display')
+  })
+})
+
 describe('workflowsEnabled (Workflows feature switch)', () => {
   it('defaults off and round-trips the opt-in through persistence', async () => {
     installZen()
@@ -1901,6 +2013,58 @@ describe('renameNote heading sync (#455)', () => {
 
     expect(readNote).toHaveBeenCalledWith('inbox/Groceries.md')
     expect(writeNote).toHaveBeenCalledWith('inbox/Groceries.md', '# Groceries\n\nbody\n')
+  })
+
+  it('saves dirty linked notes before the rename can rewrite their wikilinks', async () => {
+    const order: string[] = []
+    const dirtyNote = makeNote('See [[Untitled]]\n', 'inbox/Daily.md')
+    const writeNote = vi.fn(async () => {
+      order.push('save')
+      return dirtyNote
+    })
+    const renameNote = vi.fn(async () => {
+      order.push('rename')
+      return renamedMeta
+    })
+    installRename({
+      renameNote,
+      writeNote,
+      readNote: vi.fn().mockResolvedValue(dirtyNote),
+      listNotes: vi.fn().mockResolvedValue([dirtyNote, renamedMeta])
+    })
+    const { useStore } = await loadStore()
+    useStore.setState({
+      notes: [dirtyNote, metaOf('inbox/Untitled.md', 'Untitled')],
+      noteContents: { [dirtyNote.path]: dirtyNote },
+      noteDirty: { [dirtyNote.path]: true }
+    })
+
+    await useStore.getState().renameNote('inbox/Untitled.md', 'Groceries')
+
+    expect(order.slice(0, 2)).toEqual(['save', 'rename'])
+  })
+
+  it('does not rename when a dirty linked note could not be saved', async () => {
+    const dirtyNote = makeNote('See [[Untitled]]\n', 'inbox/Daily.md')
+    const renameNote = vi.fn().mockResolvedValue(renamedMeta)
+    installRename({
+      renameNote,
+      writeNote: vi.fn().mockRejectedValue(new Error('disk unavailable')),
+      readNote: vi.fn().mockResolvedValue(dirtyNote),
+      listNotes: vi.fn().mockResolvedValue([dirtyNote, renamedMeta])
+    })
+    const { useStore } = await loadStore()
+    useStore.setState({
+      notes: [dirtyNote, metaOf('inbox/Untitled.md', 'Untitled')],
+      noteContents: { [dirtyNote.path]: dirtyNote },
+      noteDirty: { [dirtyNote.path]: true }
+    })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await useStore.getState().renameNote('inbox/Untitled.md', 'Groceries')
+
+    expect(renameNote).not.toHaveBeenCalled()
+    expect(useStore.getState().noteDirty[dirtyNote.path]).toBe(true)
   })
 
   it('retitles through the buffer when the note is open, so panes repaint', async () => {

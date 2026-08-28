@@ -3,7 +3,16 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { parseOpenNoteDeepLink } from '../main/deep-links'
-import { createNote, listNotes, renameNote, scanAllTasks, searchText } from './vault-ops'
+import {
+  createNote,
+  insertAtLineInBody,
+  listNotes,
+  renameNote,
+  replaceInBody,
+  scanAllTasks,
+  searchText,
+  toggleTaskInBody
+} from './vault-ops'
 
 // Every note-shaped MCP result carries `link`, the zennotes:// deep link a
 // model renders as a markdown link so the user can click from chat straight
@@ -78,6 +87,15 @@ describe('mcp task states', () => {
     expect(byContent.get('scrapped')?.cancelled).toBe(true)
     expect(byContent.get('open')?.inProgress).toBe(false)
     expect(byContent.get('done')?.checked).toBe(true)
+  })
+
+  it('toggle follows the app rules: [/] checks off, records stay (#599)', () => {
+    const body = '- [ ] open\n- [/] started\n- [x] done\n- [-] scrapped\n- [>] gone\n'
+    expect(toggleTaskInBody(body, 0)).toContain('- [x] open')
+    expect(toggleTaskInBody(body, 1)).toContain('- [x] started')
+    expect(toggleTaskInBody(body, 2)).toContain('- [ ] done')
+    expect(toggleTaskInBody(body, 3)).toContain('- [-] scrapped')
+    expect(toggleTaskInBody(body, 4)).toContain('- [>] gone')
   })
 })
 
@@ -207,5 +225,20 @@ describe('rename_note heading sync (#455)', () => {
     await writeFile(path.join(root, 'inbox', 'Board.md'), body)
     const meta = await renameNote(root, 'inbox/Board.md', 'Canvas')
     expect(await readFile(path.join(root, meta.path), 'utf8')).toBe(body)
+  })
+})
+
+describe('pure body edits shared with the remote backend (#688)', () => {
+  it('replaceInBody replaces the first or every occurrence and counts them', () => {
+    expect(replaceInBody('a b a', 'a', 'x')).toEqual({ body: 'x b a', replacements: 1 })
+    expect(replaceInBody('a b a', 'a', 'x', 'all')).toEqual({ body: 'x b x', replacements: 2 })
+    expect(replaceInBody('a b a', 'z', 'x')).toEqual({ body: 'a b a', replacements: 0 })
+    expect(() => replaceInBody('a', '', 'x')).toThrow('find is required')
+  })
+
+  it('insertAtLineInBody inserts before a zero-based line, clamped, CRLF normalised', () => {
+    expect(insertAtLineInBody('one\ntwo', 1, 'mid')).toBe('one\nmid\ntwo')
+    expect(insertAtLineInBody('one\r\ntwo', 99, 'end\nmore')).toBe('one\ntwo\nend\nmore')
+    expect(insertAtLineInBody('one', -5, 'top')).toBe('top\none')
   })
 })

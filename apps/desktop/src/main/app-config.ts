@@ -62,6 +62,16 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
     tomlKey: 'keymap',
     comment: 'custom Vim mappings (nmap/noremap syntax, one per line); supports zen:cmd and zen:file:fn() RHS'
   },
+  vimBlockImeInNormalMode: {
+    section: 'vim',
+    tomlKey: 'block_ime_in_normal_mode',
+    comment: 'keep the OS input method (a CJK IME) from composing in normal and visual mode, so hjkl stay motions'
+  },
+  vimWrappedLineMotions: {
+    section: 'vim',
+    tomlKey: 'wrapped_line_motions',
+    comment: 'display | logical — how $, I, A and dependent operators treat soft-wrapped lines'
+  },
   whichKeyHints: {
     section: 'vim',
     tomlKey: 'which_key_hints',
@@ -154,6 +164,11 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
     section: 'editor',
     tomlKey: 'font_size',
     comment: 'editor + preview font size (px)'
+  },
+  mathFontScale: {
+    section: 'editor',
+    tomlKey: 'math_font_scale',
+    comment: 'math size as a percentage (50-200); scales $…$ and $$…$$ in editor and preview'
   },
   editorLineHeight: { section: 'editor', tomlKey: 'line_height', comment: 'line-height multiplier' },
   editorTabSize: {
@@ -309,6 +324,11 @@ const SCALAR_FIELDS: Partial<Record<PortablePrefKey, ScalarFieldMap>> = {
     comment: 'code / monospace font; empty = system default'
   },
   // view
+  atlasEnabled: {
+    section: 'view',
+    tomlKey: 'atlas_enabled',
+    comment: 'the Atlas map view of the vault (sidebar row, command, Space g); on by default'
+  },
   workflowsEnabled: {
     section: 'view',
     tomlKey: 'workflows_enabled',

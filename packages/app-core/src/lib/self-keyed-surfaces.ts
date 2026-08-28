@@ -29,7 +29,9 @@ export const SELF_KEYED_SURFACES = [
   // This fork's seekable media player owns its transport keys.
   '[data-zen-media-player]',
   '[data-workflow-list-pane]',
-  '[data-workflow-canvas]'
+  '[data-workflow-canvas]',
+  // Owns bracket region navigation before global Vim buffer prefixes.
+  '[data-atlas-view]'
 ].join(', ')
 
 /** Blur the active element when it sits inside a self-keyed surface, so keys

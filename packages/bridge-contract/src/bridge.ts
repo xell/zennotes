@@ -94,6 +94,9 @@ export interface ZenCapabilities {
   supportsCliInstall: boolean
   /** Custom templates require local-filesystem CRUD; false on web/remote. */
   supportsCustomTemplates: boolean
+  /** Local desktop support, or a web client paired with a server that owns
+   *  workflow files and journalled apply/undo. */
+  supportsWorkflows?: boolean
 }
 
 export interface ZenAppInfo {
@@ -141,6 +144,7 @@ export interface ZenBridge {
   linkCloudVault(vaultId: string): Promise<CloudVaultLink>
   createAndLinkCloudVault(name: string): Promise<CloudVaultLink>
   unlinkCloudVault(): Promise<void>
+  deleteCloudVault(): Promise<void>
   syncCloudVault(): Promise<CloudSyncRunSummary>
   getCloudSettingsConflict(): Promise<CloudSyncSettingsConflict | null>
   resolveCloudSettingsConflict(choice: CloudSyncSettingsChoice): Promise<void>
@@ -220,8 +224,8 @@ export interface ZenBridge {
   /**
    * Raw contents of every `.zennotes/workflows/*.md` file, newest name order.
    * Parsing lives in `@shared/workflows/parse` so the format has one home, the
-   * same split the templates API uses. Returns [] where the filesystem is not
-   * reachable (web, remote workspaces).
+   * same split the templates API uses. Returns [] where the host cannot reach
+   * workflow storage (older web servers and remote desktop workspaces).
    */
   listWorkflows(): Promise<WorkflowFile[]>
   /** Create or overwrite a workflow file; returns the saved file. */
@@ -363,6 +367,11 @@ export interface ZenBridge {
   onVaultChange(cb: (ev: VaultChangeEvent) => void): () => void
   onOpenSettings(cb: () => void): () => void
   onOpenNoteRequested(cb: (relPath: string) => void): () => void
+  /** Escape was pressed while a subframe (an embedded video player) owned the
+   *  keyboard. Keys inside a cross-origin frame never reach the page, so the
+   *  desktop main process relays this one; the app hands focus back to the
+   *  note. Desktop-only, the web build has no hook below the page. */
+  onFrameEscape?(cb: () => void): () => void
   notifyRendererReady(): void
   onAppUpdateState(cb: (state: AppUpdateState) => void): () => void
 

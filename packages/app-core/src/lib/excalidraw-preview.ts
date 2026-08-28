@@ -6,13 +6,15 @@ import {
   extractObsidianExcalidrawScene
 } from '@shared/excalidraw'
 
-// Re-exported from the leaf `embed-size` module, which owns the parsing. It
-// must not live here: this file dynamic-imports @excalidraw/excalidraw, and
-// anything importing the parser from here inherits that whole graph.
-// embed-size.ts also has parseImageEmbedLabel, this fork's equivalent of
-// upstream's splitEmbedLabel (#570) — same job, different module for the
-// reason above.
-export { parseEmbedSizeHint, type EmbedSize } from './embed-size'
+// Re-exported from a LEAF module, never defined here: this file
+// dynamic-imports @excalidraw/excalidraw, so anything importing the parser from
+// here would inherit that whole graph. Upstream moved it to shared-domain so the
+// Word export in the desktop main process reads `|600` the same way the editor
+// does (#629); shared-domain pulls no excalidraw graph, so the constraint holds.
+// This fork's `lib/embed-size.ts` keeps `parseImageEmbedLabel` for the local
+// render-size hints, upstream's near-equivalent being `splitEmbedLabel` (#570).
+export { parseEmbedSizeHint, splitEmbedLabel } from '@shared/embed-size'
+export type { EmbedSize } from '@shared/embed-size'
 
 interface CacheEntry {
   mtime: number

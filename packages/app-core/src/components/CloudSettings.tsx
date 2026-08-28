@@ -18,18 +18,23 @@ import type {
 import { getZenBridge } from "@zennotes/bridge-contract/bridge";
 import { confirmApp } from "../lib/confirm-requests";
 import {
+  cloudSyncAttentionItems,
+  cloudSyncAttentionMessage,
+  useCloudSyncStatusStore,
   requestCloudAutoSync,
   syncCloudVaultWithStatus,
 } from "../lib/cloud-auto-sync";
 import { useToastStore } from "../lib/toast";
 import { notifyPublishedNoteChanged } from "../lib/published-note-events";
 import { Button } from "./ui/Button";
+import { useStore } from "../store";
 
 type CloudAction =
   | "connect"
   | "logout"
   | "link"
   | "unlink"
+  | "vault-delete"
   | "sync"
   | "backup-create"
   | "backup-schedule"
@@ -132,12 +137,22 @@ export function CloudSettings({
   );
 
   useEffect(() => {
-    void loadStatus().catch((cause) => {
-      setError(errorMessage(cause, "Could not load ZenNotes Cloud."));
-    });
-    return bridge.onCloudAccountChange((next) => {
+    const refresh = (): void => {
+      void loadStatus().catch((cause) => {
+        setError(errorMessage(cause, "Could not load ZenNotes Cloud."));
+      });
+    };
+
+    refresh();
+    const unsubscribe = bridge.onCloudAccountChange((next) => {
       void loadStatus(next);
     });
+    window.addEventListener("online", refresh);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener("online", refresh);
+    };
   }, [bridge, loadStatus]);
 
   const refreshServiceAccount = useCallback(async (): Promise<void> => {
@@ -277,17 +292,59 @@ export function CloudSettings({
       requestCloudAutoSync("vault-link");
     });
 
-  const unlinkVault = (): Promise<void> =>
-    runAction("unlink", async () => {
-      await bridge.unlinkCloudVault();
-      setLink(null);
-      setSummary(null);
-      setBackups([]);
-      setBackupSchedule(null);
-      setExpandedBackupId(null);
-      setBackupItems([]);
-      setRestoreResult(null);
+  const clearLinkedVaultState = (): void => {
+    setLink(null);
+    setSummary(null);
+    setBackups([]);
+    setBackupSchedule(null);
+    setExpandedBackupId(null);
+    setBackupItems([]);
+    setRestoreResult(null);
+  };
+
+  const unlinkVault = async (): Promise<void> => {
+    const confirmed = await confirmApp({
+      title: "Unlink this device?",
+      description:
+        "Automatic sync stops on this device. The Cloud vault and its backups remain available to your other devices.",
+      confirmLabel: "Unlink this device",
+      danger: false,
     });
+    if (!confirmed) return;
+
+    await runAction("unlink", async () => {
+      await bridge.unlinkCloudVault();
+      clearLinkedVaultState();
+    });
+  };
+
+  const deleteVault = async (): Promise<void> => {
+    if (!link) return;
+    const deletedVault = link;
+    const confirmed = await confirmApp({
+      title: `Delete ${deletedVault.vault_name} from ZenNotes Cloud?`,
+      description:
+        "This permanently deletes the Cloud copy, its backups, and its exports. Local files on your devices stay in place, but this cannot be undone.",
+      confirmLabel: "Delete Cloud vault",
+      danger: true,
+    });
+    if (!confirmed) return;
+
+    await runAction("vault-delete", async () => {
+      await bridge.deleteCloudVault();
+      setCloudVaults((current) =>
+        current.filter((vault) => vault.id !== deletedVault.vault_id),
+      );
+      clearLinkedVaultState();
+      await refreshServiceAccount();
+      useToastStore
+        .getState()
+        .addToast(
+          `${deletedVault.vault_name} was deleted from ZenNotes Cloud.`,
+          "success",
+        );
+    });
+  };
 
   const loadSettingsConflict = useCallback(async (): Promise<void> => {
     try {
@@ -302,11 +359,14 @@ export function CloudSettings({
     void loadSettingsConflict();
   }, [loadSettingsConflict]);
 
-  const syncVault = (): Promise<void> =>
-    runAction("sync", async () => {
+  const syncVault = (): Promise<void> => {
+    setSummary(null);
+    return runAction("sync", async () => {
       setSummary(await syncCloudVaultWithStatus(bridge, link?.vault_name));
       await loadSettingsConflict();
+      await refreshServiceAccount();
     });
+  };
 
   const resolveSettingsConflict = (
     choice: CloudSyncSettingsChoice,
@@ -527,6 +587,7 @@ export function CloudSettings({
                 onSelectedVaultChange={setSelectedVaultId}
                 onSync={() => void syncVault()}
                 onUnlink={() => void unlinkVault()}
+                onDelete={() => void deleteVault()}
                 onUseAnotherAccount={() => void logout()}
                 settingsConflict={settingsConflict}
                 onResolveSettingsConflict={(choice) =>
@@ -842,20 +903,21 @@ function CloudUsageSummary({
           Cloud storage
         </h3>
         <p className="mt-1 text-sm leading-6 text-ink-500">
-          {formatBytes(usage.storage.total_bytes)} stored across synced notes,
-          backup archives, and published assets.
+          {formatBytes(usage.storage.total_bytes)} stored across synced vault
+          files, backup archives, and published content.
         </p>
       </div>
 
       <div className="grid gap-px overflow-hidden rounded-2xl border border-paper-300/60 bg-paper-300/60 sm:grid-cols-3">
         <CloudUsageCard
-          label="Synced notes"
+          label="Synced files"
           value={
             syncLimit
               ? `${formatBytes(usage.storage.sync_bytes)} of ${formatBytes(syncLimit)}`
               : formatBytes(usage.storage.sync_bytes)
           }
-          detail={`${pluralize(usage.sync.items, "synced note")} across ${pluralize(usage.sync.vaults, "vault")}`}
+          detail={`${pluralize(usage.sync.items, "synced file")} across ${pluralize(usage.sync.vaults, "vault")}`}
+          secondaryDetail={`${usage.sync.markdown_items ?? 0} Markdown · ${usage.sync.binary_items ?? 0} binary · ${usage.sync.other_items ?? 0} other · ${usage.sync.metadata_items ?? 0} ZenNotes metadata`}
           percent={syncPercent}
         />
         <CloudUsageCard
@@ -877,11 +939,13 @@ function CloudUsageCard({
   detail,
   label,
   percent,
+  secondaryDetail,
   value,
 }: {
   detail: string;
   label: string;
   percent?: number | null;
+  secondaryDetail?: string;
   value: string;
 }): JSX.Element {
   return (
@@ -904,6 +968,11 @@ function CloudUsageCard({
         </div>
       )}
       <div className="mt-2 text-xs leading-5 text-ink-500">{detail}</div>
+      {secondaryDetail && (
+        <div className="mt-1 text-xs leading-5 text-ink-400">
+          {secondaryDetail}
+        </div>
+      )}
     </div>
   );
 }
@@ -927,6 +996,7 @@ function CloudVaultPanel({
   onSelectedVaultChange,
   onSync,
   onUnlink,
+  onDelete,
   onUseAnotherAccount,
 }: {
   action: CloudAction;
@@ -947,8 +1017,10 @@ function CloudVaultPanel({
   onSelectedVaultChange: (value: string) => void;
   onSync: () => void;
   onUnlink: () => void;
+  onDelete: () => void;
   onUseAnotherAccount: () => void;
 }): JSX.Element {
+  const lastSummary = useCloudSyncStatusStore((s) => s.lastSummary);
   if (!syncIncluded) {
     return (
       <CloudNotice>Sync is not included in this subscription.</CloudNotice>
@@ -1042,7 +1114,16 @@ function CloudVaultPanel({
                   disabled={action !== null}
                   onClick={onUnlink}
                 >
-                  {action === "unlink" ? "Unlinking…" : "Unlink"}
+                  {action === "unlink" ? "Unlinking…" : "Unlink this device"}
+                </Button>
+                <Button
+                  variant="danger"
+                  disabled={action !== null}
+                  onClick={onDelete}
+                >
+                  {action === "vault-delete"
+                    ? "Deleting…"
+                    : "Delete Cloud vault"}
                 </Button>
                 <Button
                   variant="primary"
@@ -1059,7 +1140,9 @@ function CloudVaultPanel({
                 onResolve={onResolveSettingsConflict}
               />
             )}
-            {summary && <CloudSyncSummary summary={summary} />}
+            {(summary ?? lastSummary) && (
+              <CloudSyncSummary summary={(summary ?? lastSummary)!} />
+            )}
           </div>
         ) : (
           <CloudVaultDestinationOptions
@@ -1792,30 +1875,85 @@ function CloudSyncSummary({
 }: {
   summary: CloudSyncRunSummary;
 }): JSX.Element {
-  // A host on an older build sends no local_conflicts at all.
-  const conflictCount =
-    summary.conflicts.length +
-    summary.bootstrap_conflicts.length +
-    (summary.local_conflicts?.length ?? 0);
+  const attention = cloudSyncAttentionMessage(summary);
+  const capacityConflictCount = summary.conflicts.filter((conflict) =>
+    [
+      "QUOTA_EXCEEDED",
+      "CAPACITY_EXCEEDED",
+      "FILE_SIZE_LIMIT_EXCEEDED",
+    ].includes(conflict.code),
+  ).length;
+  const items = attention ? cloudSyncAttentionItems(summary) : [];
+  // A note opens in the editor behind the modal; anything else (an asset, a
+  // settings file) is named so the user knows where to look.
+  const canOpen = (path: string): boolean =>
+    /\.md$/i.test(path) && !path.toLowerCase().startsWith(".zennotes/");
+  const openPath = (path: string): void => {
+    const store = useStore.getState();
+    store.setSettingsOpen(false);
+    void store.openNoteInTab(path);
+  };
   return (
     <div
       role="status"
       className={
-        conflictCount > 0
+        attention
           ? "rounded-xl border border-warning/35 bg-warning/10 px-4 py-3 text-sm text-ink-700"
           : "rounded-xl border border-accent/25 bg-accent/5 px-4 py-3 text-sm text-ink-700"
       }
     >
       <div className="font-medium">
-        {summary.pulled === 0 && summary.pushed === 0
-          ? "Everything is up to date"
-          : `Downloaded ${summary.pulled} · Uploaded ${summary.pushed}`}
+        {attention
+          ? "Sync incomplete"
+          : summary.pulled === 0 && summary.pushed === 0
+            ? "Everything is up to date"
+            : `Downloaded ${summary.pulled} · Uploaded ${summary.pushed}`}
       </div>
       <div className="mt-1 text-xs text-ink-500">
-        {conflictCount === 0
-          ? "All changes are synced."
-          : `${conflictCount} conflict${conflictCount === 1 ? " needs" : "s need"} review.`}
+        {attention ?? "All changes are synced."}
       </div>
+      {capacityConflictCount > 0 && (
+        <div className="mt-1 text-xs text-ink-500">
+          {capacityConflictCount}{" "}
+          {capacityConflictCount === 1 ? "change is" : "changes are"} waiting to
+          upload and will retry automatically.
+        </div>
+      )}
+      {items.length > 0 && (
+        <ul className="mt-3 space-y-2" aria-label="Files that need attention">
+          {items.map((item) => (
+            <li
+              key={`${item.kind}:${item.path}`}
+              className="rounded-lg border border-paper-300/60 bg-paper-50/60 px-3 py-2"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate font-mono text-xs text-ink-800" title={item.path}>
+                    {item.path}
+                  </div>
+                  <div className="mt-0.5 text-xs leading-5 text-ink-500">{item.detail}</div>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  {canOpen(item.path) && (
+                    <Button variant="ghost" size="sm" onClick={() => openPath(item.path)}>
+                      Open
+                    </Button>
+                  )}
+                  {item.conflictCopyPath && canOpen(item.conflictCopyPath) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => openPath(item.conflictCopyPath!)}
+                    >
+                      Open copy
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

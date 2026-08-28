@@ -92,6 +92,7 @@ import {
   moveNote,
   moveAsset,
   moveToTrash,
+  trashNoteToSystem,
   readNoteComments,
   readNote,
   renameFolder,
@@ -1420,7 +1421,7 @@ function queueMarkdownFileOpen(
 function handleStartupMarkdownArgs(
   argv: string[],
   reuseMainWindow: boolean,
-): void {
+): number {
   // Candidates include directories (temporary folder session); the opener stats
   // each path and ignores anything that isn't a markdown file or a folder. The
   // app's own path is filtered by value (#579): launchers that run
@@ -1428,18 +1429,46 @@ function handleStartupMarkdownArgs(
   // skipping by index alone let the app dir through as a folder to open.
   const isUnpackagedElectronLaunch =
     (process as NodeJS.Process & { defaultApp?: boolean }).defaultApp === true;
+  let queued = 0;
   for (const candidate of candidatePathsFromArgv(
     argv,
     isUnpackagedElectronLaunch,
     app.getAppPath(),
   )) {
     queueMarkdownFileOpen(candidate, reuseMainWindow);
+    queued += 1;
   }
+  return queued;
 }
 
 // Returns true when at least one file produced (or focused) a window, so
 // the caller can skip opening a redundant default-vault window.
-async function flushPendingFileOpens(): Promise<boolean> {
+// Flushes still opening their windows. `second-instance` waits on these
+// before deciding whether a default window is needed at all (#649).
+const inFlightFileOpens = new Set<Promise<boolean>>();
+
+function flushPendingFileOpens(): Promise<boolean> {
+  const run = drainPendingFileOpens();
+  inFlightFileOpens.add(run);
+  void run.finally(() => inFlightFileOpens.delete(run));
+  return run;
+}
+
+async function settleFileOpens(): Promise<void> {
+  while (inFlightFileOpens.size > 0) {
+    await Promise.allSettled([...inFlightFileOpens]);
+  }
+}
+
+function hasWorkspaceWindow(): boolean {
+  // Count only real workspace windows: a hidden quick-capture panel (or
+  // other utility window) must not pass for a usable window.
+  return BrowserWindow.getAllWindows().some(
+    (win) => !win.isDestroyed() && isWorkspaceWindow(win),
+  );
+}
+
+async function drainPendingFileOpens(): Promise<boolean> {
   if (!app.isReady() || pendingFileOpens.length === 0) return false;
   const items = pendingFileOpens.splice(0);
   let openedAny = false;
@@ -1641,6 +1670,7 @@ function openExternalFileWindow(absPath: string): void {
 
   installNavigationGuards(win)
   installZoomControls(win)
+  installFrameEscape(win)
   applyZoomFactor(win, currentZoomFactor)
 
   const params = `?externalFile=${encodeURIComponent(resolved)}`;
@@ -1991,6 +2021,32 @@ function installZoomControls(win: BrowserWindow): void {
   })
 }
 
+/**
+ * A key pressed inside an embedded video player (a cross-origin iframe) is
+ * delivered to the player's frame and never to the page, Escape included, so
+ * once a click lands in a player the renderer has no way to hand the keyboard
+ * back to the note on its own. The browser process still sees every key before
+ * it is routed: relay a bare Escape whenever a subframe owns focus and let the
+ * renderer decide what to refocus (see `escapeEmbedFrame` in app-core). The
+ * key is not swallowed, so a fullscreen player still leaves fullscreen on it.
+ */
+function installFrameEscape(win: BrowserWindow): void {
+  win.webContents.on("before-input-event", (_event, input) => {
+    if (input.type !== "keyDown" || input.key !== "Escape") return;
+    if (input.control || input.meta || input.alt || input.shift) return;
+    let inSubframe = false;
+    try {
+      // A frame mid-navigation can already be disposed when read; treat that
+      // as "not a subframe" rather than letting the throw escape the handler.
+      inSubframe = win.webContents.focusedFrame?.parent != null;
+    } catch {
+      inSubframe = false;
+    }
+    if (!inSubframe || win.isDestroyed()) return;
+    win.webContents.send(IPC.APP_FRAME_ESCAPE);
+  });
+}
+
 function sanitizeWindowState(
   state: PersistedWindowState | null,
 ): PersistedWindowState | null {
@@ -2334,6 +2390,7 @@ async function createWindow(options: CreateWindowOptions = {}): Promise<BrowserW
 
   installNavigationGuards(win)
   installZoomControls(win)
+  installFrameEscape(win)
   applyZoomFactor(win, currentZoomFactor)
 
   if (
@@ -2908,6 +2965,43 @@ function sanitizePdfFilename(name: string): string {
  * the save dialog, and reading local image files for embedding. Local vaults
  * only for now: the serializer reads assets straight off disk.
  */
+
+const ASSET_SEARCH_DIRS = ["assets", "attachements", "_assets"];
+
+/** First file under the asset folders whose basename matches, case-insensitive.
+ *  Bounded depth so a stray symlink loop cannot hold the export hostage. */
+async function findAssetByBasename(
+  rootAbs: string,
+  name: string,
+): Promise<string | null> {
+  const wanted = name.toLowerCase();
+  const walk = async (dir: string, depth: number): Promise<string | null> => {
+    if (depth > 6) return null;
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true });
+    } catch {
+      return null;
+    }
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.toLowerCase() === wanted) {
+        return path.join(dir, entry.name);
+      }
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const hit = await walk(path.join(dir, entry.name), depth + 1);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  for (const sub of ASSET_SEARCH_DIRS) {
+    const hit = await walk(path.join(rootAbs, sub), 0);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 async function exportNoteDocx(
   relPath: string,
   parentWindow: BrowserWindow | null | undefined,
@@ -2940,13 +3034,23 @@ async function exportNoteDocx(
   // that cannot be embedded (remote URLs, files outside the vault, formats
   // Word rejects that nativeImage cannot decode either). Null degrades to the
   // image's alt text in the document rather than failing the export.
-  const resolveImage = async (src: string) => {
+  const resolveImage = async (
+    src: string,
+    size?: { width: number; height?: number },
+  ) => {
     if (/^[a-z][a-z0-9+.-]*:/i.test(src)) return null;
     const decoded = decodeURIComponent(src);
     const candidates = [
       path.resolve(rootAbs, noteDir === "." ? "" : noteDir, decoded),
       path.resolve(rootAbs, decoded.replace(/^\/+/, "")),
     ];
+    // A wikilink embed names the file, not its folder (`![[chart.png]]`),
+    // the way the editor resolves it: look through the asset folders for the
+    // basename when neither literal path exists (#629).
+    if (!decoded.includes("/")) {
+      const found = await findAssetByBasename(rootAbs, decoded);
+      if (found) candidates.push(found);
+    }
     for (const abs of candidates) {
       if (abs !== rootAbs && !abs.startsWith(rootAbs + path.sep)) continue;
       let data: Buffer;
@@ -2969,16 +3073,23 @@ async function exportNoteDocx(
         data = converted.toPNG();
         type = "png";
       }
-      const size = nativeImage.createFromBuffer(data).getSize();
-      if (size.width === 0 || size.height === 0) return null;
+      const imageSize = nativeImage.createFromBuffer(data).getSize();
+      if (imageSize.width === 0 || imageSize.height === 0) return null;
       // Fit the printable Letter column (6.5in at Word's 96dpi), scaling only
-      // ever DOWN so small images keep their intrinsic size.
+      // ever DOWN so small images keep their intrinsic size. An author's
+      // `|600` hint is honoured inside that column; `|600x400` fixes both.
       const maxWidth = 624;
-      const scale = size.width > maxWidth ? maxWidth / size.width : 1;
+      const requestedWidth = size?.width
+        ? Math.min(size.width, maxWidth)
+        : Math.min(imageSize.width, maxWidth);
+      const scale = requestedWidth / imageSize.width;
+      const height = size?.width && size.height
+        ? Math.round((size.height * requestedWidth) / size.width)
+        : Math.round(imageSize.height * scale);
       return {
         data,
-        width: Math.round(size.width * scale),
-        height: Math.round(size.height * scale),
+        width: Math.round(requestedWidth),
+        height,
         type,
       };
     }
@@ -3743,6 +3854,9 @@ function registerIpc(): void {
   handle(IPC.CLOUD_VAULT_LINK_DELETE, () =>
     getCloudSyncService().unlink(requireLocalCloudVaultRoot()),
   );
+  handle(IPC.CLOUD_VAULT_DELETE, () =>
+    getCloudSyncService().deleteLinkedVault(requireLocalCloudVaultRoot()),
+  );
   handle(IPC.CLOUD_VAULT_SYNC, () =>
     getCloudSyncService().sync(requireLocalCloudVaultRoot()),
   );
@@ -4171,17 +4285,31 @@ function registerIpc(): void {
 
   // Workflows are authored as files in the vault, so remote workspaces (which
   // have no local `.zennotes/workflows`) simply have none.
+  // Remote workspaces delegate every workflow call to the server's journalled
+  // workflow API from #608 when it is advertised; older servers stay
+  // read-only, matching the web client. (#618)
+  const requireRemoteWorkflows = async () => {
+    const client = requireRemoteWorkspaceClient();
+    if (!(await client.supportsWorkflows())) {
+      throw new Error(
+        "This ZenNotes server does not support workflows yet. Update the server and reconnect.",
+      );
+    }
+    return client;
+  };
+
   handle(IPC.VAULT_LIST_WORKFLOWS, async () => {
-    if (isRemoteWorkspaceActive()) return [];
+    if (isRemoteWorkspaceActive()) {
+      const client = requireRemoteWorkspaceClient();
+      return (await client.supportsWorkflows()) ? await client.listWorkflows() : [];
+    }
     const v = requireVault();
     return await listWorkflowFiles(v.root);
   });
 
-  // Authoring needs the local filesystem, so remote workspaces reject rather
-  // than resolve: a silent success would leave the editor believing it saved.
   handle(IPC.VAULT_WRITE_WORKFLOW, async (_e, input: WriteWorkflowInput) => {
     if (isRemoteWorkspaceActive()) {
-      throw new Error("Workflows are unavailable on remote vaults");
+      return await (await requireRemoteWorkflows()).writeWorkflow(input);
     }
     const v = requireVault();
     return await writeWorkflowFile(v.root, input);
@@ -4189,7 +4317,7 @@ function registerIpc(): void {
 
   handle(IPC.VAULT_DELETE_WORKFLOW, async (_e, sourcePath: string) => {
     if (isRemoteWorkspaceActive()) {
-      throw new Error("Workflows are unavailable on remote vaults");
+      return await (await requireRemoteWorkflows()).deleteWorkflow(sourcePath);
     }
     const v = requireVault();
     return await deleteWorkflowFile(v.root, sourcePath);
@@ -4261,7 +4389,7 @@ function registerIpc(): void {
   // the dry run and asked for it here.
   handle(IPC.VAULT_APPLY_WORKFLOW, async (_e, input: ApplyWorkflowInput) => {
     if (isRemoteWorkspaceActive()) {
-      throw new Error("Workflows are unavailable on remote vaults");
+      return await (await requireRemoteWorkflows()).applyWorkflow(input);
     }
     const v = requireVault();
     return await applyWorkflowOps(v.root, input);
@@ -4272,7 +4400,7 @@ function registerIpc(): void {
   // is unknown or already undone.
   handle(IPC.VAULT_UNDO_WORKFLOW_RUN, async (_e, runId: string) => {
     if (isRemoteWorkspaceActive()) {
-      throw new Error("Workflows are unavailable on remote vaults");
+      return await (await requireRemoteWorkflows()).undoWorkflowRun(runId);
     }
     const v = requireVault();
     return await undoWorkflowRun(v.root, runId);
@@ -4281,13 +4409,21 @@ function registerIpc(): void {
   // Run history is read from files in the vault, so a remote workspace simply
   // has none, matching how it reports workflows themselves.
   handle(IPC.VAULT_LIST_WORKFLOW_RUNS, async () => {
-    if (isRemoteWorkspaceActive()) return [];
+    if (isRemoteWorkspaceActive()) {
+      const client = requireRemoteWorkspaceClient();
+      return (await client.supportsWorkflows()) ? await client.listWorkflowRuns() : [];
+    }
     const v = requireVault();
     return await listWorkflowRuns(v.root);
   });
 
   handle(IPC.VAULT_DELETE_WORKFLOW_RUNS, async (_e, workflowId: string) => {
-    if (isRemoteWorkspaceActive()) return 0;
+    if (isRemoteWorkspaceActive()) {
+      if (typeof workflowId !== "string" || !workflowId) {
+        throw new Error("deleteWorkflowRuns needs a workflow id");
+      }
+      return await (await requireRemoteWorkflows()).deleteWorkflowRuns(workflowId);
+    }
     if (typeof workflowId !== "string" || !workflowId) {
       throw new Error("deleteWorkflowRuns needs a workflow id");
     }
@@ -4668,12 +4804,13 @@ function registerIpc(): void {
       return await requireRemoteWorkspaceClient().moveToTrash(relPath);
     }
     const v = requireVault();
-    // Trash would create a `trash/` folder inside a temporary session's folder.
-    // Keep it pristine: refuse rather than litter (edits still save in place).
+    // A vault trash would create a `trash/` folder inside a temporary
+    // session's folder. Keep it pristine, but do not refuse: refusing used to
+    // be silent, so the note stayed put with nothing to explain why (#650).
+    // The operating system's Trash takes the file instead, and can give it
+    // back.
     if (isEphemeralRoot(v.root)) {
-      throw new Error(
-        "Move to Trash is not available in a temporary folder session.",
-      );
+      return await trashNoteToSystem(v.root, relPath);
     }
     return await moveToTrash(v.root, relPath);
   });
@@ -5664,6 +5801,7 @@ function openFloatingNoteWindow(relPath: string): void {
   })
   installNavigationGuards(win)
   installZoomControls(win)
+  installFrameEscape(win)
   applyZoomFactor(win, currentZoomFactor)
   if (sourceWindow && !sourceWindow.isDestroyed()) {
     inheritWindowWorkspaceSession(sourceWindow, win);
@@ -5776,6 +5914,7 @@ async function ensureQuickCaptureWindow(): Promise<BrowserWindow> {
 
   installNavigationGuards(win)
   installZoomControls(win)
+  installFrameEscape(win)
   applyZoomFactor(win, currentZoomFactor)
   if (sourceWindow && !sourceWindow.isDestroyed()) {
     inheritWindowWorkspaceSession(sourceWindow, win);
@@ -6665,7 +6804,12 @@ app.whenReady().then(async () => {
 
   try {
     const cfg = await loadConfig();
-    const desired = cfg.quickCaptureHotkey || DEFAULT_QUICK_CAPTURE_HOTKEY;
+    // loadConfig always yields a normalized string here, and empty string is
+    // the user's explicit "disabled" choice — registerQuickCaptureHotkey("")
+    // is a clean no-op. Falling back to the default on falsey re-registered
+    // the shortcut on every launch, which on Wayland invoked the
+    // global-shortcuts portal and popped GNOME's shortcut dialog. (#615)
+    const desired = cfg.quickCaptureHotkey;
     const result = registerQuickCaptureHotkey(desired);
     if (!result.ok) console.warn(result.error ?? `Failed to bind ${desired}`);
   } catch (err) {
@@ -6673,13 +6817,8 @@ app.whenReady().then(async () => {
   }
 
   app.on("activate", () => {
-    // Count only real workspace windows: a hidden quick-capture panel
-    // (or other utility window) must not stop the dock click from
-    // bringing back a usable window.
-    const hasWorkspaceWindow = BrowserWindow.getAllWindows().some(
-      (win) => !win.isDestroyed() && isWorkspaceWindow(win),
-    );
-    if (!hasWorkspaceWindow) void ensureMainWindow();
+    // A dock click must bring back a usable window when none is left.
+    if (!hasWorkspaceWindow()) void ensureMainWindow();
   });
 
   app.on("new-window-for-tab", () => {
@@ -6730,8 +6869,20 @@ app.on("open-file", (event, filePath) => {
 // process.
 app.on("second-instance", (_event, argv) => {
   const deepLinkResult = handleStartupDeepLinks(argv);
-  handleStartupMarkdownArgs(argv, false);
+  const queued = handleStartupMarkdownArgs(argv, false);
   if (deepLinkResult === "quick-capture") return;
+  if (queued > 0) {
+    // Every forwarded path opens or focuses a window of its own. Raising the
+    // main window on top of that used to resurrect the last vault next to the
+    // folder `zn open` asked for whenever every window had been closed first
+    // (macOS keeps the app alive without windows, #649). A default window is
+    // only the right answer when nothing could be opened and no workspace
+    // window is left to show.
+    void settleFileOpens().then(() => {
+      if (!hasWorkspaceWindow()) return ensureMainWindow();
+    });
+    return;
+  }
   if (mainWindow && !mainWindow.isDestroyed()) {
     focusWindow(mainWindow);
     return;

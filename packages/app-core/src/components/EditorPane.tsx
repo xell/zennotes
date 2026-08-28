@@ -60,7 +60,8 @@ import {
 } from '../lib/cm-markdown-list-indent'
 import { vimImeControl } from '../lib/cm-vim-ime'
 import { forwardOnCheckboxArrow } from '../lib/cm-forward-task'
-import { hopMarkerBackward, hopMarkerForward } from '../lib/cm-marker-hop'
+import { markerHopCommands } from '../lib/cm-marker-hop'
+import { isInMarkdownCode } from '../lib/cm-auto-pairs'
 import { toggleCheckbox } from '../lib/cm-toggle-checkbox'
 import { completionKeymapForEditor, completionNavKeymap } from '../lib/cm-completion-nav'
 import { vimWithBlockSelection } from '../lib/cm-vim-block-selection'
@@ -118,9 +119,18 @@ import { slashCommandSource, slashCommandRender } from '../lib/cm-slash-commands
 import { calloutTypeSource } from '../lib/cm-callouts'
 import { dateShortcutSource } from '../lib/cm-date-shortcuts'
 import { latexCommandSource } from '../lib/cm-latex-completions'
-import { wikilinkSource, wikilinkHeadingSource, atNoteSource } from '../lib/cm-wikilinks'
+import { typstCommandSource } from '../lib/cm-typst-completions'
+import {
+  wikilinkSource,
+  wikilinkHeadingSource,
+  wikilinkBlockSource,
+  atNoteSource
+} from '../lib/cm-wikilinks'
 import { linkRangeAtCursor, markdownLinkAt } from '../lib/internal-links'
+import { copyableLink, copyableLinkAt, linkMenuItems, type CopyableLink } from '../lib/link-copy'
 import { setBlockType, toggleWrap, wrapLink } from '../lib/cm-format'
+import { shouldShowSelectionToolbar } from '../lib/cm-selection-toolbar'
+import { editorCursorPosition } from '../lib/editor-cursor-position'
 import { EditorSelectionToolbar } from './EditorSelectionToolbar'
 import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
 import { LazyDiagramTabView, LazyPreview as Preview } from './LazyPreview'
@@ -155,7 +165,9 @@ import { PdfView, type PdfAssetAction } from './PdfView'
 import { readingStats, type ReadingStats } from '../lib/word-count'
 import { isTasksTabPath } from '@shared/tasks'
 import { isWorkflowsTabPath } from '@shared/workflows-view'
+import { isAtlasTabPath } from '@shared/atlas-view'
 import { LazyWorkflowsView } from './LazyWorkflowsView'
+import { LazyAtlasView } from './LazyAtlasView'
 import { isDatabaseTabPath, databaseTitleFromTab, databaseTabPath, isDatabaseCsvPath } from '@shared/databases'
 import { isTagsTabPath } from '@shared/tags'
 import { isHelpTabPath } from '@shared/help'
@@ -188,7 +200,7 @@ import {
   recallTabScroll,
   type TabScrollPosition
 } from '../lib/tab-scroll-memory'
-import { parseOutline } from '../lib/outline'
+import { activeOutlineLineForCursor, parseOutline } from '../lib/outline'
 import {
   findRenderedHeadingForOutlineLine,
   nextOutlinePreviewSyncLockUntil,
@@ -223,6 +235,8 @@ import {
   ZapIcon
 } from './icons'
 import { focusEditorNormalMode } from '../lib/editor-focus'
+import { reflowParagraph } from '../lib/cm-reflow'
+import { isTouchPrimaryDevice, vimImeGuard } from '../lib/cm-vim-ime-guard'
 import {
   getSystemFolderLabel,
   resolveSystemFolderLabels
@@ -322,6 +336,13 @@ function pointerOverRange(
   return true
 }
 
+// Straight quotes join the hop's markers exactly where they auto-pair: with the
+// prose setting on, or inside code, where auto-pair always closes them (#685).
+const markerHop = markerHopCommands({
+  quotesAreMarkers: (state, pos) =>
+    useStore.getState().autoPairQuotesInProse || isInMarkdownCode(state, pos)
+})
+
 function buildEditorKeymap(vimMode: boolean, overrides: KeymapOverrides): Extension {
   return keymap.of([
     // Home/End on the display row the user can see. Listed before
@@ -355,15 +376,21 @@ function buildEditorKeymap(vimMode: boolean, overrides: KeymapOverrides): Extens
       key: toCodeMirrorKey(getKeymapBinding(overrides, 'editor.toggleCheckbox')),
       run: toggleCheckbox
     },
+    // Join a hard-wrapped paragraph back into one line so the pane wraps it
+    // (#676). Mode-agnostic like the line moves; Vim mode also has `gq`.
+    {
+      key: toCodeMirrorKey(getKeymapBinding(overrides, 'editor.reflowParagraph')),
+      run: reflowParagraph
+    },
     // Step across inline markers, so a formatted word can be finished without
     // reaching for the arrow keys. Mode-agnostic like the line moves. (#490)
     {
       key: toCodeMirrorKey(getKeymapBinding(overrides, 'editor.hopMarkerForward')),
-      run: hopMarkerForward
+      run: markerHop.forward
     },
     {
       key: toCodeMirrorKey(getKeymapBinding(overrides, 'editor.hopMarkerBackward')),
-      run: hopMarkerBackward
+      run: markerHop.backward
     },
     {
       key: toCodeMirrorKey(getKeymapBinding(overrides, 'editor.foldHeading')),
@@ -709,6 +736,7 @@ function selectionEdgeCoords(view: EditorView): {
 }
 
 function getSelectionCommentAction(view: EditorView): SelectionCommentAction {
+  if (!shouldShowSelectionToolbar(view, useStore.getState().vimMode)) return null
   const sel = view.state.selection.main
   const active = document.activeElement
   // Keep the toolbar up while the editor holds the selection OR while the user
@@ -808,6 +836,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
   const setActiveCommentId = useStore((s) => s.setActiveCommentId)
 
   const setEditorViewRef = useStore((s) => s.setEditorViewRef)
+  const activeEditorCursorPosition = useStore((s) =>
+    isActive ? s.editorCursorPosition : null
+  )
   const sidebarOpen = useStore((s) => s.sidebarOpen)
   const zenMode = useStore((s) => s.zenMode)
   const toggleSidebar = useStore((s) => s.toggleSidebar)
@@ -914,6 +945,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     // selection can't be trusted when an item (e.g. Highlight) runs. (#416)
     selFrom: number
     selTo: number
+    /** The outside link under the pointer (or the caret, when opened from the
+     *  keyboard), so the menu can offer to open or copy it. */
+    link: CopyableLink | null
   } | null>(null)
   const [editorHydration, setEditorHydration] = useState<EditorHydrationState | null>(null)
   const [assetDropActive, setAssetDropActive] = useState(false)
@@ -1013,7 +1047,8 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       y: pos.y,
       hasSelection: !sel.empty,
       selFrom: sel.from,
-      selTo: sel.to
+      selTo: sel.to,
+      link: copyableLinkAt(view, sel.head)
     })
     view.focus()
     return true
@@ -1647,23 +1682,8 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       setActiveOutlineLineSafely(null)
       return
     }
-    // Probe ~25% down the viewport (capped) so a heading is considered
-    // active once it scrolls into the upper portion of the visible area
-    // — not only after it has scrolled past the very top edge.
-    const rect = view.scrollDOM.getBoundingClientRect()
-    const probeY = rect.top + Math.min(140, rect.height * 0.25)
-    const pos = view.posAtCoords({ x: rect.left + 8, y: probeY })
-    if (pos == null) {
-      setActiveOutlineLineSafely(null)
-      return
-    }
-    const probeLine = view.state.doc.lineAt(pos).number
-    let activeLine: number | null = null
-    for (const item of outlineItems) {
-      if (item.line <= probeLine) activeLine = item.line
-      else break
-    }
-    setActiveOutlineLineSafely(activeLine)
+    const cursorLine = view.state.doc.lineAt(view.state.selection.main.head).number
+    setActiveOutlineLineSafely(activeOutlineLineForCursor(outlineItems, cursorLine))
   }, [outlineItems, setActiveOutlineLineSafely])
 
   const computeActiveFromPreview = useCallback(() => {
@@ -1861,11 +1881,13 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
               calloutTypeSource,
               dateShortcutSource,
               latexCommandSource,
+              typstCommandSource,
               atNoteSource,
               frontmatterTagSource,
               hashtagSource,
               wikilinkSource,
-              wikilinkHeadingSource
+              wikilinkHeadingSource,
+              wikilinkBlockSource
             ],
             addToOptions: [{ render: slashCommandRender.render, position: 0 }],
             icons: false,
@@ -1905,6 +1927,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
                     const link = markdownLinkAt(doc, pos)
                     if (
                       link &&
+                      useStore.getState().livePreview &&
                       pointerOverRange(view, link.from, link.to, event.clientX, event.clientY)
                     ) {
                       const sel = view.state.selection.main
@@ -2049,6 +2072,12 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
             }
             if (upd.viewportChanged || upd.geometryChanged) {
               schedulePreviewSyncFromEditorViewport()
+            }
+            if (
+              (upd.selectionSet || upd.docChanged) &&
+              useStore.getState().editorViewRef === upd.view
+            ) {
+              useStore.getState().setEditorCursorPosition(editorCursorPosition(upd.state))
             }
             if (!upd.docChanged) return
             if (upd.transactions.some((tr: Transaction) => tr.annotation(programmatic))) return
@@ -2913,6 +2942,13 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
             isWorkflows: true
           }
         }
+        if (isAtlasTabPath(path)) {
+          return {
+            ...base,
+            title: 'Atlas',
+            isWorkflows: true
+          }
+        }
         if (isTasksTabPath(path)) {
           return {
             ...base,
@@ -3055,6 +3091,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     if (
       isQuickNotesTabPath(path) ||
       isWorkflowsTabPath(path) ||
+      isAtlasTabPath(path) ||
       isTagsTabPath(path) ||
       isHelpTabPath(path) ||
       isArchiveTabPath(path) ||
@@ -3322,7 +3359,17 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
               </button>
             )}
             <button
-              onClick={() => void focusTabInPane(paneId, tab.path)}
+              onClick={(e) => {
+                // A mouse click parks DOM focus on this button, so the next
+                // keystrokes went to the tab (and drew its focus ring) instead
+                // of the note (#679). Land in the editor the way a hint or a
+                // palette pick does; a panel tab just lets go of the button.
+                const button = e.currentTarget
+                void focusTabInPane(paneId, tab.path).then(() => {
+                  if (isVirtual) button.blur()
+                  else focusEditorNormalMode({ attempts: 10, delayMs: 24 })
+                })
+              }}
               onDoubleClick={() => {
                 if (tab.preview) promoteTabInPane(paneId, tab.path)
               }}
@@ -3602,10 +3649,8 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     focusEditorNormalMode()
   }, [applyPaneMode, mode])
 
-  // Track the topmost-visible heading and surface it as the active
-  // outline item. We listen on whichever surface is the user's scroll
-  // target for the current mode — split mode follows the editor since
-  // that's where typing happens.
+  // Editing follows the cursor so keyboard motion updates the Outline even
+  // when the viewport barely moves. Preview mode remains scroll-driven.
   useEffect(() => {
     if (!outlineOpen) {
       setActiveOutlineLineSafely(null)
@@ -3626,6 +3671,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       }
     }
   }, [
+    activeEditorCursorPosition?.line,
     computeActiveFromEditor,
     content?.path,
     mode,
@@ -3942,6 +3988,8 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
           )}
           {isWorkflowsTabPath(activeTab) ? (
             <LazyWorkflowsView />
+          ) : isAtlasTabPath(activeTab) ? (
+            <LazyAtlasView />
           ) : isTasksTabPath(activeTab) ? (
             <TasksView />
           ) : isQuickNotesTabPath(activeTab) ? (
@@ -4007,7 +4055,8 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
                     y: e.clientY,
                     hasSelection: !sel.empty,
                     selFrom: sel.from,
-                    selTo: sel.to
+                    selTo: sel.to,
+                    link: copyableLinkAtPointer(view, e.clientX, e.clientY)
                   })
                 }}
                 >
@@ -4168,7 +4217,8 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
             viewRef.current,
             editorMenu.hasSelection,
             captureCommentDraft,
-            { from: editorMenu.selFrom, to: editorMenu.selTo }
+            { from: editorMenu.selFrom, to: editorMenu.selTo },
+            editorMenu.link
           )}
           onClose={() => setEditorMenu(null)}
         />
@@ -4419,13 +4469,25 @@ function HighlightSwatch({ color }: { color: string }): JSX.Element {
   )
 }
 
+/** The outside link whose rendered glyphs sit under the pointer, or null. The
+ *  range check is what tells "on the link" from "clamped to the link" when
+ *  the pointer is in blank space beside a line (#587). */
+function copyableLinkAtPointer(view: EditorView, x: number, y: number): CopyableLink | null {
+  const pos = view.posAtCoords({ x, y })
+  if (pos == null) return null
+  const range = linkRangeAtCursor(view.state.doc.toString(), pos)
+  if (!range || !pointerOverRange(view, range.from, range.to, x, y)) return null
+  return copyableLink(range.target)
+}
+
 function buildEditorContextItems(
   view: EditorView | null,
   hasSelection: boolean,
   onAddComment: () => void,
   // Selection snapshotted when the menu opened, applied by the highlight actions
   // so they don't depend on the live selection surviving the menu. (#416)
-  selRange: { from: number; to: number }
+  selRange: { from: number; to: number },
+  link: CopyableLink | null
 ): ContextMenuItem[] {
   if (!view) return []
 
@@ -4493,6 +4555,9 @@ function buildEditorContextItems(
   }
 
   return [
+    // A right-click on a web link or an email address leads with the link
+    // itself, the way a browser's menu does.
+    ...(link ? linkMenuItems(link) : []),
     {
       label: 'Add comment',
       hint: 'Enter',

@@ -46,6 +46,8 @@ import { vimAwareDefaultKeymap, vimAwareMarkdownKeymap } from '../lib/cm-vim-def
 import { vimVisualHighlightExtension } from '../lib/cm-vim-visual-highlight'
 import { registerDisplayLineMotion } from '../lib/cm-vim-display-line'
 import { registerHeadingMotion } from '../lib/cm-vim-heading-motion'
+import { registerReflowOperator } from '../lib/cm-vim-reflow'
+import { isTouchPrimaryDevice, vimImeGuard } from '../lib/cm-vim-ime-guard'
 import { toggleWrap, wrapLink } from '../lib/cm-format'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
@@ -64,6 +66,7 @@ import { completionKeymapForEditor, completionNavKeymap } from '../lib/cm-comple
 import { slashCommandRender, templateSlashCommandSource } from '../lib/cm-slash-commands'
 import { calloutTypeSource } from '../lib/cm-callouts'
 import type { NoteMeta, VaultInfo } from '@shared/ipc'
+import type { VimWrappedLineMotionMode } from '@shared/app-config'
 import {
   DEFAULT_THEME_ID,
   THEMES,
@@ -91,6 +94,8 @@ interface QuickCapturePrefs {
   vimMode: boolean
   vimInsertEscape: string
   vimKeymap: string
+  vimWrappedLineMotions: VimWrappedLineMotionMode
+  vimBlockImeInNormalMode: boolean
   themeId: string
   themeFamily: ThemeFamily
   themeMode: ThemeMode
@@ -109,6 +114,8 @@ function loadPrefs(): QuickCapturePrefs {
     vimMode: true,
     vimInsertEscape: '',
     vimKeymap: DEFAULT_VIM_KEYMAP,
+    vimWrappedLineMotions: 'display',
+    vimBlockImeInNormalMode: true,
     themeId: DEFAULT_THEME_ID,
     themeFamily: 'gruvbox',
     themeMode: 'dark',
@@ -128,6 +135,9 @@ function loadPrefs(): QuickCapturePrefs {
     return {
       ...fallback,
       ...parsed,
+      vimWrappedLineMotions:
+        parsed.vimWrappedLineMotions === 'logical' ? 'logical' : 'display',
+      vimBlockImeInNormalMode: parsed.vimBlockImeInNormalMode !== false,
       themeFamily: (parsed.themeFamily as ThemeFamily) ?? fallback.themeFamily,
       themeMode: (parsed.themeMode as ThemeMode) ?? fallback.themeMode,
       editorTabSize: normalizeEditorTabSize(parsed.editorTabSize)
@@ -210,14 +220,17 @@ let vimRegistered = false
  *  `windowClose` synchronously inside the ex callback occasionally
  *  surfaces as "Object has been destroyed" / dropped saves — exactly
  *  the same hazard documented on the floating-note window. */
-function registerCaptureVimCommands(): void {
+function registerCaptureVimCommands(
+  getWrappedLineMotionMode: () => VimWrappedLineMotionMode
+): void {
+  registerDisplayLineMotion(getWrappedLineMotionMode)
   if (vimRegistered) return
   vimRegistered = true
 
   // #312: this window is a separate Electron renderer with its own Vim, so it
   // needs its own registration to get the main editor's j/k display-line motion.
-  registerDisplayLineMotion()
   registerHeadingMotion()
+  registerReflowOperator()
 
   Vim.defineEx('write', 'w', () => {
     setTimeout(() => {
@@ -632,10 +645,10 @@ export function QuickCaptureApp(): JSX.Element {
     vimHandlers.close = () => window.zen.windowClose()
     vimHandlers.newNote = resetToNew
     vimHandlers.openPicker = () => setOverlay('search')
-    registerCaptureVimCommands()
+    registerCaptureVimCommands(() => prefs.vimWrappedLineMotions)
     applyVimInsertEscape(prefs.vimInsertEscape)
     applyVimKeymap(prefs.vimKeymap)
-  }, [resetToNew, save, submitAndClose, prefs.vimInsertEscape, prefs.vimKeymap])
+  }, [resetToNew, save, submitAndClose, prefs.vimInsertEscape, prefs.vimKeymap, prefs.vimWrappedLineMotions])
 
   // Window-level chord handlers. We attach the listener exactly once
   // and read state through refs so the handler is never operating on a

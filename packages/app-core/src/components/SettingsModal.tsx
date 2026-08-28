@@ -18,6 +18,7 @@ import {
   DEFAULT_MONTHLY_NOTE_TITLE_PATTERN,
   DEFAULT_MONTHLY_NOTES_DIRECTORY,
 } from "@shared/ipc";
+import type { VimWrappedLineMotionMode } from "@shared/app-config";
 import type {
   AppUpdateState,
   CliInstallStatus,
@@ -454,6 +455,12 @@ export function SettingsModal(): JSX.Element {
   const setVimJsScriptsEnabled = useStore((s) => s.setVimJsScriptsEnabled);
   const vimYankToClipboard = useStore((s) => s.vimYankToClipboard);
   const setVimYankToClipboard = useStore((s) => s.setVimYankToClipboard);
+  const vimBlockImeInNormalMode = useStore((s) => s.vimBlockImeInNormalMode);
+  const setVimBlockImeInNormalMode = useStore((s) => s.setVimBlockImeInNormalMode);
+  const vimWrappedLineMotions = useStore((s) => s.vimWrappedLineMotions);
+  const setVimWrappedLineMotions = useStore(
+    (s) => s.setVimWrappedLineMotions,
+  );
   const keymapOverrides = useStore((s) => s.keymapOverrides);
   const setKeymapBinding = useStore((s) => s.setKeymapBinding);
   const resetAllKeymaps = useStore((s) => s.resetAllKeymaps);
@@ -490,6 +497,8 @@ export function SettingsModal(): JSX.Element {
   const showArchivedTasks = useStore((s) => s.showArchivedTasks);
   const setShowArchivedTasks = useStore((s) => s.setShowArchivedTasks);
   const mathRenderer = useStore((s) => s.mathRenderer);
+  const mathFontScale = useStore((s) => s.mathFontScale);
+  const setMathFontScale = useStore((s) => s.setMathFontScale);
   const typstTagPreambles = useStore((s) => s.typstTagPreambles);
   const setTypstTagPreambles = useStore((s) => s.setTypstTagPreambles);
   const setMathRenderer = useStore((s) => s.setMathRenderer);
@@ -533,6 +542,8 @@ export function SettingsModal(): JSX.Element {
   const setTabsEnabled = useStore((s) => s.setTabsEnabled);
   const workflowsEnabled = useStore((s) => s.workflowsEnabled);
   const setWorkflowsEnabled = useStore((s) => s.setWorkflowsEnabled);
+  const atlasEnabled = useStore((s) => s.atlasEnabled);
+  const setAtlasEnabled = useStore((s) => s.setAtlasEnabled);
   const hiddenWorkflowPresets = useStore((s) => s.hiddenWorkflowPresets);
   const setHiddenWorkflowPresets = useStore((s) => s.setHiddenWorkflowPresets);
   const wrapTabs = useStore((s) => s.wrapTabs);
@@ -1320,6 +1331,9 @@ export function SettingsModal(): JSX.Element {
   }, []);
 
   const leaderKeyHintsTargetId = vimMode ? "leader-key-hints" : "vim-mode";
+  const wrappedLineMotionsTargetId = vimMode
+    ? "wrapped-line-motions"
+    : "vim-mode";
   const leaderHintBehaviorTargetId =
     vimMode && whichKeyHints ? "leader-hint-behavior" : leaderKeyHintsTargetId;
   const leaderHintDurationTargetId =
@@ -1874,6 +1888,14 @@ export function SettingsModal(): JSX.Element {
           keywords: ["vim", "motions"],
         },
         {
+          id: "wrapped-line-motions",
+          title: "Wrapped line motions",
+          description:
+            "Choose whether $, I, A, and dependent operators follow a visible display row or the complete logical line.",
+          keywords: ["vim", "word wrap", "display row", "logical line", "$", "I", "A"],
+          targetId: wrappedLineMotionsTargetId,
+        },
+        {
           id: "vim-insert-escape",
           title: "Exit insert mode with",
           description:
@@ -1949,6 +1971,13 @@ export function SettingsModal(): JSX.Element {
             "plain text",
             "source",
           ],
+        },
+        {
+          id: "math-font-scale",
+          title: "Math size",
+          description:
+            "Scale inline and block math relative to the surrounding text.",
+          keywords: ["math", "size", "scale", "font", "katex", "typst", "latex", "formula", "equation"],
         },
         {
           id: "math-renderer",
@@ -2197,6 +2226,13 @@ export function SettingsModal(): JSX.Element {
           keywords: ["diff", "merge", "inline", "line-level", "git"],
         },
         {
+          id: "atlas-enabled",
+          title: "Atlas",
+          description:
+            "The Atlas map: the whole vault as notes and links, in 2D or 3D.",
+          keywords: ["atlas", "map", "graph", "visualize", "links", "network", "sky", "3d"],
+        },
+        {
           id: "workflows-enabled",
           title: "Workflows",
           description:
@@ -2219,6 +2255,7 @@ export function SettingsModal(): JSX.Element {
           title: "Vim",
           searchIds: [
             "vim-mode",
+            "wrapped-line-motions",
             "vim-insert-escape",
             "vim-key-mappings",
             "vim-js-scripts-enabled",
@@ -2244,6 +2281,21 @@ export function SettingsModal(): JSX.Element {
                 />
                 {vimMode ? (
                   <>
+                    <SegmentedRow
+                      label="Wrapped line motions"
+                      description="Display row keeps $, I, A, v$, y$, d$, and c$ on the visible wrapped row. Logical line restores traditional Vim behavior; g0, g^, and g$ still target the display row."
+                      value={vimWrappedLineMotions}
+                      settingId="wrapped-line-motions"
+                      options={[
+                        { value: "display", label: "Display row" },
+                        { value: "logical", label: "Logical line" },
+                      ]}
+                      onChange={(next) =>
+                        setVimWrappedLineMotions(
+                          next as VimWrappedLineMotionMode,
+                        )
+                      }
+                    />
                     <TextInputRow
                       label="Exit insert mode with"
                       description="Type this key sequence in insert mode to act as Escape, e.g. jk or jj. Leave empty to disable."
@@ -2302,6 +2354,13 @@ export function SettingsModal(): JSX.Element {
                       value={vimYankToClipboard}
                       settingId="vim-yank-to-clipboard"
                       onChange={setVimYankToClipboard}
+                    />
+                    <ToggleRow
+                      label="Keep the input method out of normal mode"
+                      description="With a Korean, Chinese, or Japanese input method active, normal-mode keys were composed into syllables instead of running as motions. On, the editor takes no text input outside insert mode, so h j k l stay motions and i / a start a clean composition. Skipped on touch devices."
+                      value={vimBlockImeInNormalMode}
+                      settingId="vim-block-ime-in-normal-mode"
+                      onChange={setVimBlockImeInNormalMode}
                     />
                     <SliderRow
                       label="Scroll offset"
@@ -2529,6 +2588,17 @@ export function SettingsModal(): JSX.Element {
                     { value: "typst", label: "Typst" },
                   ]}
                   onChange={(next) => setMathRenderer(next)}
+                />
+                <SliderRow
+                  label="Math size"
+                  description="Scale inline $…$ and block $$…$$ math relative to the surrounding text, in both the editor and the reading view."
+                  value={mathFontScale}
+                  min={50}
+                  max={200}
+                  step={5}
+                  unit="%"
+                  settingId="math-font-scale"
+                  onChange={setMathFontScale}
                 />
                 {mathRenderer === "typst" && (
                   <ToggleRow
@@ -2840,6 +2910,29 @@ export function SettingsModal(): JSX.Element {
                   unit=" ms"
                   settingId="pdf-pinch-gap"
                   onChange={(v) => setPdfPinchTuning({ resetMs: v })}
+                />
+              </Section>
+            </div>
+          ),
+        },
+        {
+          id: "atlas",
+          title: "Atlas",
+          description:
+            "The Atlas map of the vault, and whether it appears in the app at all.",
+          searchIds: ["atlas-enabled"],
+          content: (
+            <div className="space-y-6">
+              <Section
+                title="Atlas"
+                description="The whole vault drawn as a map: every note a point, every wikilink a line, regions from your top-level folders. On by default."
+              >
+                <ToggleRow
+                  label="Atlas"
+                  description="Show the Atlas view: the sidebar row, the Open Atlas command, and the Space g leader binding in Vim mode. Custom themes can restyle it through the --z-atlas-region-1 to --z-atlas-region-8 and --z-atlas-bg CSS variables."
+                  value={atlasEnabled}
+                  settingId="atlas-enabled"
+                  onChange={setAtlasEnabled}
                 />
               </Section>
             </div>
@@ -7958,6 +8051,36 @@ function McpSettings(): JSX.Element {
   const serverStatusTone =
     runtime == null ? "off" : entryMissing ? "warn" : "ok";
   const serverStatusClass = statusChipClass(serverStatusTone);
+
+  // The web client has no MCP runtime to describe and nothing to install
+  // into; say so instead of rendering controls that cannot work (#672).
+  if (runtime?.unavailableReason) {
+    return (
+      <div className="space-y-6">
+        <Section
+          title="Server"
+          description="MCP integrations are set up from the ZenNotes desktop app."
+          settingId="mcp-server"
+        >
+          <div className="px-5 py-4">
+            <div className="flex items-center gap-2">
+              <span
+                className={[
+                  "rounded-full border px-2 py-0.5 text-2xs font-medium uppercase tracking-[0.14em]",
+                  statusChipClass("off"),
+                ].join(" ")}
+              >
+                Desktop only
+              </span>
+            </div>
+            <p className="mt-3 text-xs leading-5 text-ink-600">
+              {runtime.unavailableReason}
+            </p>
+          </div>
+        </Section>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

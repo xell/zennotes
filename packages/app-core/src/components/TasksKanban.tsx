@@ -30,6 +30,7 @@ import type { NoteFolder } from '@shared/ipc'
 import type { VaultTask } from '@shared/tasks'
 import { groupTasks, isOverdue as isTaskOverdue, toIsoDateLocal } from '@shared/tasks'
 import { useStore, type KanbanGroupBy, type TaskMutation } from '../store'
+import { filterTasks } from '../lib/tasks-filter'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 import { buildTaskMenuItems } from '../lib/task-context-menu'
 import { ArrowUpRightIcon, PencilIcon } from './icons'
@@ -44,6 +45,10 @@ import {
 
 interface Props {
   tasks: VaultTask[]
+  /** The Tasks header's filter query. Narrows the cards on the board; the
+   *  column set, group-by options, and card-order persistence keep working
+   *  from the full task list. (#583) */
+  filter?: string
   today: Date
   onOpenTask: (task: VaultTask) => void
   onToggleTask: (task: VaultTask) => void
@@ -69,7 +74,7 @@ function columnAccent(id: string): string | null {
  *  that should land. Returns `null` when the drop has no defined
  *  semantics (e.g. when group-by is 'folder'). Returns `[]` when the
  *  task is already in the target column — caller can short-circuit. */
-function dropMutationsFor(
+export function dropMutationsFor(
   groupBy: KanbanGroupBy,
   columnId: string,
   task: VaultTask,
@@ -79,11 +84,12 @@ function dropMutationsFor(
     const todayIso = toIsoDateLocal(today)
     switch (columnId) {
       case 'today':
-        // "Live" columns — make sure neither @waiting nor [x] keep the
+        // "Live" columns — make sure neither @waiting, [x] nor [/] keep the
         // task glued to a different bucket.
         return [
           { kind: 'set-checked', checked: false },
           { kind: 'set-waiting', waiting: false },
+          { kind: 'set-in-progress', inProgress: false },
           { kind: 'set-due', due: todayIso }
         ]
       case 'upcoming': {
@@ -92,13 +98,24 @@ function dropMutationsFor(
         return [
           { kind: 'set-checked', checked: false },
           { kind: 'set-waiting', waiting: false },
+          { kind: 'set-in-progress', inProgress: false },
           {
             kind: 'set-due',
             due: task.due && task.due > todayIso ? task.due : toIsoDateLocal(tomorrow)
           }
         ]
       }
+      case IN_PROGRESS_COLUMN_ID:
+        // Started work: `[/]`. The due date is left alone, so a card dragged
+        // back to Today or Upcoming keeps the date it had.
+        return [
+          { kind: 'set-checked', checked: false },
+          { kind: 'set-waiting', waiting: false },
+          { kind: 'set-in-progress', inProgress: true }
+        ]
       case 'waiting':
+        // `[/]` survives underneath on purpose: clearing the wait returns the
+        // card to In progress, where it came from.
         return [
           { kind: 'set-checked', checked: false },
           { kind: 'set-waiting', waiting: true }
@@ -135,22 +152,60 @@ export interface Column {
   tasks: VaultTask[]
 }
 
-function statusColumns(tasks: VaultTask[], today: Date): Column[] {
+/** Column id of the Status board's started-work bucket. */
+export const IN_PROGRESS_COLUMN_ID = 'in-progress'
+
+export function statusColumns(tasks: VaultTask[], today: Date): Column[] {
   const groups = groupTasks(tasks, today)
+  // `[/]` is an open task everywhere else: it keeps its place in Today, on the
+  // calendar and in the rollups (#512). A board is about flow, though, so
+  // started work gets its own column between the to-do buckets and Done, and
+  // a glance shows how much is in flight (#677). `@waiting` still wins: a
+  // blocked card reads as blocked and comes back here when the wait clears.
+  const inProgress = [...groups.today, ...groups.upcoming].filter((t) => t.inProgress)
+  const today_ = groups.today.filter((t) => !t.inProgress)
+  const upcoming = groups.upcoming.filter((t) => !t.inProgress)
+  const overdueBadge = (list: VaultTask[]): Column['badge'] => {
+    const value = list.filter((t) => isTaskOverdue(t, today)).length
+    return value > 0 ? { kind: 'overdue', value } : undefined
+  }
   return [
+    { id: 'today', label: 'Today', tasks: today_, badge: overdueBadge(today_) },
+    { id: 'upcoming', label: 'Upcoming', tasks: upcoming },
     {
-      id: 'today',
-      label: 'Today',
-      tasks: groups.today,
-      badge:
-        groups.overdueCount > 0
-          ? { kind: 'overdue', value: groups.overdueCount }
-          : undefined
+      id: IN_PROGRESS_COLUMN_ID,
+      label: 'In progress',
+      tasks: inProgress,
+      badge: overdueBadge(inProgress)
     },
-    { id: 'upcoming', label: 'Upcoming', tasks: groups.upcoming },
     { id: 'waiting', label: 'Waiting', tasks: groups.waiting },
     { id: 'done', label: 'Done', tasks: groups.done }
   ]
+}
+
+/** A saved Status-board column order predates the In progress column for
+ *  anyone who reordered that board before 2.38. `arrangeColumns` would park an
+ *  unlisted column after the saved ones, i.e. after Done, so a built column
+ *  missing from the saved order is slotted right after the built neighbour
+ *  that precedes it instead. Field boards keep the append rule: there a new
+ *  value really is new. */
+export function completeStatusOrder(saved: string[], builtIds: string[]): string[] {
+  if (saved.length === 0) return saved
+  const result = saved.filter((id) => builtIds.includes(id))
+  for (let i = 0; i < builtIds.length; i += 1) {
+    const id = builtIds[i]
+    if (result.includes(id)) continue
+    let at = 0
+    for (let j = i - 1; j >= 0; j -= 1) {
+      const prevAt = result.indexOf(builtIds[j])
+      if (prevAt >= 0) {
+        at = prevAt + 1
+        break
+      }
+    }
+    result.splice(at, 0, id)
+  }
+  return result
 }
 
 function priorityColumns(tasks: VaultTask[]): Column[] {
@@ -531,7 +586,7 @@ interface DragPreview {
 
 const POINTER_DRAG_THRESHOLD = 5
 
-export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): JSX.Element {
+export function TasksKanban({ tasks, filter, today, onOpenTask, onToggleTask }: Props): JSX.Element {
   const groupBy = useStore((s) => s.kanbanGroupBy)
   const setGroupBy = useStore((s) => s.setKanbanGroupBy)
   const kanbanColumnTitles = useStore((s) => s.kanbanColumnTitles)
@@ -575,6 +630,7 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
   })
   const columnOrderRef = useRef(initialCardOrder)
   const columnsRef = useRef<Column[]>([])
+  const fullColumnsRef = useRef<Column[]>([])
   const columnTitleInputRef = useRef<HTMLInputElement | null>(null)
   const boardRef = useRef<HTMLDivElement | null>(null)
   const pointerDragRef = useRef<ActivePointerDrag | null>(null)
@@ -628,13 +684,20 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
     setDisplayTasks(mergedTasks)
   }, [mergeTasksWithPendingMoves, tasks])
 
-  const columns = useMemo(
+  const fullColumns = useMemo(
     () => {
+      const built = buildColumns(groupBy, displayTasks, today, kanbanStatuses, showArchivedTasks)
+      const savedOrder = kanbanColumnOrder[groupBy] ?? []
       const orderedColumns = applyColumnOrder(
         groupBy,
         arrangeColumns(
-          buildColumns(groupBy, displayTasks, today, kanbanStatuses, showArchivedTasks),
-          kanbanColumnOrder[groupBy] ?? []
+          built,
+          groupBy === 'status'
+            ? completeStatusOrder(
+                savedOrder,
+                built.map((c) => c.id)
+              )
+            : savedOrder
         ),
         columnOrderRef.current
       )
@@ -654,7 +717,28 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
       today
     ]
   )
+
+  // The filter narrows cards, never columns: the board keeps its full column
+  // set while typing (a discovered-value column doesn't vanish because its
+  // cards are filtered out), and the unfiltered columns stay the source of
+  // truth for card-order persistence so a focused board can't prune hidden
+  // cards out of a hand-made arrangement. (#583)
+  const filterQuery = (filter ?? '').trim()
+  const columns = useMemo(() => {
+    if (!filterQuery) return fullColumns
+    return fullColumns.map((column) => {
+      const visible = filterTasks(column.tasks, filterQuery)
+      if (visible.length === column.tasks.length) return column
+      let badge = column.badge
+      if (badge?.kind === 'overdue') {
+        const value = visible.filter((t) => isTaskOverdue(t, today)).length
+        badge = value > 0 ? { kind: 'overdue', value } : undefined
+      }
+      return { ...column, tasks: visible, badge }
+    })
+  }, [fullColumns, filterQuery, today])
   columnsRef.current = columns
+  fullColumnsRef.current = fullColumns
 
   // Group-by options: the three static boards, the default custom-status field,
   // then one option per `@key:` field discovered across the current tasks. This
@@ -920,17 +1004,29 @@ export function TasksKanban({ tasks, today, onOpenTask, onToggleTask }: Props): 
       if (targetIndex == null) return
 
       const movingKey = taskIdentityKey(task)
+      // The drop index counts the VISIBLE cards (the DOM the user aimed at),
+      // which the filter may have narrowed. Resolve it to the visible card the
+      // drop landed in front of, then splice next to that card in the FULL
+      // column, so filtered-out cards keep their hand-arranged positions
+      // instead of being pruned by the persist below. Unfiltered, the two
+      // boards are identical and this is the plain bounded insert.
+      const visibleTarget = columnsRef.current.find((column) => column.id === targetColumnId)
+      const visibleKeys = (visibleTarget?.tasks ?? [])
+        .map((columnTask) => taskIdentityKey(columnTask))
+        .filter((key) => key !== movingKey)
+      const anchorKey = visibleKeys[targetIndex] ?? null
+
       const nextOrderMap = new Map(columnOrderRef.current)
       const persistedEntries: Record<string, string[]> = {}
 
-      for (const column of columnsRef.current) {
+      for (const column of fullColumnsRef.current) {
         const keys = column.tasks
           .map((columnTask) => taskIdentityKey(columnTask))
           .filter((key) => key !== movingKey)
 
         if (column.id === targetColumnId) {
-          const boundedIndex = Math.max(0, Math.min(targetIndex, keys.length))
-          keys.splice(boundedIndex, 0, movingKey)
+          const anchorIndex = anchorKey ? keys.indexOf(anchorKey) : -1
+          keys.splice(anchorIndex === -1 ? keys.length : anchorIndex, 0, movingKey)
         }
 
         nextOrderMap.set(columnOrderKey(groupBy, column.id), keys)

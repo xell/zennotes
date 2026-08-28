@@ -4,6 +4,15 @@
    looks the same in the editor and the preview on every theme. (#390-adjacent) */
 @import "katex/dist/katex.min.css";
 
+/* Math size (#623): one user-set factor scales inline and block math in both
+ * the editor and the reading view, for KaTeX and Typst alike. zoom keeps the
+ * surrounding layout honest where transform: scale would overlap lines. */
+:is(.prose-zen, .cm-editor) .katex,
+:is(.prose-zen, .cm-editor) .zen-typst-math,
+:is(.prose-zen, .cm-editor) :is(.cm-math-inline, .cm-math-block) > svg {
+  zoom: var(--z-math-scale, 1);
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -1910,9 +1919,11 @@ textarea,
 /* In progress: the checkbox square with its left half filled in, in the accent
    so started work reads as live at a glance. Deliberately the same silhouette
    as `.cm-task-checkbox` (a rounded square, not a new symbol) — it is the same
-   box part-way to done, and the text is NOT struck, unlike cancelled. */
+   box part-way to done, and the text is NOT struck, unlike cancelled. Clickable
+   (checks the task off, #599), unlike the forwarded/cancelled record markers. */
 .cm-editor .cm-task-in-progress-marker {
   color: rgb(var(--z-accent));
+  cursor: pointer;
 }
 .cm-editor .cm-task-in-progress-marker::before {
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5'%3E%3Crect x='3.5' y='3.5' width='17' height='17' rx='3.5'/%3E%3Cpath d='M12 5.5H7.5A2 2 0 0 0 5.5 7.5v9a2 2 0 0 0 2 2H12z' fill='black' stroke='none'/%3E%3C/svg%3E");
@@ -3329,6 +3340,78 @@ html[data-completed-task-style="gray-strikethrough"] .prose-zen li.task-list-ite
   font-size: 1.75rem;
 }
 
+/* Resize handle (#684, editor only). The sizer hugs the picture so the handle
+   rides on the picture's right edge whatever the frame's width; dragging it
+   writes the `|width` hint into the note. */
+.cm-editor .local-image-embed-sizer {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: top;
+}
+
+.cm-editor .local-image-embed-resize {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  width: 8px;
+  height: 44px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.92);
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 0.35),
+    0 2px 8px rgb(0 0 0 / 0.35);
+  transform: translateY(-50%);
+  cursor: ew-resize;
+  touch-action: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.cm-editor .local-image-embed:hover .local-image-embed-resize,
+.cm-editor .local-image-embed.is-resizing .local-image-embed-resize {
+  opacity: 1;
+}
+
+.cm-editor .local-image-embed-size {
+  position: absolute;
+  right: 22px;
+  bottom: 10px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: rgb(20 19 18 / 0.82);
+  color: rgb(255 255 255 / 0.94);
+  font-family: var(
+    --z-mono-font,
+    "SF Mono",
+    "SFMono-Regular",
+    ui-monospace,
+    "JetBrains Mono",
+    Menlo,
+    Consolas,
+    monospace
+  );
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.2;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.cm-editor .local-image-embed.is-resizing {
+  cursor: ew-resize;
+  user-select: none;
+}
+
+.cm-editor .local-image-embed.is-resizing .local-image-embed-size {
+  opacity: 1;
+}
+
+.cm-editor .local-image-embed.is-resizing .local-image-embed-controls {
+  opacity: 0;
+}
+
 :is(.prose-zen, .cm-editor) .local-image-embed-caption {
   margin-top: 0.55rem;
   text-align: center;
@@ -3902,6 +3985,75 @@ html[data-completed-task-style="gray-strikethrough"] .prose-zen li.task-list-ite
   width: 100%;
   height: 100%;
   border: 0;
+}
+/* Click-to-play facade: poster, play badge, and provider name stand in for the
+   player until the user asks for it (no iframe exists before that, so nothing
+   can take the keyboard away from the note). The button fills the aspect box. */
+.zen-embed-frame .zen-embed-poster {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: #000;
+  color: #fff;
+  cursor: pointer;
+}
+.zen-embed-frame .zen-embed-poster-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.85;
+  transition: opacity 120ms ease;
+}
+.zen-embed-frame .zen-embed-poster:hover .zen-embed-poster-image,
+.zen-embed-frame .zen-embed-poster:focus-visible .zen-embed-poster-image {
+  opacity: 1;
+}
+.zen-embed-frame .zen-embed-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 68px;
+  height: 48px;
+  border-radius: 14px;
+  background: rgb(var(--z-accent));
+  color: rgb(var(--z-bg));
+  box-shadow: 0 4px 18px rgb(0 0 0 / 0.45);
+  transform: translate(-50%, -50%);
+  transition:
+    transform 120ms ease,
+    filter 120ms ease;
+}
+.zen-embed-frame .zen-embed-play svg {
+  margin-left: 3px;
+}
+.zen-embed-frame .zen-embed-poster:hover .zen-embed-play,
+.zen-embed-frame .zen-embed-poster:focus-visible .zen-embed-play {
+  transform: translate(-50%, -50%) scale(1.06);
+  filter: brightness(1.08);
+}
+.zen-embed-frame .zen-embed-poster:focus-visible {
+  outline: 2px solid rgb(var(--z-accent));
+  outline-offset: -2px;
+}
+.zen-embed-frame .zen-embed-provider {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  font-size: 0.72em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 :is(.prose-zen, .cm-embed-block) .zen-embed-unsupported {
   padding: 10px 14px;
@@ -5045,9 +5197,9 @@ html[data-completed-task-style="gray-strikethrough"] .prose-zen li.task-list-ite
   border-radius: 1px;
   pointer-events: none;
 }
-/* Vim visual-mode selection inside a cell uses the native selection; match the
-   editor's own selection tint (theme accent at the same strength) so it reads
-   consistently instead of the washed-out OS default. */
+/* Native selection is still used while editing a cell; match the editor's own
+   selection tint instead of the washed-out OS default. Vim visual mode uses
+   the coordinate-aware overlays below. */
 .cm-table-widget .cm-table-cell::selection,
 .cm-table-widget .cm-table-cell ::selection {
   background: rgb(var(--z-accent) / 0.22);
@@ -5059,6 +5211,12 @@ html[data-completed-task-style="gray-strikethrough"] .prose-zen li.task-list-ite
   background: rgb(var(--z-accent) / 0.28);
   border-radius: 2px;
   pointer-events: none;
+}
+.cm-table-widget .cm-table-cell.is-vim-visual {
+  position: relative;
+}
+.cm-table-widget .cm-table-cell-sel.is-full {
+  inset: 3px 5px;
 }
 /* While a table cell is focused, the "real" cursor lives in the cell, so hide
    the editor's own cursor layer — otherwise its Vim block cursor lingers at the
