@@ -31,3 +31,5 @@ apps/desktop/native/*/build/
 # Release notes / launch copy are kept local only, never committed.
 docs/releases/
 CLAUDE.md
+# Personal, local-only scratch plans — never committed.
+/.plans/
