@@ -623,10 +623,6 @@ interface Prefs {
   ripgrepBinaryPath: string | null
   /** Optional explicit binary path for fzf. Blank uses PATH lookup. */
   fzfBinaryPath: string | null
-  /** Path to the macOS input-source switcher (e.g. macism). Blank disables Vim IME control. */
-  imeSwitcherBinaryPath: string | null
-  /** Input-source id used for Vim normal mode (e.g. com.apple.keylayout.ABC). Blank falls back to ABC. */
-  imeEnglishLayoutId: string | null
   livePreview: boolean      // hide markdown syntax on inactive lines
   /** How Markdown tables render in live preview: `off` (plain editable
    *  markdown), `rich` (interactive block widget), or `compatible` (CSS-styled,
@@ -1132,8 +1128,6 @@ export const DEFAULT_PREFS: Prefs = {
   vaultTextSearchBackend: 'auto',
   ripgrepBinaryPath: null,
   fzfBinaryPath: null,
-  imeSwitcherBinaryPath: null,
-  imeEnglishLayoutId: null,
   livePreview: true,
   renderTablesInLivePreview: 'rich',
   hideActiveLineMarkup: false,
@@ -1305,14 +1299,6 @@ function normalizePrefs(p: Partial<Prefs>): Prefs {
       typeof p.fzfBinaryPath === 'string' || p.fzfBinaryPath === null
         ? (p.fzfBinaryPath as string | null)
         : DEFAULT_PREFS.fzfBinaryPath,
-    imeSwitcherBinaryPath:
-      typeof p.imeSwitcherBinaryPath === 'string' || p.imeSwitcherBinaryPath === null
-        ? (p.imeSwitcherBinaryPath as string | null)
-        : DEFAULT_PREFS.imeSwitcherBinaryPath,
-    imeEnglishLayoutId:
-      typeof p.imeEnglishLayoutId === 'string' || p.imeEnglishLayoutId === null
-        ? (p.imeEnglishLayoutId as string | null)
-        : DEFAULT_PREFS.imeEnglishLayoutId,
     livePreview:
       typeof p.livePreview === 'boolean' ? p.livePreview : DEFAULT_PREFS.livePreview,
     showHeadingLevelLabels:
@@ -2604,8 +2590,6 @@ function collectPrefs(s: {
   vaultTextSearchBackend: VaultTextSearchBackendPreference
   ripgrepBinaryPath: string | null
   fzfBinaryPath: string | null
-  imeSwitcherBinaryPath: string | null
-  imeEnglishLayoutId: string | null
   livePreview: boolean
   renderTablesInLivePreview: TableRenderMode
   hideActiveLineMarkup: boolean
@@ -2720,8 +2704,6 @@ function collectPrefs(s: {
     vaultTextSearchBackend: s.vaultTextSearchBackend,
     ripgrepBinaryPath: s.ripgrepBinaryPath,
     fzfBinaryPath: s.fzfBinaryPath,
-    imeSwitcherBinaryPath: s.imeSwitcherBinaryPath,
-    imeEnglishLayoutId: s.imeEnglishLayoutId,
     livePreview: s.livePreview,
     showHeadingLevelLabels: s.showHeadingLevelLabels,
     showHeadingLevelIcons: s.showHeadingLevelIcons,
@@ -3239,10 +3221,6 @@ interface Store {
   vaultTextSearchBackend: VaultTextSearchBackendPreference
   ripgrepBinaryPath: string | null
   fzfBinaryPath: string | null
-  /** Path to the macOS input-source switcher (e.g. macism). Blank disables Vim IME control. */
-  imeSwitcherBinaryPath: string | null
-  /** Input-source id used for Vim normal mode. Blank falls back to com.apple.keylayout.ABC. */
-  imeEnglishLayoutId: string | null
   livePreview: boolean
   renderTablesInLivePreview: TableRenderMode
   /** Hide Markdown markup on the caret's line in live preview. Persisted. */
@@ -3882,8 +3860,6 @@ interface Store {
   setVaultTextSearchBackend: (backend: VaultTextSearchBackendPreference) => void
   setRipgrepBinaryPath: (path: string | null) => void
   setFzfBinaryPath: (path: string | null) => void
-  setImeSwitcherBinaryPath: (path: string | null) => void
-  setImeEnglishLayoutId: (id: string | null) => void
   setLivePreview: (on: boolean) => void
   setRenderTablesInLivePreview: (mode: TableRenderMode) => void
   setHideActiveLineMarkup: (on: boolean) => void
@@ -5268,8 +5244,6 @@ export const useStore = create<Store>((set, get) => {
   vaultTextSearchBackend: loadPrefs().vaultTextSearchBackend,
   ripgrepBinaryPath: loadPrefs().ripgrepBinaryPath,
   fzfBinaryPath: loadPrefs().fzfBinaryPath,
-  imeSwitcherBinaryPath: loadPrefs().imeSwitcherBinaryPath,
-  imeEnglishLayoutId: loadPrefs().imeEnglishLayoutId,
   livePreview: loadPrefs().livePreview,
   showHeadingLevelLabels: loadPrefs().showHeadingLevelLabels,
   showHeadingLevelIcons: loadPrefs().showHeadingLevelIcons,
@@ -8167,14 +8141,6 @@ export const useStore = create<Store>((set, get) => {
   },
   setFzfBinaryPath: (path) => {
     set({ fzfBinaryPath: path })
-    savePrefs(collectPrefs(get()))
-  },
-  setImeSwitcherBinaryPath: (path) => {
-    set({ imeSwitcherBinaryPath: path })
-    savePrefs(collectPrefs(get()))
-  },
-  setImeEnglishLayoutId: (id) => {
-    set({ imeEnglishLayoutId: id })
     savePrefs(collectPrefs(get()))
   },
   setLivePreview: (on) => {

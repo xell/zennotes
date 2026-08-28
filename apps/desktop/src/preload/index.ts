@@ -369,10 +369,6 @@ const api: ZenBridge = {
   getManualOrder: (): Promise<ManualOrderMap> => ipcRenderer.invoke(IPC.MANUAL_ORDER_GET),
   setManualOrder: (map: ManualOrderMap): Promise<void> =>
     ipcRenderer.invoke(IPC.MANUAL_ORDER_SET, map),
-  getInputSource: (binaryPath: string): Promise<string> =>
-    ipcRenderer.invoke(IPC.IME_GET_CURRENT, binaryPath),
-  setInputSource: (binaryPath: string, layoutId: string): Promise<boolean> =>
-    ipcRenderer.invoke(IPC.IME_SET_LAYOUT, binaryPath, layoutId),
   getUserScript: (name: string): Promise<{ code: string; mtime: number } | null> =>
     ipcRenderer.invoke(IPC.USER_SCRIPT_GET, name),
   readWorkspaceState: (): Promise<string | null> =>

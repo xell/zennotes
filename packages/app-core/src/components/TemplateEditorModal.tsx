@@ -22,7 +22,7 @@ import { parseFrontmatter, slugifyTemplateName } from '@shared/template-files'
 import { renderTemplate } from '../lib/template-render'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
-import { vimImeControl } from '../lib/cm-vim-ime'
+import { isTouchPrimaryDevice, vimImeGuard } from '../lib/cm-vim-ime-guard'
 import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
 import { headingFolding } from '../lib/cm-heading-fold'
 import { editorTabSize } from '../lib/editor-tab-size'
@@ -117,7 +117,11 @@ export function TemplateEditorModal({
       doc: initialRaw ?? SKELETON,
       extensions: [
         appMarkdownSnippetExtension(),
-        vimImeControl(),
+        // Keeps the OS input method from composing outside insert mode by making
+        // the content non-editable there (#84, #464). Replaced this fork's
+        // input-source switcher, which needed an external binary and forced ABC
+        // rather than leaving the chosen IME selected.
+        vimImeGuard(() => useStore.getState().vimBlockImeInNormalMode && !isTouchPrimaryDevice()),
         new Compartment().of(vimModeRef.current ? vimWithBlockSelection() : []),
         vimVisualHighlightExtension,
         history(),

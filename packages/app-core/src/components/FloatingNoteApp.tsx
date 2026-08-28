@@ -47,7 +47,6 @@ import {
   skipOrderedListRenumber
 } from '../lib/cm-ordered-list-renumber'
 import { codeBlockFontPlugin } from '../lib/cm-code-block-font'
-import { vimImeControl } from '../lib/cm-vim-ime'
 import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
 import { syntaxHighlighting, HighlightStyle, defaultHighlightStyle } from '@codemirror/language'
 import { tags as t } from '@lezer/highlight'
@@ -410,7 +409,11 @@ export function FloatingNoteApp({ notePath }: { notePath: string }): JSX.Element
         doc: dirtyBodyRef.current ?? content?.body ?? '',
         extensions: [
           appMarkdownSnippetExtension(),
-          vimImeControl(),
+          // Keeps the OS input method from composing outside insert mode by making
+          // the content non-editable there (#84, #464). Replaced this fork's
+          // input-source switcher, which needed an external binary and forced ABC
+          // rather than leaving the chosen IME selected.
+          vimImeGuard(() => prefs.vimBlockImeInNormalMode && !isTouchPrimaryDevice()),
           // Give the editable surface an accessible name so accessibility
           // clients (screen readers, proofreaders such as Grammarly) identify
           // it as a text field — mirrors EditorPane.

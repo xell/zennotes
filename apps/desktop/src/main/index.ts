@@ -4104,32 +4104,6 @@ function registerIpc(): void {
     await setManualOrder(v.root, map)
   })
 
-  // Vim IME control (macOS). The renderer passes the user-configured switcher
-  // binary path (e.g. macism); we just exec it. Reading prints the current
-  // input-source id; writing switches to the given id. Best-effort: any
-  // failure (binary missing, wrong path, non-mac) degrades to no-op.
-  handle(IPC.IME_GET_CURRENT, async (_e, binaryPath: string) => {
-    if (!isMac() || !binaryPath?.trim()) return ''
-    try {
-      const { stdout } = await execFileAsync(binaryPath.trim(), [], { timeout: 2000 })
-      return stdout.trim()
-    } catch (err) {
-      console.error('[zen:ime] get-current failed', err)
-      return ''
-    }
-  })
-
-  handle(IPC.IME_SET_LAYOUT, async (_e, binaryPath: string, layoutId: string) => {
-    if (!isMac() || !binaryPath?.trim() || !layoutId?.trim()) return false
-    try {
-      await execFileAsync(binaryPath.trim(), [layoutId.trim()], { timeout: 2000 })
-      return true
-    } catch (err) {
-      console.error('[zen:ime] set-layout failed', err)
-      return false
-    }
-  })
-
   // Read a user JS file for the Vim `zen:<file>:<fn>()` mappings. `name` must
   // be a bare filename (no separators / `..`); we only ever read `<name>.js`
   // from inside the config dir.

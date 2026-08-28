@@ -52,7 +52,6 @@ import { toggleWrap, wrapLink } from '../lib/cm-format'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { resolveCodeLanguage } from '../lib/cm-code-languages'
 import { markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
-import { vimImeControl } from '../lib/cm-vim-ime'
 import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
 import { syntaxHighlighting, HighlightStyle, defaultHighlightStyle } from '@codemirror/language'
 import { tags as t } from '@lezer/highlight'
@@ -550,7 +549,11 @@ export function QuickCaptureApp(): JSX.Element {
         doc: '',
         extensions: [
           appMarkdownSnippetExtension(),
-          vimImeControl(),
+          // Keeps the OS input method from composing outside insert mode by making
+          // the content non-editable there (#84, #464). Replaced this fork's
+          // input-source switcher, which needed an external binary and forced ABC
+          // rather than leaving the chosen IME selected.
+          vimImeGuard(() => prefs.vimBlockImeInNormalMode && !isTouchPrimaryDevice()),
           new Compartment().of(prefs.vimMode ? vimWithBlockSelection() : []),
           vimVisualHighlightExtension,
           // #312: inline-format shortcuts (bold/italic/code/strike/highlight/

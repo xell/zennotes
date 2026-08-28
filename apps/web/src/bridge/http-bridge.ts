@@ -364,14 +364,6 @@ function rootContentHiddenByInboxMode(): Promise<boolean> {
   return Promise.resolve(false)
 }
 
-function getInputSource(_binaryPath: string): Promise<string> {
-  // A browser cannot read or switch the OS input source. Vim IME control is
-  // desktop-only; report empty so the controller treats it as disabled.
-  return Promise.resolve('')
-}
-function setInputSource(_binaryPath: string, _layoutId: string): Promise<boolean> {
-  return Promise.resolve(false)
-}
 function getUserScript(_name: string): Promise<{ code: string; mtime: number } | null> {
   // No filesystem in the browser; user JS scripts are a desktop-only feature.
   return Promise.resolve(null)
@@ -1495,8 +1487,6 @@ export const httpBridge: ZenBridge = {
   setVaultSettings,
   getManualOrder,
   setManualOrder,
-  getInputSource,
-  setInputSource,
   getUserScript,
   readWorkspaceState,
   writeWorkspaceState,

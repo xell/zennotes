@@ -34,7 +34,7 @@ import {
   skipOrderedListRenumber
 } from '../lib/cm-ordered-list-renumber'
 import { codeBlockFontPlugin } from '../lib/cm-code-block-font'
-import { vimImeControl } from '../lib/cm-vim-ime'
+import { isTouchPrimaryDevice, vimImeGuard } from '../lib/cm-vim-ime-guard'
 import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
 import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
 import { editorFindKeymap } from '../lib/editor-search-keymap'
@@ -153,7 +153,11 @@ export function ExternalFileApp(): JSX.Element {
         doc: bodyRef.current ?? '',
         extensions: [
           appMarkdownSnippetExtension(),
-          vimImeControl(),
+          // Keeps the OS input method from composing outside insert mode by making
+          // the content non-editable there (#84, #464). Replaced this fork's
+          // input-source switcher, which needed an external binary and forced ABC
+          // rather than leaving the chosen IME selected.
+          vimImeGuard(() => useStore.getState().vimBlockImeInNormalMode && !isTouchPrimaryDevice()),
           // Give the editable surface an accessible name so accessibility
           // clients (screen readers, proofreaders such as Grammarly) identify
           // it as a text field — mirrors EditorPane.

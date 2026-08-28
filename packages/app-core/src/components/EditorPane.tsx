@@ -58,7 +58,7 @@ import {
   listIndentWidth,
   markdownListIndentPlugin
 } from '../lib/cm-markdown-list-indent'
-import { vimImeControl } from '../lib/cm-vim-ime'
+import { isTouchPrimaryDevice, vimImeGuard } from '../lib/cm-vim-ime-guard'
 import { forwardOnCheckboxArrow } from '../lib/cm-forward-task'
 import { markerHopCommands } from '../lib/cm-marker-hop'
 import { isInMarkdownCode } from '../lib/cm-auto-pairs'
@@ -236,7 +236,6 @@ import {
 } from './icons'
 import { focusEditorNormalMode } from '../lib/editor-focus'
 import { reflowParagraph } from '../lib/cm-reflow'
-import { isTouchPrimaryDevice, vimImeGuard } from '../lib/cm-vim-ime-guard'
 import {
   getSystemFolderLabel,
   resolveSystemFolderLabels
@@ -1816,7 +1815,11 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
         doc: initialBody,
         extensions: [
           appMarkdownSnippetExtension(),
-          vimImeControl(),
+          // Keeps the OS input method from composing outside insert mode by making
+          // the content non-editable there (#84, #464). Replaced this fork's
+          // input-source switcher, which needed an external binary and forced ABC
+          // rather than leaving the chosen IME selected.
+          vimImeGuard(() => useStore.getState().vimBlockImeInNormalMode && !isTouchPrimaryDevice()),
           // Give the editable surface an accessible name so accessibility
           // clients (screen readers, proofreaders such as Grammarly) identify
           // it as a text field.
