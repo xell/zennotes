@@ -943,7 +943,7 @@ export function AtlasView(): JSX.Element {
   }, [])
 
   const chip =
-    'cursor-pointer rounded-full border border-paper-300 bg-paper-100 px-2.5 py-1 font-mono text-[11px] text-ink-600 hover:text-ink-800'
+    'shrink-0 cursor-pointer rounded-full border border-paper-300 bg-paper-100 px-2.5 py-1 font-mono text-[11px] text-ink-600 hover:text-ink-800'
   return (
     <div
       ref={rootRef}
@@ -1007,7 +1007,7 @@ export function AtlasView(): JSX.Element {
           fit
         </button>
         {vimMode && (
-          <span className="ml-auto hidden font-mono text-[11px] text-ink-400 sm:inline">
+          <span className="ml-auto hidden min-w-0 text-right font-mono text-[11px] leading-tight text-ink-400 sm:line-clamp-2">
             f jump · hjkl move · + - zoom · v 2d/3d · [ ] regions · 1..4 lens · Enter open
           </span>
         )}
