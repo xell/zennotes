@@ -1,3 +1,6 @@
+
+I'm back on my beloved Neovim with a new GUI. Thanks, ZenNotes, for a great two months.
+
 # ZenNotes
 
 <p align="center">
